@@ -72,8 +72,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -122,7 +120,7 @@ fun BarcodeScannerScreen(
     mode: ScannerMode,
     products: List<ProductEntity>,
     onClose: () -> Unit,
-    onProductScannedForSale: (ProductEntity, Boolean) -> Unit, // product, isContinuous
+    onProductScannedForSale: (ProductEntity) -> Unit,
     onProductScannedForStock: (ProductEntity) -> Unit,
     onBarcodeAssigned: (String) -> Unit,
     onBarcodeNotRecognized: (String) -> Unit
@@ -168,7 +166,6 @@ fun BarcodeScannerScreen(
                     mode = mode,
                     products = products,
                     context = context,
-                    continuousMode = false,
                     onProductScannedForSale = onProductScannedForSale,
                     onProductScannedForStock = onProductScannedForStock,
                     onBarcodeAssigned = onBarcodeAssigned,
@@ -185,7 +182,7 @@ private fun CameraScannerView(
     mode: ScannerMode,
     products: List<ProductEntity>,
     onClose: () -> Unit,
-    onProductScannedForSale: (ProductEntity, Boolean) -> Unit,
+    onProductScannedForSale: (ProductEntity) -> Unit,
     onProductScannedForStock: (ProductEntity) -> Unit,
     onBarcodeAssigned: (String) -> Unit,
     onBarcodeNotRecognized: (String) -> Unit
@@ -196,7 +193,6 @@ private fun CameraScannerView(
     var camera by remember { mutableStateOf<Camera?>(null) }
     var isTorchOn by remember { mutableStateOf(false) }
     var useFrontCamera by remember { mutableStateOf(false) }
-    var isContinuousMode by remember { mutableStateOf(mode == ScannerMode.SELL) }
 
     var lastScannedBarcode by remember { mutableStateOf<String?>(null) }
     var lastScannedProduct by remember { mutableStateOf<ProductEntity?>(null) }
@@ -260,7 +256,6 @@ private fun CameraScannerView(
             mode = mode,
             products = products,
             context = context,
-            continuousMode = isContinuousMode,
             onProductScannedForSale = onProductScannedForSale,
             onProductScannedForStock = onProductScannedForStock,
             onBarcodeAssigned = onBarcodeAssigned,
@@ -481,42 +476,19 @@ private fun CameraScannerView(
                 }
             }
 
-            // Mode helper text & Continuous switch
             if (mode == ScannerMode.SELL) {
-                Row(
+                Text(
+                    "Scan a barcode to sell one unit immediately and deduct it from stock.",
+                    color = Color(0xFFD1D5DB),
+                    fontSize = 11.sp,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 10.dp)
                         .background(Color(0x88000000), RoundedCornerShape(12.dp))
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "Continuous Scan (Supermarket mode)",
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            if (isContinuousMode) "Instantly adds 1 to cart each scan" else "Opens sale sheet to select quantity",
-                            color = Color(0xFFD1D5DB),
-                            fontSize = 11.sp
-                        )
-                    }
-                    Switch(
-                        checked = isContinuousMode,
-                        onCheckedChange = { isContinuousMode = it },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = Color(0xFF10B981)
-                        )
-                    )
-                }
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                )
             }
         }
-
         // Bottom Results & Sample Barcodes
         Column(
             modifier = Modifier
@@ -778,8 +750,7 @@ private fun handleBarcodeResult(
     mode: ScannerMode,
     products: List<ProductEntity>,
     context: Context,
-    continuousMode: Boolean,
-    onProductScannedForSale: (ProductEntity, Boolean) -> Unit,
+    onProductScannedForSale: (ProductEntity) -> Unit,
     onProductScannedForStock: (ProductEntity) -> Unit,
     onBarcodeAssigned: (String) -> Unit,
     onBarcodeNotRecognized: (String) -> Unit
@@ -791,7 +762,7 @@ private fun handleBarcodeResult(
     val matched = findProductByCodeOrBarcode(barcode, products)
     if (matched != null) {
         if (mode == ScannerMode.SELL) {
-            onProductScannedForSale(matched, continuousMode)
+            onProductScannedForSale(matched)
         } else {
             onProductScannedForStock(matched)
         }

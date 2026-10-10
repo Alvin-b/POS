@@ -124,7 +124,7 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
         }
     }
 
-    fun handleScannedSale(product: ProductEntity, isContinuous: Boolean) {
+    fun handleScannedSale(product: ProductEntity) {
         if (!product.inMyStock) {
             _uiState.update {
                 it.copy(
@@ -139,37 +139,33 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
             }
             return
         }
-
         if (product.stockQuantity < 1) {
-            _uiState.update { it.copy(notice = "⚠️ ${product.name} is OUT OF STOCK!") }
+            _uiState.update { it.copy(isScannerOpen = false, notice = "⚠️ ${product.name} is OUT OF STOCK!") }
             return
         }
-
         val units = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
         val defaultUnit = units.firstOrNull() ?: SaleUnit("Bottle", product.sellingPriceKsh)
-
-        if (isContinuous && units.size <= 1) {
-            // Instant continuous scan sale (1 bottle)
-            viewModelScope.launch {
-                val success = repository.sellWithUnit(
-                    code = product.catalogCode,
-                    quantity = 1,
-                    unitName = defaultUnit.name,
-                    unitPriceKsh = defaultUnit.priceKsh
-                )
-                if (success) {
-                    val remaining = (product.stockQuantity - 1).coerceAtLeast(0)
-                    _uiState.update {
-                        it.copy(notice = "✓ Scanned 1x ${product.name} (${defaultUnit.name}) · KSh ${defaultUnit.priceKsh} (Rem: $remaining)")
+        // Every successful scan releases one unit immediately; there is no continuous-mode switch.
+        viewModelScope.launch {
+            val success = repository.sellWithUnit(
+                code = product.catalogCode,
+                quantity = 1,
+                unitName = defaultUnit.name,
+                unitPriceKsh = defaultUnit.priceKsh
+            )
+            val remaining = (product.stockQuantity - 1).coerceAtLeast(0)
+            _uiState.update {
+                it.copy(
+                    isScannerOpen = false,
+                    notice = if (success) {
+                        "✓ Sold 1x ${product.name} (${defaultUnit.name}) · KSh ${defaultUnit.priceKsh} (Rem: $remaining)"
+                    } else {
+                        "⚠️ Could not sell ${product.name}: check stock."
                     }
-                }
+                )
             }
-        } else {
-            // Open sale dialog with unit options
-            openSale(product)
         }
     }
-
     fun handleScannedStock(product: ProductEntity) {
         if (product.inMyStock) {
             _uiState.update {
