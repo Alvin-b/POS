@@ -20,5 +20,10 @@ data class ProductEntity(
     val photoOverrideUri: String? = null,
     val productSourceUrl: String? = null,
     val imageSourceUrl: String? = null,
-    val verificationNote: String = ""
+    val verificationNote: String = "",
+    val backendProductId: String? = null,
+    val backendCatalogId: String? = null,
+    val shopId: String? = null,
+    val remoteImageUrl: String? = null,
+    val photoPath: String? = null
 )

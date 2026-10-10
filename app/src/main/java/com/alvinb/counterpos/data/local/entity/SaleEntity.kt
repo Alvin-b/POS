@@ -14,5 +14,7 @@ data class SaleEntity(
     val totalKsh: Int,
     val createdAt: Long,
     val undone: Boolean = false,
-    val photoOverrideUri: String? = null
+    val photoOverrideUri: String? = null,
+    val backendSaleId: String? = null,
+    val backendProductId: String? = null
 )

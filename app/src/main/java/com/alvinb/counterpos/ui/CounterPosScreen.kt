@@ -99,6 +99,38 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val products by viewModel.products.collectAsStateWithLifecycle()
     val sales by viewModel.sales.collectAsStateWithLifecycle()
+    val todaySummary by viewModel.todaySummary.collectAsStateWithLifecycle()
+
+    if (state.isCheckingSession) {
+        BackendLoadingScreen()
+        return
+    }
+    if (!state.isAuthenticated) {
+        AuthenticationScreen(
+            state = state,
+            onEmailChange = viewModel::setAuthEmail,
+            onPasswordChange = viewModel::setAuthPassword,
+            onSubmit = viewModel::submitAuth,
+            onToggleMode = viewModel::toggleAuthMode
+        )
+        return
+    }
+    if (state.isLoadingShop) {
+        BackendLoadingScreen("Loading your shop…")
+        return
+    }
+    if (state.selectedShopId == null) {
+        ShopSelectionScreen(
+            state = state,
+            onNameChange = viewModel::setShopName,
+            onCreateShop = viewModel::createShop,
+            onSelectShop = viewModel::chooseShop,
+            onRetry = viewModel::retryShopLoad,
+            onSignOut = viewModel::signOut
+        )
+        return
+    }
+
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val focusManager = LocalFocusManager.current
@@ -120,7 +152,6 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
         }
     }
 
-    val summary = remember(sales) { salesTodaySummary(sales) }
     LaunchedEffect(state.notice) {
         state.notice?.let {
             snackbarHostState.showSnackbar(it)
@@ -129,7 +160,14 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
     }
 
     Scaffold(
-            topBar = { PosHeader(todaySalesKsh = summary.first, modifier = Modifier.statusBarsPadding()) },
+            topBar = {
+                PosHeader(
+                    todaySalesKsh = todaySummary.first,
+                    shopName = state.shopName,
+                    onSignOut = viewModel::signOut,
+                    modifier = Modifier.statusBarsPadding()
+                )
+            },
             bottomBar = {
                 NavigationBar {
                     NavigationBarItem(
@@ -182,7 +220,7 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                     PosTab.SALES -> SalesScreen(
                         modifier = Modifier.padding(padding),
                         sales = sales,
-                        todaySummary = summary,
+                        todaySummary = todaySummary,
                         onUndo = viewModel::undoLastSale
                     )
                     PosTab.STOCK -> StockScreen(
@@ -260,7 +298,7 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
 }
 
 @Composable
-private fun PosHeader(todaySalesKsh: Int, modifier: Modifier = Modifier) {
+private fun PosHeader(todaySalesKsh: Int, shopName: String, onSignOut: () -> Unit, modifier: Modifier = Modifier) {
     Surface(modifier = modifier, color = MaterialTheme.colorScheme.surface, shadowElevation = 1.dp) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
@@ -269,8 +307,9 @@ private fun PosHeader(todaySalesKsh: Int, modifier: Modifier = Modifier) {
         ) {
             Column {
                 Text("Counter POS", fontSize = 21.sp, fontWeight = FontWeight.Bold)
-                Text("Beverage point of sale", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(shopName, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+            TextButton(onClick = onSignOut) { Text("Sign out", fontSize = 11.sp) }
             Column(horizontalAlignment = Alignment.End) {
                 Text("Today", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(ksh(todaySalesKsh), fontSize = 17.sp, fontWeight = FontWeight.Bold)
@@ -408,6 +447,7 @@ private fun ProductPhoto(product: ProductEntity, modifier: Modifier = Modifier) 
     val imageId = remember(product.imageAssetName) {
         context.resources.getIdentifier(product.imageAssetName, "drawable", context.packageName)
     }
+    val remotePhoto = product.remoteImageUrl
     if (!product.photoOverrideUri.isNullOrBlank()) {
         AsyncImage(
             model = product.photoOverrideUri,
@@ -415,9 +455,23 @@ private fun ProductPhoto(product: ProductEntity, modifier: Modifier = Modifier) 
             modifier = modifier,
             contentScale = ContentScale.Fit
         )
+    } else if (!product.photoPath.isNullOrBlank() && !remotePhoto.isNullOrBlank()) {
+        AsyncImage(
+            model = remotePhoto,
+            contentDescription = product.name,
+            modifier = modifier,
+            contentScale = ContentScale.Fit
+        )
     } else if (imageId != 0) {
         Image(
             painter = painterResource(imageId),
+            contentDescription = product.name,
+            modifier = modifier,
+            contentScale = ContentScale.Fit
+        )
+    } else if (!remotePhoto.isNullOrBlank()) {
+        AsyncImage(
+            model = remotePhoto,
             contentDescription = product.name,
             modifier = modifier,
             contentScale = ContentScale.Fit
@@ -464,7 +518,7 @@ private fun SalesScreen(
             EmptyMessage("No sales recorded yet.")
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 14.dp)) {
-                items(sales, key = { it.id }) { sale -> SaleRow(sale) }
+                items(sales, key = { it.backendSaleId ?: it.id.toString() }) { sale -> SaleRow(sale) }
             }
         }
     }
@@ -572,7 +626,8 @@ private fun StockScreen(
                         product = product,
                         onRestockSix = { onQuickRestock(product, 6) },
                         onRestockTwentyFour = { onQuickRestock(product, 24) },
-                        onChangePhoto = { onChangePhoto(product) }
+                        onChangePhoto = { onChangePhoto(product) },
+                        showPhotoButton = state.shopRole == "owner"
                     )
                 }
             }
@@ -614,7 +669,8 @@ private fun StockProductRow(
     product: ProductEntity,
     onRestockSix: () -> Unit,
     onRestockTwentyFour: () -> Unit,
-    onChangePhoto: () -> Unit
+    onChangePhoto: () -> Unit,
+    showPhotoButton: Boolean
 ) {
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -626,10 +682,12 @@ private fun StockProductRow(
                 Row(horizontalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.padding(top = 6.dp)) {
                     OutlinedButton(onClick = onRestockSix, contentPadding = PaddingValues(horizontal = 9.dp, vertical = 3.dp), modifier = Modifier.height(34.dp)) { Text("+6") }
                     OutlinedButton(onClick = onRestockTwentyFour, contentPadding = PaddingValues(horizontal = 9.dp, vertical = 3.dp), modifier = Modifier.height(34.dp)) { Text("+24") }
-                    OutlinedButton(onClick = onChangePhoto, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 3.dp), modifier = Modifier.height(34.dp)) {
-                        Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(15.dp))
-                        Spacer(Modifier.width(3.dp))
-                        Text("Photo", fontSize = 11.sp)
+                    if (showPhotoButton) {
+                        OutlinedButton(onClick = onChangePhoto, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 3.dp), modifier = Modifier.height(34.dp)) {
+                            Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(Modifier.width(3.dp))
+                            Text("Photo", fontSize = 11.sp)
+                        }
                     }
                 }
             }

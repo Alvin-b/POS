@@ -12,6 +12,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.alvinb.counterpos.data.CounterPosRepository
 import com.alvinb.counterpos.data.local.AppDatabase
+import com.alvinb.counterpos.data.remote.SupabaseRestClient
 import com.alvinb.counterpos.ui.CounterPosApp
 import com.alvinb.counterpos.ui.CounterPosTheme
 import com.alvinb.counterpos.ui.CounterPosViewModel
@@ -23,7 +24,17 @@ class MainActivity : ComponentActivity() {
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
 
         val database = AppDatabase.getInstance(applicationContext)
-        val repository = CounterPosRepository(database.counterPosDao(), assets)
+        val supabase = SupabaseRestClient(
+            context = applicationContext,
+            projectUrl = BuildConfig.SUPABASE_URL,
+            publishableKey = BuildConfig.SUPABASE_PUBLISHABLE_KEY
+        )
+        val repository = CounterPosRepository(
+            dao = database.counterPosDao(),
+            assets = assets,
+            supabase = supabase,
+            contentResolver = contentResolver
+        )
 
         setContent {
             CounterPosTheme {

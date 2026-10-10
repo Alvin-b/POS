@@ -10,7 +10,7 @@ import com.alvinb.counterpos.data.local.entity.SaleEntity
 
 @Database(
     entities = [ProductEntity::class, SaleEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
