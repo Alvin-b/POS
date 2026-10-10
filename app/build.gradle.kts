@@ -15,10 +15,6 @@ android {
     versionCode = 1
     versionName = "1.0"
 
-    // Supabase's publishable key is intentionally public and protected by user JWTs plus RLS.
-    buildConfigField("String", "SUPABASE_URL", "\"https://pvcqfoycrqtnirbwtccm.supabase.co\"")
-    buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"sb_publishable_1XttQd7gvzcsbZ__NnULGw_xMClc8GZ\"")
-
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
@@ -88,7 +84,10 @@ dependencies {
   implementation(libs.androidx.room.runtime)
   implementation(libs.coil.compose)
   implementation(libs.kotlinx.coroutines.android)
-  implementation(libs.okhttp)
+  implementation(libs.androidx.camera.camera2)
+  implementation(libs.androidx.camera.lifecycle)
+  implementation(libs.androidx.camera.view)
+  implementation(libs.mlkit.barcode.scanning)
   "ksp"(libs.androidx.room.compiler)
 
   testImplementation(libs.androidx.compose.ui.test.junit4)

@@ -1,6 +1,6 @@
 {
   "name": "Counter POS",
-  "description": "Mobile beverage point-of-sale app for Kenya with product search, real product photos, sales, stock tracking, and a searchable product library.",
+  "description": "Lean, high-performance point-of-sale and inventory system with real-time camera barcode scanning for instant sales and supermarket-style stock receiving.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

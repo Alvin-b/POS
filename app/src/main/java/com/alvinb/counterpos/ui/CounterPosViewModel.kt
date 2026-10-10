@@ -33,6 +33,9 @@ data class CounterPosUiState(
     val addQuantity: Int = 0,
     val addPriceText: String = "",
     val showReceiveStock: Boolean = false,
+    val isScannerOpen: Boolean = false,
+    val scannerMode: com.alvinb.counterpos.ui.scanner.ScannerMode = com.alvinb.counterpos.ui.scanner.ScannerMode.SELL,
+    val unrecognizedBarcode: String? = null,
     val actionError: String? = null,
     val notice: String? = null,
     val isReady: Boolean = false,
@@ -222,15 +225,128 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
     fun clearNotice() = _uiState.update { it.copy(notice = null) }
     fun clearStartupError() = _uiState.update { it.copy(startupError = null) }
 
-    fun openExactScanMatch() {
-        val query = _uiState.value.scanQuery.trim()
-        if (query.isBlank()) return
-        val matches = products.value.filter { product ->
-            product.verifiedBarcode.equals(query, ignoreCase = true) ||
-                product.catalogCode.equals(query, ignoreCase = true) ||
-                product.name.equals(query, ignoreCase = true)
+    fun openScanner(mode: com.alvinb.counterpos.ui.scanner.ScannerMode) = _uiState.update {
+        it.copy(isScannerOpen = true, scannerMode = mode, actionError = null)
+    }
+
+    fun closeScanner() = _uiState.update {
+        it.copy(isScannerOpen = false, unrecognizedBarcode = null)
+    }
+
+    fun handleScannedSale(product: ProductEntity, isContinuous: Boolean) {
+        if (!product.inMyStock) {
+            _uiState.update {
+                it.copy(
+                    notice = "Scanned ${product.name} is in catalog but not added to your shop yet. Add it from Stock → Library.",
+                    selectedAddCode = product.catalogCode,
+                    addQuantity = 1,
+                    addPriceText = product.suggestedPriceKsh.toString()
+                )
+            }
+            return
         }
-        if (matches.size == 1) openSale(matches.first())
+
+        if (product.stockQuantity < 1) {
+            _uiState.update { it.copy(notice = "⚠️ ${product.name} is OUT OF STOCK!") }
+            return
+        }
+
+        if (isContinuous) {
+            // Supermarket conveyor-belt / cash register mode: sell 1 unit instantly
+            viewModelScope.launch {
+                val success = repository.sell(product.catalogCode, 1)
+                if (success) {
+                    val remaining = (product.stockQuantity - 1).coerceAtLeast(0)
+                    _uiState.update {
+                        it.copy(
+                            notice = "✓ Scanned 1x ${product.name} · KSh ${product.sellingPriceKsh} (Rem: $remaining)"
+                        )
+                    }
+                } else {
+                    _uiState.update { it.copy(notice = "⚠️ Could not sell ${product.name}: check stock.") }
+                }
+            }
+        } else {
+            // Open sale sheet
+            openSale(product)
+        }
+    }
+
+    fun handleScannedStock(product: ProductEntity) {
+        if (product.inMyStock) {
+            // Already in shop stock: prompt to restock
+            _uiState.update {
+                it.copy(
+                    isScannerOpen = false,
+                    tab = PosTab.STOCK,
+                    stockMode = StockMode.MY_STOCK,
+                    stockQuery = product.name,
+                    notice = "Scanned: ${product.name} (Current: ${product.stockQuantity} units)"
+                )
+            }
+        } else {
+            // In library, not yet in shop stock
+            _uiState.update {
+                it.copy(
+                    isScannerOpen = false,
+                    tab = PosTab.STOCK,
+                    stockMode = StockMode.LIBRARY,
+                    selectedAddCode = product.catalogCode,
+                    addQuantity = 6,
+                    addPriceText = product.suggestedPriceKsh.toString(),
+                    notice = "Found ${product.name} in beverage catalog! Set your initial stock."
+                )
+            }
+        }
+    }
+
+    fun handleUnrecognizedBarcode(barcode: String) {
+        _uiState.update {
+            it.copy(
+                unrecognizedBarcode = barcode,
+                notice = "New barcode detected: $barcode"
+            )
+        }
+    }
+
+    fun dismissUnrecognizedBarcode() = _uiState.update {
+        it.copy(unrecognizedBarcode = null)
+    }
+
+    fun registerNewBarcodeProduct(
+        barcode: String,
+        name: String,
+        category: String,
+        priceKsh: Int,
+        initialStock: Int,
+        brand: String = "",
+        size: String = ""
+    ) {
+        if (name.isBlank() || priceKsh < 1) {
+            _uiState.update { it.copy(actionError = "Enter a valid product name and selling price.") }
+            return
+        }
+        viewModelScope.launch {
+            val success = repository.registerNewProduct(
+                barcode = barcode,
+                name = name,
+                category = category,
+                priceKsh = priceKsh,
+                initialStock = initialStock,
+                brand = brand,
+                size = size
+            )
+            _uiState.update {
+                if (success) {
+                    it.copy(
+                        unrecognizedBarcode = null,
+                        notice = "Registered $name ($barcode) with $initialStock in stock"
+                    )
+                } else {
+                    it.copy(actionError = "Could not register product.")
+                }
+            }
+        }
     }
 
     fun openSale(product: ProductEntity) = _uiState.update {

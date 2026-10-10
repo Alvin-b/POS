@@ -40,8 +40,8 @@ class MainActivity : ComponentActivity() {
             CounterPosTheme {
                 val darkTheme = isSystemInDarkTheme()
                 SideEffect {
-                    window.statusBarColor = (if (darkTheme) Color(0xFF0E1116) else Color(0xFFE9ECEF)).toArgb()
-                    window.navigationBarColor = (if (darkTheme) Color(0xFF181C23) else Color.White).toArgb()
+                    window.statusBarColor = (if (darkTheme) Color(0xFF0B0F17) else Color(0xFFF8FAFC)).toArgb()
+                    window.navigationBarColor = (if (darkTheme) Color(0xFF131B26) else Color.White).toArgb()
                     WindowInsetsControllerCompat(window, window.decorView).apply {
                         isAppearanceLightStatusBars = !darkTheme
                         isAppearanceLightNavigationBars = !darkTheme
