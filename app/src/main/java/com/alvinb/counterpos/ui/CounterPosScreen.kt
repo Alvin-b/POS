@@ -576,17 +576,6 @@ private fun FullscreenSellScreen(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Hero Scan Banner inside the scroll area so it doesn't statically cover the screen!
-        item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
-            QuickScanActionStrip(
-                title = "Supermarket Camera Scanner",
-                subtitle = "Point at bottle barcode to sell instantly",
-                actionLabel = "START SCAN",
-                backgroundColor = MaterialTheme.colorScheme.primary,
-                onClick = onOpenScanner
-            )
-        }
-
         // Category filter chips
         if (categories.size > 2) {
             item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
