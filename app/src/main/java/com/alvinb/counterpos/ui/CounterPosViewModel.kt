@@ -52,6 +52,7 @@ data class CounterPosUiState(
     // Camera Scanner
     val isScannerOpen: Boolean = false,
     val scannerMode: ScannerMode = ScannerMode.SELL,
+    val barcodeAssignmentCode: String? = null,
     val unrecognizedBarcode: String? = null,
 
     val actionError: String? = null,
@@ -107,6 +108,20 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
 
     fun closeScanner() = _uiState.update {
         it.copy(isScannerOpen = false, unrecognizedBarcode = null)
+    }
+
+    fun startBarcodeAssignment(product: ProductEntity) = _uiState.update {
+        it.copy(isScannerOpen = true, scannerMode = ScannerMode.ASSIGN_BARCODE, barcodeAssignmentCode = product.catalogCode, actionError = null)
+    }
+
+    fun handleAssignedBarcode(barcode: String) {
+        val code = _uiState.value.barcodeAssignmentCode ?: return
+        viewModelScope.launch {
+            val success = repository.assignBarcode(code, barcode)
+            _uiState.update {
+                it.copy(isScannerOpen = false, barcodeAssignmentCode = null, notice = if (success) "Barcode linked to product" else "Barcode is already assigned or could not be saved")
+            }
+        }
     }
 
     fun handleScannedSale(product: ProductEntity, isContinuous: Boolean) {

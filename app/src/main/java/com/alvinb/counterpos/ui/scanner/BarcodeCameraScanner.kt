@@ -113,7 +113,8 @@ import java.util.concurrent.Executors
 
 enum class ScannerMode {
     SELL,
-    TAKE_STOCK
+    TAKE_STOCK,
+    ASSIGN_BARCODE
 }
 
 @Composable
@@ -123,6 +124,7 @@ fun BarcodeScannerScreen(
     onClose: () -> Unit,
     onProductScannedForSale: (ProductEntity, Boolean) -> Unit, // product, isContinuous
     onProductScannedForStock: (ProductEntity) -> Unit,
+    onBarcodeAssigned: (String) -> Unit,
     onBarcodeNotRecognized: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -151,6 +153,7 @@ fun BarcodeScannerScreen(
             onClose = onClose,
             onProductScannedForSale = onProductScannedForSale,
             onProductScannedForStock = onProductScannedForStock,
+            onBarcodeAssigned = onBarcodeAssigned,
             onBarcodeNotRecognized = onBarcodeNotRecognized
         )
     } else {
@@ -168,6 +171,7 @@ fun BarcodeScannerScreen(
                     continuousMode = false,
                     onProductScannedForSale = onProductScannedForSale,
                     onProductScannedForStock = onProductScannedForStock,
+                    onBarcodeAssigned = onBarcodeAssigned,
                     onBarcodeNotRecognized = onBarcodeNotRecognized
                 )
             }
@@ -183,6 +187,7 @@ private fun CameraScannerView(
     onClose: () -> Unit,
     onProductScannedForSale: (ProductEntity, Boolean) -> Unit,
     onProductScannedForStock: (ProductEntity) -> Unit,
+    onBarcodeAssigned: (String) -> Unit,
     onBarcodeNotRecognized: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -258,6 +263,7 @@ private fun CameraScannerView(
             continuousMode = isContinuousMode,
             onProductScannedForSale = onProductScannedForSale,
             onProductScannedForStock = onProductScannedForStock,
+            onBarcodeAssigned = onBarcodeAssigned,
             onBarcodeNotRecognized = onBarcodeNotRecognized
         )
     }
@@ -775,8 +781,13 @@ private fun handleBarcodeResult(
     continuousMode: Boolean,
     onProductScannedForSale: (ProductEntity, Boolean) -> Unit,
     onProductScannedForStock: (ProductEntity) -> Unit,
+    onBarcodeAssigned: (String) -> Unit,
     onBarcodeNotRecognized: (String) -> Unit
 ) {
+    if (mode == ScannerMode.ASSIGN_BARCODE) {
+        onBarcodeAssigned(barcode.trim())
+        return
+    }
     val matched = findProductByCodeOrBarcode(barcode, products)
     if (matched != null) {
         if (mode == ScannerMode.SELL) {

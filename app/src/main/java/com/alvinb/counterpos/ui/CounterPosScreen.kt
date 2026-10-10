@@ -166,6 +166,7 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
             onClose = viewModel::closeScanner,
             onProductScannedForSale = viewModel::handleScannedSale,
             onProductScannedForStock = viewModel::handleScannedStock,
+            onBarcodeAssigned = viewModel::handleAssignedBarcode,
             onBarcodeNotRecognized = viewModel::handleUnrecognizedBarcode
         )
         return
@@ -314,6 +315,10 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                 onDismiss = viewModel::dismissEditProduct,
                 onConfirm = { name, stock, price, units ->
                     viewModel.confirmEditProduct(product, name, stock, price, units)
+                },
+                onScanBarcode = {
+                    viewModel.dismissEditProduct()
+                    viewModel.startBarcodeAssignment(product)
                 }
             )
         }
@@ -1447,7 +1452,8 @@ private fun EditProductDialog(
     product: ProductEntity,
     error: String?,
     onDismiss: () -> Unit,
-    onConfirm: (name: String, stock: Int, price: Int, units: List<SaleUnit>) -> Unit
+    onConfirm: (name: String, stock: Int, price: Int, units: List<SaleUnit>) -> Unit,
+    onScanBarcode: () -> Unit
 ) {
     var name by remember(product.catalogCode) { mutableStateOf(product.name) }
     var stockText by remember(product.catalogCode) { mutableStateOf(product.stockQuantity.toString()) }
@@ -1519,6 +1525,14 @@ private fun EditProductDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
+                OutlinedButton(
+                    onClick = onScanBarcode,
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
+                ) {
+                    Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (product.verifiedBarcode.isNullOrBlank()) "Scan barcode for this product" else "Replace barcode")
+                }
                 // List of units
                 unitsList.forEachIndexed { index, unit ->
                     Row(

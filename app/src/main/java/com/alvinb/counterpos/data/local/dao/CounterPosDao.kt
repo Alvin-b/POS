@@ -33,6 +33,9 @@ interface CounterPosDao {
     @Query("SELECT * FROM products WHERE catalogCode = :barcode OR verifiedBarcode = :barcode LIMIT 1")
     suspend fun getProductByBarcode(barcode: String): ProductEntity?
 
+    @Query("UPDATE products SET verifiedBarcode = :barcode WHERE catalogCode = :code")
+    suspend fun assignBarcode(code: String, barcode: String): Int
+
     @Update
     suspend fun updateProduct(product: ProductEntity): Int
 

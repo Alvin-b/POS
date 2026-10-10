@@ -88,6 +88,14 @@ class CounterPosRepository(
     suspend fun findByBarcode(barcode: String): ProductEntity? =
         dao.getProductByBarcode(barcode.trim())
 
+    suspend fun assignBarcode(code: String, barcode: String): Boolean = withContext(Dispatchers.IO) {
+        val clean = barcode.trim()
+        if (clean.isBlank()) return@withContext false
+        val existing = dao.getProductByBarcode(clean)
+        if (existing != null && existing.catalogCode != code) return@withContext false
+        dao.assignBarcode(code, clean) == 1
+    }
+
     suspend fun registerNewProduct(
         barcode: String,
         name: String,
