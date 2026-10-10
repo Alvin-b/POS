@@ -53,6 +53,23 @@ class CounterPosRepository(
                 )
             }
         }
+        // Earlier builds shipped the new batch with LIB-B1-xxx placeholder codes.
+        // Rename those rows in place so upgrades do not create duplicate products
+        // or orphan their existing sales history.
+        seededProducts.forEachIndexed { index, product ->
+            if (product.catalogCode.all(Char::isDigit) && index >= 96) {
+                val legacyCode = "LIB-B1-%03d".format(index - 95)
+                val legacy = dao.getProductByCode(legacyCode)
+                if (legacy != null) {
+                    val current = dao.getProductByCode(product.catalogCode)
+                    if (current == null) {
+                        dao.insertProduct(legacy.copy(catalogCode = product.catalogCode))
+                    }
+                    dao.migrateSaleCatalogCode(legacyCode, product.catalogCode)
+                    dao.deleteProductByCode(legacyCode)
+                }
+            }
+        }
         dao.insertProducts(seededProducts)
     }
 

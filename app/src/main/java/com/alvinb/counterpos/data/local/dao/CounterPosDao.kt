@@ -30,6 +30,12 @@ interface CounterPosDao {
     @Query("SELECT * FROM products WHERE catalogCode = :code LIMIT 1")
     suspend fun getProductByCode(code: String): ProductEntity?
 
+    @Query("DELETE FROM products WHERE catalogCode = :code")
+    suspend fun deleteProductByCode(code: String): Int
+
+    @Query("UPDATE sales SET catalogCode = :newCode WHERE catalogCode = :oldCode")
+    suspend fun migrateSaleCatalogCode(oldCode: String, newCode: String): Int
+
     @Query("SELECT * FROM products WHERE catalogCode = :barcode OR verifiedBarcode = :barcode LIMIT 1")
     suspend fun getProductByBarcode(barcode: String): ProductEntity?
 
