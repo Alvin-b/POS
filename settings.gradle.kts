@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Pulse Club POS"
+rootProject.name = "Counter POS"
 
 include(":app")

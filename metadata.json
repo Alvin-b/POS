@@ -1,6 +1,6 @@
 {
-  "name": "Pulse Club POS",
-  "description": "High-speed nightclub point-of-sale system featuring fast bar tabs, VIP bottle service, speed rail ordering, shift summaries, and stock management.",
+  "name": "Counter POS",
+  "description": "Mobile beverage point-of-sale app for Kenya with product search, real product photos, sales, stock tracking, and a searchable product library.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": []
 }
