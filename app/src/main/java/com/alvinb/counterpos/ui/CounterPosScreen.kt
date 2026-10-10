@@ -1,6 +1,7 @@
 package com.alvinb.counterpos.ui
 
 import android.content.Intent
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -8,7 +9,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,12 +22,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -33,14 +34,20 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.LocalDrink
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Remove
@@ -70,20 +77,30 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -93,6 +110,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
+import com.alvinb.counterpos.data.local.entity.SaleUnit
+import com.alvinb.counterpos.data.local.entity.parseSaleUnits
 import com.alvinb.counterpos.ui.scanner.BarcodeScannerScreen
 import com.alvinb.counterpos.ui.scanner.ScannerMode
 import java.text.NumberFormat
@@ -109,6 +128,8 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
     val products by viewModel.products.collectAsStateWithLifecycle()
     val sales by viewModel.sales.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val snackbarHostState = remember { SnackbarHostState() }
     var photoTargetCode by remember { mutableStateOf<String?>(null) }
 
@@ -137,7 +158,7 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
         }
     }
 
-    // Fullscreen Camera Scanner
+    // Camera Scanner view
     if (state.isScannerOpen) {
         BarcodeScannerScreen(
             mode = state.scannerMode,
@@ -151,33 +172,55 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
     }
 
     Scaffold(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = {
+                    focusManager.clearFocus()
+                    keyboardController?.hide()
+                    if (state.isSearchActive && state.searchQuery.isBlank()) {
+                        viewModel.setSearchActive(false)
+                    }
+                })
+            },
         topBar = {
-            PosHeader(
+            LeanTopBar(
+                state = state,
                 todaySalesKsh = summary.first,
                 unitsSold = summary.second,
-                onOpenScanner = { viewModel.openScanner(ScannerMode.SELL) },
+                onSearchToggle = { active -> viewModel.setSearchActive(active) },
+                onSearchChange = viewModel::setSearchQuery,
+                onClearSearch = viewModel::clearSearch,
+                onOpenScanner = { viewModel.openScanner(if (state.tab == PosTab.STOCK) ScannerMode.TAKE_STOCK else ScannerMode.SELL) },
+                onAddNewProduct = { viewModel.openAddNewProduct() },
                 modifier = Modifier.statusBarsPadding()
             )
         },
         bottomBar = {
-            NavigationBar {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surface,
+                tonalElevation = 3.dp
+            ) {
                 NavigationBarItem(
                     selected = state.tab == PosTab.SCAN,
                     onClick = { viewModel.selectTab(PosTab.SCAN) },
-                    icon = { Icon(Icons.Default.ShoppingCart, contentDescription = null) },
-                    label = { Text("POS / Sell") }
+                    icon = { Icon(Icons.Default.ShoppingCart, contentDescription = "POS") },
+                    label = { Text("POS / Sell", fontSize = 11.sp, fontWeight = if (state.tab == PosTab.SCAN) FontWeight.Bold else FontWeight.Normal) },
+                    modifier = Modifier.testTag("nav_pos")
                 )
                 NavigationBarItem(
                     selected = state.tab == PosTab.STOCK,
                     onClick = { viewModel.selectTab(PosTab.STOCK) },
-                    icon = { Icon(Icons.Default.Inventory2, contentDescription = null) },
-                    label = { Text("Stock & Scan") }
+                    icon = { Icon(Icons.Default.Inventory2, contentDescription = "Stock") },
+                    label = { Text("Stock (${products.count { it.inMyStock }})", fontSize = 11.sp, fontWeight = if (state.tab == PosTab.STOCK) FontWeight.Bold else FontWeight.Normal) },
+                    modifier = Modifier.testTag("nav_stock")
                 )
                 NavigationBarItem(
                     selected = state.tab == PosTab.SALES,
                     onClick = { viewModel.selectTab(PosTab.SALES) },
-                    icon = { Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = null) },
-                    label = { Text("Sales") }
+                    icon = { Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = "Sales") },
+                    label = { Text("Sales", fontSize = 11.sp, fontWeight = if (state.tab == PosTab.SALES) FontWeight.Bold else FontWeight.Normal) },
+                    modifier = Modifier.testTag("nav_sales")
                 )
             }
         },
@@ -188,44 +231,39 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
-        } else if (state.startupError != null && products.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-                    Text("Product catalog could not be loaded", fontWeight = FontWeight.Bold)
-                    Text(state.startupError.orEmpty(), modifier = Modifier.padding(top = 8.dp))
-                }
-            }
         } else {
             when (state.tab) {
-                PosTab.SCAN -> LeanScanScreen(
-                    modifier = Modifier.padding(padding),
+                PosTab.SCAN -> FullscreenSellScreen(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding),
                     state = state,
                     products = products,
-                    onQueryChange = viewModel::setScanQuery,
                     onOpenScanner = { viewModel.openScanner(ScannerMode.SELL) },
                     onProductClick = viewModel::openSale
                 )
-                PosTab.STOCK -> LeanStockScreen(
-                    modifier = Modifier.padding(padding),
+                PosTab.STOCK -> FullscreenStockScreen(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding),
                     state = state,
                     products = products,
                     onModeChange = viewModel::setStockMode,
-                    onQueryChange = { query ->
-                        if (state.stockMode == StockMode.MY_STOCK) viewModel.setStockQuery(query)
-                        else viewModel.setLibraryQuery(query)
-                    },
                     onCategoryChange = viewModel::setLibraryCategory,
                     onOpenStockScanner = { viewModel.openScanner(ScannerMode.TAKE_STOCK) },
-                    onReceiveStock = viewModel::requestReceiveStock,
-                    onQuickRestock = viewModel::quickRestock,
+                    onAddStockClick = viewModel::openAddStock,
+                    onEditProductClick = viewModel::openEditProduct,
+                    onAddNewProductClick = { viewModel.openAddNewProduct() },
+                    onAddCatalogClick = viewModel::openCatalogItem,
                     onChangePhoto = { product ->
                         photoTargetCode = product.catalogCode
                         photoPicker.launch(arrayOf("image/*"))
-                    },
-                    onAddProduct = viewModel::openLibraryProduct
+                    }
                 )
-                PosTab.SALES -> SalesScreen(
-                    modifier = Modifier.padding(padding),
+                PosTab.SALES -> FullscreenSalesScreen(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding),
                     sales = sales,
                     todaySummary = summary,
                     onUndo = viewModel::undoLastSale
@@ -234,14 +272,20 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
         }
     }
 
-    // Modal Sheet for Selling a Product
+    // Modal: Sell Product with Units of Sale (e.g. Bottle, Glass, Cup)
     state.selectedSaleCode?.let { code ->
         products.firstOrNull { it.catalogCode == code }?.let { product ->
-            ModalBottomSheet(onDismissRequest = viewModel::dismissSale) {
-                SaleSheet(
+            ModalBottomSheet(
+                onDismissRequest = viewModel::dismissSale,
+                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+            ) {
+                SaleWithUnitsSheet(
                     product = product,
+                    selectedUnitName = state.selectedUnitName,
+                    selectedUnitPrice = state.selectedUnitPrice,
                     quantity = state.saleQuantity,
                     error = state.actionError,
+                    onSelectUnit = viewModel::selectSaleUnit,
                     onQuantityChange = viewModel::adjustSaleQuantity,
                     onConfirm = viewModel::confirmSale
                 )
@@ -249,90 +293,167 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
         }
     }
 
-    // Modal Sheet for Adding Product from Catalog to My Stock
-    state.selectedAddCode?.let { code ->
+    // Modal: Add bottles to stock
+    state.addStockProductCode?.let { code ->
         products.firstOrNull { it.catalogCode == code }?.let { product ->
-            ModalBottomSheet(onDismissRequest = viewModel::dismissAdd) {
-                AddToStockSheet(
-                    product = product,
-                    quantity = state.addQuantity,
-                    priceText = state.addPriceText,
-                    error = state.actionError,
-                    onQuantityChange = viewModel::adjustAddQuantity,
-                    onAddQuantity = viewModel::addQuantity,
-                    onSetQuantity = viewModel::setAddQuantity,
-                    onPriceChange = viewModel::setAddPrice,
-                    onConfirm = viewModel::confirmAddToStock
-                )
+            AddBottlesDialog(
+                product = product,
+                error = state.actionError,
+                onDismiss = viewModel::dismissAddStock,
+                onConfirm = { bottles -> viewModel.confirmAddStock(product, bottles) }
+            )
+        }
+    }
+
+    // Modal: Edit Product & Stock details
+    state.editProductCode?.let { code ->
+        products.firstOrNull { it.catalogCode == code }?.let { product ->
+            EditProductDialog(
+                product = product,
+                error = state.actionError,
+                onDismiss = viewModel::dismissEditProduct,
+                onConfirm = { name, stock, price, units ->
+                    viewModel.confirmEditProduct(product, name, stock, price, units)
+                }
+            )
+        }
+    }
+
+    // Modal: Add New Product with Configurable Units of Sale (e.g. Local liquor: cup, glass, price)
+    if (state.isAddingNewProduct) {
+        AddNewProductDialog(
+            prefilledBarcode = state.prefilledBarcode,
+            error = state.actionError,
+            onDismiss = viewModel::dismissAddNewProduct,
+            onScanBarcode = {
+                viewModel.dismissAddNewProduct()
+                viewModel.openScanner(ScannerMode.TAKE_STOCK)
+            },
+            onConfirm = { name, barcode, cat, price, stock, units ->
+                viewModel.confirmCreateProduct(name, barcode, cat, price, stock, units)
             }
-        }
-    }
-
-    // Modal Sheet for Receiving Stock
-    if (state.showReceiveStock) {
-        ModalBottomSheet(onDismissRequest = viewModel::dismissReceiveStock) {
-            ReceiveStockSheet(
-                products = products.filter { it.inMyStock },
-                error = state.actionError,
-                onReceive = viewModel::receiveStock,
-                onOpenScanner = {
-                    viewModel.dismissReceiveStock()
-                    viewModel.openScanner(ScannerMode.TAKE_STOCK)
-                }
-            )
-        }
-    }
-
-    // Unrecognized Barcode Modal Sheet
-    state.unrecognizedBarcode?.let { barcode ->
-        ModalBottomSheet(onDismissRequest = viewModel::dismissUnrecognizedBarcode) {
-            RegisterBarcodeSheet(
-                barcode = barcode,
-                error = state.actionError,
-                onDismiss = viewModel::dismissUnrecognizedBarcode,
-                onRegister = { b, name, cat, price, stock ->
-                    viewModel.registerNewBarcodeProduct(
-                        barcode = b,
-                        name = name,
-                        category = cat,
-                        priceKsh = price,
-                        initialStock = stock
-                    )
-                }
-            )
-        }
-    }
-
-    state.startupError?.takeIf { products.isNotEmpty() }?.let { error ->
-        AlertDialog(
-            onDismissRequest = viewModel::clearStartupError,
-            title = { Text("Catalog warning") },
-            text = { Text(error) },
-            confirmButton = { TextButton(onClick = viewModel::clearStartupError) { Text("OK") } }
         )
+    }
+
+    // Modal: Add from Beverage Catalog
+    state.selectedCatalogCode?.let { code ->
+        products.firstOrNull { it.catalogCode == code }?.let { product ->
+            AddCatalogItemDialog(
+                product = product,
+                error = state.actionError,
+                onDismiss = viewModel::dismissCatalogItem,
+                onConfirm = { qty, price ->
+                    viewModel.confirmAddCatalogItem(code, qty, price)
+                }
+            )
+        }
     }
 }
 
+/**
+ * Lean top bar:
+ * - Doesn't waste 40% of the screen with static bulk.
+ * - Icon-based search: click magnifying glass to open search, click outside / 'X' to close.
+ * - Live sales summary pill and quick scanner trigger.
+ */
 @Composable
-private fun PosHeader(
+private fun LeanTopBar(
+    state: CounterPosUiState,
     todaySalesKsh: Int,
     unitsSold: Int,
+    onSearchToggle: (Boolean) -> Unit,
+    onSearchChange: (String) -> Unit,
+    onClearSearch: () -> Unit,
     onOpenScanner: () -> Unit,
+    onAddNewProduct: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val searchFocusRequester = remember { FocusRequester() }
+
     Surface(
-        modifier = modifier,
+        modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surface,
-        shadowElevation = 2.dp
+        shadowElevation = 1.dp
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
+        if (state.isSearchActive) {
+            // Expanded search mode with instant outside-dismiss and close
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = {
+                        focusManager.clearFocus()
+                        keyboardController?.hide()
+                        onClearSearch()
+                    }
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Exit search"
+                    )
+                }
+
+                OutlinedTextField(
+                    value = state.searchQuery,
+                    onValueChange = onSearchChange,
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(searchFocusRequester)
+                        .testTag("search_text_input"),
+                    placeholder = {
+                        Text(
+                            if (state.tab == PosTab.STOCK) "Search bottles & brands..." else "Search to sell...",
+                            fontSize = 14.sp
+                        )
+                    },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = {
+                        focusManager.clearFocus()
+                        keyboardController?.hide()
+                    }),
+                    trailingIcon = {
+                        if (state.searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { onSearchChange("") }) {
+                                Icon(Icons.Default.Close, contentDescription = "Clear text", modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    },
+                    shape = RoundedCornerShape(24.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = Color.Transparent
+                    )
+                )
+
+                IconButton(onClick = onOpenScanner) {
+                    Icon(
+                        imageVector = Icons.Default.QrCodeScanner,
+                        contentDescription = "Scan barcode",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+
+            LaunchedEffect(Unit) {
+                searchFocusRequester.requestFocus()
+            }
+        } else {
+            // Ultra-compact normal top bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         modifier = Modifier
@@ -340,52 +461,77 @@ private fun PosHeader(
                             .clip(CircleShape)
                             .background(Color(0xFF10B981))
                     )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        "Pulse Counter POS",
-                        fontSize = 19.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-                Text(
-                    "Club & Beverage Register",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        ksh(todaySalesKsh),
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        "$unitsSold units sold",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                Surface(
-                    onClick = onOpenScanner,
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier.size(42.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.QrCodeScanner,
-                            contentDescription = "Scan barcode",
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.size(22.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = "Counter POS",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
+                        Text(
+                            text = if (unitsSold > 0) "${ksh(todaySalesKsh)} · $unitsSold sold" else "Tap 📷 to scan barcode",
+                            fontSize = 11.sp,
+                            color = if (unitsSold > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = if (unitsSold > 0) FontWeight.SemiBold else FontWeight.Normal
+                        )
+                    }
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    // Search icon button (avoids using so much static space!)
+                    IconButton(
+                        onClick = { onSearchToggle(true) },
+                        modifier = Modifier.testTag("search_icon_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Search products"
+                        )
+                    }
+
+                    // In Stock section, show Add New Product icon
+                    if (state.tab == PosTab.STOCK) {
+                        IconButton(
+                            onClick = onAddNewProduct,
+                            modifier = Modifier.testTag("add_product_icon_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Add new product",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    // Barcode Scanner button
+                    Surface(
+                        onClick = onOpenScanner,
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.testTag("top_scanner_button")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.QrCodeScanner,
+                                contentDescription = "Open scanner",
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                "Scan",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
                     }
                 }
             }
@@ -393,12 +539,14 @@ private fun PosHeader(
     }
 }
 
+/**
+ * POS / Sell Screen - Full Screen Scrollable!
+ */
 @Composable
-private fun LeanScanScreen(
+private fun FullscreenSellScreen(
     modifier: Modifier,
     state: CounterPosUiState,
     products: List<ProductEntity>,
-    onQueryChange: (String) -> Unit,
     onOpenScanner: () -> Unit,
     onProductClick: (ProductEntity) -> Unit
 ) {
@@ -409,400 +557,394 @@ private fun LeanScanScreen(
         listOf("All") + stocked.map { it.category }.distinct().sorted()
     }
 
-    val visible = remember(stocked, state.scanQuery, selectedCategory) {
+    val visible = remember(stocked, state.searchQuery, selectedCategory) {
         stocked.filter { product ->
             (selectedCategory == "All" || product.category.equals(selectedCategory, ignoreCase = true)) &&
-                product.matches(state.scanQuery)
+                product.matches(state.searchQuery)
         }
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 14.dp, vertical = 8.dp)
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = 145.dp),
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 24.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Quick Camera Scan Banner (Supermarket style)
-        Card(
-            onClick = onOpenScanner,
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 10.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = Color.White.copy(alpha = 0.2f),
-                        modifier = Modifier.size(38.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.QrCodeScanner,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-                    }
-                    Column {
-                        Text(
-                            "Camera Barcode Scanner",
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            fontSize = 15.sp
-                        )
-                        Text(
-                            "Scan to sell · Continuous supermarket mode",
-                            color = Color.White.copy(alpha = 0.85f),
-                            fontSize = 11.sp
-                        )
-                    }
-                }
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = Color.White,
-                    modifier = Modifier.padding(start = 6.dp)
-                ) {
-                    Text(
-                        "SCAN",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                    )
-                }
-            }
+        // Hero Scan Banner inside the scroll area so it doesn't statically cover the screen!
+        item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+            QuickScanActionStrip(
+                title = "Supermarket Camera Scanner",
+                subtitle = "Point at bottle barcode to sell instantly",
+                actionLabel = "START SCAN",
+                backgroundColor = MaterialTheme.colorScheme.primary,
+                onClick = onOpenScanner
+            )
         }
 
-        // Lean Search Bar without any bulky find button!
-        LeanSearchBar(
-            value = state.scanQuery,
-            onValueChange = onQueryChange,
-            placeholder = "Search product or barcode...",
-            onScanClick = onOpenScanner,
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        // Category Filter Chips
+        // Category filter chips
         if (categories.size > 2) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp, bottom = 4.dp)
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                categories.forEach { category ->
-                    FilterChip(
-                        selected = selectedCategory == category,
-                        onClick = { selectedCategory = category },
-                        label = { Text(category, fontSize = 12.sp) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                            selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+            item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    categories.forEach { category ->
+                        FilterChip(
+                            selected = selectedCategory == category,
+                            onClick = { selectedCategory = category },
+                            label = { Text(category, fontSize = 12.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
                         )
-                    )
+                    }
                 }
             }
         }
 
-        // Section Title & Counter
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 6.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                "Products in Stock (${visible.size})",
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                "Tap item to sell",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+        // Section header
+        item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Shop Inventory (${visible.size})",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "Tap to sell bottle / glass / cup",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
         }
 
         if (visible.isEmpty()) {
-            EmptyMessage(
-                if (stocked.isEmpty()) {
-                    "Your stock is empty. Tap 'Stock & Scan' below to scan bottles into your shop."
-                } else {
-                    "No stocked items match '${state.scanQuery}'."
-                }
-            )
+            item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                EmptyStateMessage(
+                    if (stocked.isEmpty()) {
+                        "Your shop stock is empty.\nGo to 'Stock' tab below or tap 'Scan' to add bottles to your shelves."
+                    } else {
+                        "No products match '${state.searchQuery}'."
+                    }
+                )
+            }
         } else {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 145.dp),
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(bottom = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                items(visible, key = { it.catalogCode }) { product ->
-                    ProductTile(product = product, onClick = { onProductClick(product) })
-                }
+            items(visible, key = { it.catalogCode }) { product ->
+                ProductSellCard(product = product, onClick = { onProductClick(product) })
             }
         }
     }
 }
 
+/**
+ * Stock & Inventory Screen - Full Screen Scrollable!
+ * Features:
+ * - Direct "+ Add" button per product to add specific number of bottles (NO +24 and +6 buttons)
+ * - Edit Stock for each product (edit count, price, and units of sales)
+ * - Add New Product button (configure name, price, stock, and units like cups/glasses for local liquor)
+ */
 @Composable
-private fun LeanStockScreen(
+private fun FullscreenStockScreen(
     modifier: Modifier,
     state: CounterPosUiState,
     products: List<ProductEntity>,
     onModeChange: (StockMode) -> Unit,
-    onQueryChange: (String) -> Unit,
     onCategoryChange: (String) -> Unit,
     onOpenStockScanner: () -> Unit,
-    onReceiveStock: () -> Unit,
-    onQuickRestock: (ProductEntity, Int) -> Unit,
-    onChangePhoto: (ProductEntity) -> Unit,
-    onAddProduct: (ProductEntity) -> Unit
+    onAddStockClick: (ProductEntity) -> Unit,
+    onEditProductClick: (ProductEntity) -> Unit,
+    onAddNewProductClick: () -> Unit,
+    onAddCatalogClick: (ProductEntity) -> Unit,
+    onChangePhoto: (ProductEntity) -> Unit
 ) {
     val mine = remember(products) { products.filter { it.inMyStock } }
     val library = remember(products) { products.filter { !it.inMyStock } }
 
-    val visible = remember(mine, library, state.stockMode, state.stockQuery, state.libraryQuery, state.libraryCategory) {
+    val visible = remember(mine, library, state.stockMode, state.searchQuery, state.libraryCategory) {
         if (state.stockMode == StockMode.MY_STOCK) {
-            mine.filter { it.matches(state.stockQuery) }
+            mine.filter { it.matches(state.searchQuery) }
         } else {
-            library.filter { (state.libraryCategory == "All" || it.category == state.libraryCategory) && it.matches(state.libraryQuery) }
+            library.filter { (state.libraryCategory == "All" || it.category == state.libraryCategory) && it.matches(state.searchQuery) }
         }
     }
 
     val categories = remember(library) { listOf("All") + library.map { it.category }.distinct().sorted() }
+    val totalBottles = remember(mine) { mine.sumOf { it.stockQuantity } }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 14.dp, vertical = 8.dp)
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // Stock Header Statistics
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatCard("Registered in Shop", mine.size.toString(), Modifier.weight(1f))
-            StatCard("Total Units on Shelf", mine.sumOf { it.stockQuantity }.toString(), Modifier.weight(1f))
+        // Stock Camera Restock Strip inside scrollable area
+        item {
+            QuickScanActionStrip(
+                title = "Scan to Take Stock / Restock",
+                subtitle = "Point camera at cartons or bottles to increase stock",
+                actionLabel = "TAKE STOCK",
+                backgroundColor = Color(0xFFD97706),
+                onClick = onOpenStockScanner
+            )
         }
 
-        // Camera Take Stock Button
-        Card(
-            onClick = onOpenStockScanner,
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFD97706)),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 10.dp, bottom = 8.dp)
-        ) {
+        // Mode switch + Add Product action bar
+        item {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = Color.White.copy(alpha = 0.2f),
-                        modifier = Modifier.size(38.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.QrCodeScanner,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-                    }
-                    Column {
-                        Text(
-                            "Scan to Take Stock / Receive",
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            fontSize = 15.sp
-                        )
-                        Text(
-                            "Point camera at bottles or cartons to restock",
-                            color = Color.White.copy(alpha = 0.85f),
-                            fontSize = 11.sp
-                        )
-                    }
-                }
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = Color.White,
-                    modifier = Modifier.padding(start = 6.dp)
+                // My Stock Tab Button
+                Button(
+                    onClick = { onModeChange(StockMode.MY_STOCK) },
+                    modifier = Modifier.weight(1f),
+                    colors = if (state.stockMode == StockMode.MY_STOCK) ButtonDefaults.buttonColors() else ButtonDefaults.outlinedButtonColors()
                 ) {
                     Text(
-                        "SCAN",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFFD97706),
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        "Shop Shelf (${mine.size})",
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
+                }
+
+                // Beverage Library Tab Button
+                Button(
+                    onClick = { onModeChange(StockMode.LIBRARY) },
+                    modifier = Modifier.weight(1f),
+                    colors = if (state.stockMode == StockMode.LIBRARY) ButtonDefaults.buttonColors() else ButtonDefaults.outlinedButtonColors()
+                ) {
+                    Text(
+                        "Catalog (${library.size})",
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                // "+ Add New Product" Button
+                Surface(
+                    onClick = onAddNewProductClick,
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier.height(40.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 10.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Add,
+                            contentDescription = "New Product",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            "New",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
                 }
             }
         }
 
-        // Mode switch buttons
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            ModeButton("My Stock (${mine.size})", state.stockMode == StockMode.MY_STOCK, Modifier.weight(1f)) {
-                onModeChange(StockMode.MY_STOCK)
-            }
-            ModeButton("Beverage Library (${library.size})", state.stockMode == StockMode.LIBRARY, Modifier.weight(1f)) {
-                onModeChange(StockMode.LIBRARY)
+        // Shelf summary pill
+        if (state.stockMode == StockMode.MY_STOCK) {
+            item {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Total: $totalBottles bottles on shelf across ${mine.size} products",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            "Add / Edit below",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
         }
 
-        // Lean Search Bar without any find button
-        LeanSearchBar(
-            value = if (state.stockMode == StockMode.MY_STOCK) state.stockQuery else state.libraryQuery,
-            onValueChange = onQueryChange,
-            placeholder = if (state.stockMode == StockMode.MY_STOCK) "Search shop stock..." else "Search beverage catalog...",
-            onScanClick = onOpenStockScanner,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp)
-        )
-
+        // Category filter in Library mode
         if (state.stockMode == StockMode.LIBRARY) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp)
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                categories.forEach { category ->
-                    FilterChip(
-                        selected = state.libraryCategory == category,
-                        onClick = { onCategoryChange(category) },
-                        label = { Text(category, fontSize = 11.sp) }
-                    )
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    categories.forEach { category ->
+                        FilterChip(
+                            selected = state.libraryCategory == category,
+                            onClick = { onCategoryChange(category) },
+                            label = { Text(category, fontSize = 11.sp) }
+                        )
+                    }
                 }
             }
         }
 
         if (visible.isEmpty()) {
-            EmptyMessage(
-                if (state.stockMode == StockMode.LIBRARY) "No other catalog products match."
-                else "No stocked products found."
-            )
+            item {
+                EmptyStateMessage(
+                    if (state.stockMode == StockMode.MY_STOCK) {
+                        "No products in your shop stock yet.\nTap '+ New' above to add local liquor/drinks or select from 'Catalog'."
+                    } else {
+                        "No catalog items match '${state.searchQuery}'."
+                    }
+                )
+            }
         } else if (state.stockMode == StockMode.MY_STOCK) {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(top = 6.dp, bottom = 14.dp)
-            ) {
-                items(visible, key = { it.catalogCode }) { product ->
-                    StockProductRow(
-                        product = product,
-                        onRestockSix = { onQuickRestock(product, 6) },
-                        onRestockTwentyFour = { onQuickRestock(product, 24) },
-                        onChangePhoto = { onChangePhoto(product) }
-                    )
-                }
+            items(visible, key = { it.catalogCode }) { product ->
+                StockProductCard(
+                    product = product,
+                    onAddStock = { onAddStockClick(product) },
+                    onEditProduct = { onEditProductClick(product) },
+                    onChangePhoto = { onChangePhoto(product) }
+                )
             }
         } else {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(top = 6.dp, bottom = 14.dp)
-            ) {
-                items(visible, key = { it.catalogCode }) { product ->
-                    LibraryProductRow(product = product, onAdd = { onAddProduct(product) })
-                }
+            items(visible, key = { it.catalogCode }) { product ->
+                CatalogProductCard(
+                    product = product,
+                    onAdd = { onAddCatalogClick(product) }
+                )
             }
         }
     }
 }
 
+/**
+ * Sales History Screen
+ */
 @Composable
-private fun LeanSearchBar(
-    value: String,
-    onValueChange: (String) -> Unit,
-    placeholder: String,
-    onScanClick: () -> Unit,
-    modifier: Modifier = Modifier
+private fun FullscreenSalesScreen(
+    modifier: Modifier,
+    sales: List<SaleEntity>,
+    todaySummary: Pair<Int, Int>,
+    onUndo: () -> Unit
 ) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
-        modifier = modifier,
-        singleLine = true,
-        placeholder = { Text(placeholder, fontSize = 13.sp) },
-        leadingIcon = {
-            Icon(
-                Icons.Default.Search,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        },
-        trailingIcon = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (value.isNotEmpty()) {
-                    IconButton(onClick = { onValueChange("") }) {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = "Clear search",
-                            modifier = Modifier.size(18.dp)
-                        )
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("Today's Revenue", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Text(ksh(todaySummary.first), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
                     }
                 }
-                IconButton(onClick = onScanClick) {
-                    Icon(
-                        Icons.Default.QrCodeScanner,
-                        contentDescription = "Open camera barcode scanner",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp)
-                    )
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("Units / Bottles Sold", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(todaySummary.second.toString(), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
-        },
-        shape = RoundedCornerShape(12.dp),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedContainerColor = MaterialTheme.colorScheme.surface,
-            unfocusedContainerColor = MaterialTheme.colorScheme.surface
-        )
-    )
+        }
+
+        item {
+            OutlinedButton(
+                onClick = onUndo,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Undo last sale & restore shelf stock")
+            }
+        }
+
+        item {
+            Text(
+                "Sales Receipts (${sales.size})",
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+
+        if (sales.isEmpty()) {
+            item {
+                EmptyStateMessage("No sales made today yet. Go to POS tab to sell products.")
+            }
+        } else {
+            items(sales, key = { it.id }) { sale ->
+                SaleReceiptRow(sale = sale)
+            }
+        }
+    }
 }
 
+/**
+ * Product Tile for Sell / POS Grid
+ */
 @Composable
-private fun ProductTile(product: ProductEntity, onClick: () -> Unit) {
+private fun ProductSellCard(
+    product: ProductEntity,
+    onClick: () -> Unit
+) {
+    val units = remember(product.salesUnitsJson, product.sellingPriceKsh) {
+        parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+    }
+
     Card(
         onClick = onClick,
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(10.dp)) {
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(115.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .height(110.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant)
             ) {
-                ProductPhoto(product, Modifier.fillMaxSize().padding(4.dp))
-                StockPill(
+                ProductThumbnail(product, Modifier.fillMaxSize().padding(4.dp))
+                StockIndicatorPill(
                     quantity = product.stockQuantity,
                     threshold = product.lowStockThreshold,
                     modifier = Modifier
@@ -810,22 +952,38 @@ private fun ProductTile(product: ProductEntity, onClick: () -> Unit) {
                         .padding(6.dp)
                 )
             }
+
             Text(
-                product.name,
-                fontWeight = FontWeight.SemiBold,
+                text = product.name,
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 8.dp),
-                fontSize = 14.sp,
-                lineHeight = 18.sp
+                modifier = Modifier.padding(top = 6.dp),
+                lineHeight = 17.sp
             )
-            Text(
-                listOf(product.brand, product.size).filter(String::isNotBlank).joinToString(" · "),
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+
+            // Show units summary (e.g. "Bottle · Glass · Cup")
+            if (units.size > 1) {
+                Text(
+                    text = units.joinToString(" · ") { "${it.name}: ${it.priceKsh}" },
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            } else {
+                Text(
+                    text = listOf(product.brand, product.size).filter(String::isNotBlank).joinToString(" · ").ifBlank { product.category },
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -839,16 +997,17 @@ private fun ProductTile(product: ProductEntity, onClick: () -> Unit) {
                     fontSize = 15.sp,
                     color = MaterialTheme.colorScheme.primary
                 )
+
                 Surface(
                     shape = RoundedCornerShape(6.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant
+                    color = MaterialTheme.colorScheme.primaryContainer
                 ) {
                     Text(
-                        "Sell",
-                        fontSize = 10.sp,
+                        if (units.size > 1) "Options" else "Sell",
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                     )
                 }
             }
@@ -856,8 +1015,1059 @@ private fun ProductTile(product: ProductEntity, onClick: () -> Unit) {
     }
 }
 
+/**
+ * Stock Product Card - Clean, no bulky +24 or +6 buttons!
+ * Has:
+ * - "+ Add" button -> opens dialog to enter number of bottles
+ * - "Edit" button -> opens dialog to edit stock count, price, and units
+ */
 @Composable
-private fun ProductPhoto(product: ProductEntity, modifier: Modifier = Modifier) {
+private fun StockProductCard(
+    product: ProductEntity,
+    onAddStock: () -> Unit,
+    onEditProduct: () -> Unit,
+    onChangePhoto: () -> Unit
+) {
+    val units = remember(product.salesUnitsJson, product.sellingPriceKsh) {
+        parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+    }
+
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp)
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            ProductThumbnail(
+                product,
+                Modifier
+                    .size(68.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(2.dp)
+            )
+
+            Column(Modifier.weight(1f)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Text(
+                        product.name,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    StockIndicatorPill(product.stockQuantity, product.lowStockThreshold)
+                }
+
+                // Show units of sale configured (e.g. Bottle @ 300, Glass @ 70, Cup @ 35)
+                if (units.size > 1) {
+                    Text(
+                        text = "Units: " + units.joinToString(", ") { "${it.name} (${ksh(it.priceKsh)})" },
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                } else {
+                    Text(
+                        text = "${ksh(product.sellingPriceKsh)} · ${product.category}",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Text(
+                    text = "Code: ${product.verifiedBarcode ?: product.catalogCode}",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                // Clean Action Buttons: ONLY "+ Add" and "Edit" (No bulky +24 or +6 buttons!)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(top = 8.dp)
+                ) {
+                    // "+ Add" button (Opens input box for bottle count)
+                    Button(
+                        onClick = onAddStock,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
+                        modifier = Modifier.height(34.dp)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Add Stock", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    // "Edit" button (Allows editing stock count, price, units)
+                    OutlinedButton(
+                        onClick = onEditProduct,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                        modifier = Modifier.height(34.dp)
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Edit", fontSize = 12.sp)
+                    }
+
+                    // Photo button
+                    IconButton(
+                        onClick = onChangePhoto,
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.PhotoCamera,
+                            contentDescription = "Change photo",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Catalog item row for adding from library
+ */
+@Composable
+private fun CatalogProductCard(
+    product: ProductEntity,
+    onAdd: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            ProductThumbnail(
+                product,
+                Modifier
+                    .size(60.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(2.dp)
+            )
+
+            Column(Modifier.weight(1f)) {
+                Text(product.name, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${product.brand} · ${product.size} · ${product.category}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Suggested: ${ksh(product.suggestedPriceKsh)}", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
+            }
+
+            Button(
+                onClick = onAdd,
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+            ) {
+                Text("Add", fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+/**
+ * Sale with Units Sheet:
+ * Lets cashier select whether they are selling Bottle, Glass, Cup (or custom unit) and quantity!
+ */
+@Composable
+private fun SaleWithUnitsSheet(
+    product: ProductEntity,
+    selectedUnitName: String,
+    selectedUnitPrice: Int,
+    quantity: Int,
+    error: String?,
+    onSelectUnit: (SaleUnit) -> Unit,
+    onQuantityChange: (Int) -> Unit,
+    onConfirm: () -> Unit
+) {
+    val units = remember(product.salesUnitsJson, product.sellingPriceKsh) {
+        parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+    }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 10.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ProductThumbnail(
+                product,
+                Modifier
+                    .size(65.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+            )
+            Column(Modifier.weight(1f)) {
+                Text(product.name, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "${product.category} · Shelf Stock: ${product.stockQuantity} bottles",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // Unit of Sale Selector (Bottle, Glass, Cup, etc.)
+        Text(
+            "Select Unit of Sale:",
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            units.forEach { unit ->
+                val isSelected = unit.name.equals(selectedUnitName, ignoreCase = true)
+                Surface(
+                    onClick = { onSelectUnit(unit) },
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = if (isSelected) androidx.compose.foundation.BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null
+                ) {
+                    Column(
+                        Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            unit.name,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            fontSize = 14.sp,
+                            color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            ksh(unit.priceKsh),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // Quantity Stepper
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Quantity to sell", fontWeight = FontWeight.Medium)
+            QuantityStepperControl(quantity = quantity, onChange = onQuantityChange)
+        }
+
+        val total = selectedUnitPrice * quantity
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "$quantity × $selectedUnitName @ ${ksh(selectedUnitPrice)}",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    ksh(total),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 20.sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+
+        if (!error.isNullOrBlank()) {
+            Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp))
+        }
+
+        Button(
+            onClick = onConfirm,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 20.dp)
+        ) {
+            Text("Complete Sale · ${ksh(total)}", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+/**
+ * Dialog to add a specific number of bottles to stock
+ * Replaces old +24 and +6 buttons!
+ */
+@Composable
+private fun AddBottlesDialog(
+    product: ProductEntity,
+    error: String?,
+    onDismiss: () -> Unit,
+    onConfirm: (Int) -> Unit
+) {
+    var bottlesText by remember { mutableStateOf("") }
+    val focusRequester = remember { FocusRequester() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("Add Bottles to Stock", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        },
+        text = {
+            Column {
+                Text(
+                    product.name,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    "Current shelf count: ${product.stockQuantity} bottles",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+
+                OutlinedTextField(
+                    value = bottlesText,
+                    onValueChange = { bottlesText = it.filter(Char::isDigit) },
+                    label = { Text("Number of bottles to add") },
+                    placeholder = { Text("e.g. 6, 12, 24, 48...") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focusRequester)
+                        .testTag("add_bottles_input")
+                )
+
+                // Quick helper chips for convenience
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(6, 12, 24, 48).forEach { qty ->
+                        Surface(
+                            onClick = { bottlesText = qty.toString() },
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                "+$qty",
+                                fontSize = 11.sp,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(vertical = 6.dp),
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+
+                if (!error.isNullOrBlank()) {
+                    Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val count = bottlesText.toIntOrNull() ?: 0
+                    if (count > 0) onConfirm(count)
+                },
+                enabled = (bottlesText.toIntOrNull() ?: 0) > 0,
+                modifier = Modifier.testTag("confirm_add_bottles_button")
+            ) {
+                Text("Add to Stock")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+}
+
+/**
+ * Dialog to edit product details:
+ * - Direct stock editing (shelf count)
+ * - Base price
+ * - Configurable units of sale (bottle, glass, cup with prices)
+ */
+@Composable
+private fun EditProductDialog(
+    product: ProductEntity,
+    error: String?,
+    onDismiss: () -> Unit,
+    onConfirm: (name: String, stock: Int, price: Int, units: List<SaleUnit>) -> Unit
+) {
+    var name by remember(product.catalogCode) { mutableStateOf(product.name) }
+    var stockText by remember(product.catalogCode) { mutableStateOf(product.stockQuantity.toString()) }
+    var priceText by remember(product.catalogCode) { mutableStateOf(product.sellingPriceKsh.toString()) }
+
+    val initialUnits = remember(product.catalogCode) {
+        parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+    }
+    val unitsList = remember(product.catalogCode) {
+        mutableStateListOf<SaleUnit>().apply { addAll(initialUnits) }
+    }
+
+    var newUnitName by remember { mutableStateOf("") }
+    var newUnitPriceText by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("Edit Product & Stock", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+            ) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Product Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = stockText,
+                        onValueChange = { stockText = it.filter(Char::isDigit) },
+                        label = { Text("Shelf Stock") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    OutlinedTextField(
+                        value = priceText,
+                        onValueChange = { priceText = it.filter(Char::isDigit) },
+                        label = { Text("Base Price (KSh)") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    "Configured Units of Sale:",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp
+                )
+                Text(
+                    "How you sell this drink (e.g. Bottle, Glass, Cup)",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                // List of units
+                unitsList.forEachIndexed { index, unit ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            "${unit.name} · ${ksh(unit.priceKsh)}",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        IconButton(
+                            onClick = { if (unitsList.size > 1) unitsList.removeAt(index) },
+                            enabled = unitsList.size > 1,
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "Remove unit", modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+
+                // Add another unit
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    OutlinedTextField(
+                        value = newUnitName,
+                        onValueChange = { newUnitName = it },
+                        placeholder = { Text("e.g. Glass, Cup", fontSize = 11.sp) },
+                        singleLine = true,
+                        modifier = Modifier.weight(1.2f)
+                    )
+                    OutlinedTextField(
+                        value = newUnitPriceText,
+                        onValueChange = { newUnitPriceText = it.filter(Char::isDigit) },
+                        placeholder = { Text("KSh", fontSize = 11.sp) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(0.9f)
+                    )
+                    IconButton(
+                        onClick = {
+                            val p = newUnitPriceText.toIntOrNull() ?: 0
+                            if (newUnitName.isNotBlank() && p > 0) {
+                                unitsList.add(SaleUnit(newUnitName.trim(), p))
+                                newUnitName = ""
+                                newUnitPriceText = ""
+                            }
+                        },
+                        enabled = newUnitName.isNotBlank() && (newUnitPriceText.toIntOrNull() ?: 0) > 0
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "Add unit", tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+
+                if (!error.isNullOrBlank()) {
+                    Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val s = stockText.toIntOrNull() ?: 0
+                    val p = priceText.toIntOrNull() ?: 0
+                    if (unitsList.isEmpty()) {
+                        unitsList.add(SaleUnit("Bottle", p))
+                    }
+                    onConfirm(name.trim(), s, p, unitsList.toList())
+                },
+                enabled = name.isNotBlank() && (priceText.toIntOrNull() ?: 0) > 0
+            ) {
+                Text("Save Changes")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+/**
+ * Dialog to add a new product:
+ * User configures:
+ * - Name
+ * - Barcode (optional)
+ * - Category (Local Liquor, Spirit, Beer, etc.)
+ * - Initial Stock count
+ * - Units of Sale (e.g. Cup, Glass, Bottle with prices!)
+ */
+@Composable
+private fun AddNewProductDialog(
+    prefilledBarcode: String?,
+    error: String?,
+    onDismiss: () -> Unit,
+    onScanBarcode: () -> Unit,
+    onConfirm: (name: String, barcode: String, category: String, price: Int, stock: Int, units: List<SaleUnit>) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var barcode by remember(prefilledBarcode) { mutableStateOf(prefilledBarcode.orEmpty()) }
+    var selectedCategory by remember { mutableStateOf("Local Liquor") }
+    var stockText by remember { mutableStateOf("12") }
+    var basePriceText by remember { mutableStateOf("250") }
+
+    val categories = listOf("Local Liquor", "Beer", "Spirit", "Cider", "RTD", "Wine", "Soft Drink", "Water")
+
+    // Default units of sale (e.g. Bottle, and optional Cup & Glass for liquor)
+    val unitsList = remember {
+        mutableStateListOf(
+            SaleUnit("Bottle", 250),
+            SaleUnit("Glass", 70),
+            SaleUnit("Cup", 35)
+        )
+    }
+
+    var extraUnitName by remember { mutableStateOf("") }
+    var extraUnitPriceText by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("Add New Product", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+            ) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Product Name") },
+                    placeholder = { Text("e.g. Muratina, Chang'aa, Local Brew...") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("new_product_name_input")
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    OutlinedTextField(
+                        value = barcode,
+                        onValueChange = { barcode = it },
+                        label = { Text("Barcode / Code") },
+                        placeholder = { Text("Optional") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = onScanBarcode) {
+                        Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan barcode", tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+
+                Text(
+                    "Category:",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    categories.forEach { cat ->
+                        FilterChip(
+                            selected = selectedCategory == cat,
+                            onClick = { selectedCategory = cat },
+                            label = { Text(cat, fontSize = 11.sp) }
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = stockText,
+                        onValueChange = { stockText = it.filter(Char::isDigit) },
+                        label = { Text("Initial Stock (Bottles)") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    OutlinedTextField(
+                        value = basePriceText,
+                        onValueChange = {
+                            basePriceText = it.filter(Char::isDigit)
+                            val p = it.toIntOrNull() ?: 0
+                            if (unitsList.isNotEmpty()) {
+                                unitsList[0] = unitsList[0].copy(priceKsh = p)
+                            }
+                        },
+                        label = { Text("Bottle Price (KSh)") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Configure Units of Sales:",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp
+                )
+                Text(
+                    "Products like local liquor are sold in cups, glass & bottles. Set their prices below:",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                // Units List
+                unitsList.forEachIndexed { index, unit ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            "${unit.name} · ${ksh(unit.priceKsh)}",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        IconButton(
+                            onClick = { if (unitsList.size > 1) unitsList.removeAt(index) },
+                            enabled = unitsList.size > 1,
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "Remove unit", modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+
+                // Add additional unit
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    OutlinedTextField(
+                        value = extraUnitName,
+                        onValueChange = { extraUnitName = it },
+                        placeholder = { Text("Unit name (e.g. Tot)", fontSize = 11.sp) },
+                        singleLine = true,
+                        modifier = Modifier.weight(1.2f)
+                    )
+                    OutlinedTextField(
+                        value = extraUnitPriceText,
+                        onValueChange = { extraUnitPriceText = it.filter(Char::isDigit) },
+                        placeholder = { Text("Price KSh", fontSize = 11.sp) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(0.9f)
+                    )
+                    IconButton(
+                        onClick = {
+                            val p = extraUnitPriceText.toIntOrNull() ?: 0
+                            if (extraUnitName.isNotBlank() && p > 0) {
+                                unitsList.add(SaleUnit(extraUnitName.trim(), p))
+                                extraUnitName = ""
+                                extraUnitPriceText = ""
+                            }
+                        },
+                        enabled = extraUnitName.isNotBlank() && (extraUnitPriceText.toIntOrNull() ?: 0) > 0
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "Add unit", tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+
+                if (!error.isNullOrBlank()) {
+                    Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val p = basePriceText.toIntOrNull() ?: 0
+                    val s = stockText.toIntOrNull() ?: 0
+                    onConfirm(name.trim(), barcode.trim(), selectedCategory, p, s, unitsList.toList())
+                },
+                enabled = name.isNotBlank() && (basePriceText.toIntOrNull() ?: 0) > 0,
+                modifier = Modifier.testTag("confirm_create_product_button")
+            ) {
+                Text("Save & Add to Stock")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+/**
+ * Dialog to add item from catalog into shop stock
+ */
+@Composable
+private fun AddCatalogItemDialog(
+    product: ProductEntity,
+    error: String?,
+    onDismiss: () -> Unit,
+    onConfirm: (quantity: Int, priceKsh: Int) -> Unit
+) {
+    var quantityText by remember(product.catalogCode) { mutableStateOf("12") }
+    var priceText by remember(product.catalogCode) { mutableStateOf(product.suggestedPriceKsh.toString()) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add ${product.name} to Stock", fontSize = 17.sp, fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                Text("${product.brand} · ${product.size} · Suggested: ${ksh(product.suggestedPriceKsh)}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = quantityText,
+                    onValueChange = { quantityText = it.filter(Char::isDigit) },
+                    label = { Text("Initial Stock (Bottles)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = priceText,
+                    onValueChange = { priceText = it.filter(Char::isDigit) },
+                    label = { Text("Your Selling Price (KSh)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                )
+                if (!error.isNullOrBlank()) {
+                    Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val q = quantityText.toIntOrNull() ?: 0
+                    val p = priceText.toIntOrNull() ?: 0
+                    if (q > 0 && p > 0) onConfirm(q, p)
+                },
+                enabled = (quantityText.toIntOrNull() ?: 0) > 0 && (priceText.toIntOrNull() ?: 0) > 0
+            ) {
+                Text("Add to Shelf")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+/**
+ * Quick scan banner component (used inside scrollable content, not statically stuck)
+ */
+@Composable
+private fun QuickScanActionStrip(
+    title: String,
+    subtitle: String,
+    actionLabel: String,
+    backgroundColor: Color,
+    onClick: () -> Unit
+) {
+    Card(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = backgroundColor),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = Color.White.copy(alpha = 0.2f),
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.QrCodeScanner,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                Column {
+                    Text(title, fontWeight = FontWeight.Bold, color = Color.White, fontSize = 14.sp)
+                    Text(subtitle, color = Color.White.copy(alpha = 0.85f), fontSize = 11.sp)
+                }
+            }
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color.White
+            ) {
+                Text(
+                    actionLabel,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = backgroundColor,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuantityStepperControl(quantity: Int, onChange: (Int) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(
+            onClick = { onChange(-1) },
+            enabled = quantity > 1,
+            contentPadding = PaddingValues(0.dp),
+            modifier = Modifier.size(38.dp)
+        ) { Icon(Icons.Default.Remove, contentDescription = "Decrease") }
+
+        Text(
+            quantity.toString(),
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.width(28.dp),
+            textAlign = TextAlign.Center
+        )
+
+        OutlinedButton(
+            onClick = { onChange(1) },
+            contentPadding = PaddingValues(0.dp),
+            modifier = Modifier.size(38.dp)
+        ) { Icon(Icons.Default.Add, contentDescription = "Increase") }
+    }
+}
+
+@Composable
+private fun StockIndicatorPill(quantity: Int, threshold: Int, modifier: Modifier = Modifier) {
+    val outOfStock = quantity <= 0
+    val low = quantity in 1..threshold
+    val bg = when {
+        outOfStock -> Color(0xFFFFE4E6)
+        low -> Color(0xFFFEF3C7)
+        else -> Color(0xFFD1FAE5)
+    }
+    val textCol = when {
+        outOfStock -> Color(0xFFBE123C)
+        low -> Color(0xFFB45309)
+        else -> Color(0xFF047857)
+    }
+    val label = when {
+        outOfStock -> "0 left"
+        else -> "$quantity"
+    }
+
+    Surface(
+        modifier = modifier,
+        color = bg,
+        contentColor = textCol,
+        shape = RoundedCornerShape(50)
+    ) {
+        Text(
+            label,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Composable
+private fun SaleReceiptRow(sale: SaleEntity) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Default.LocalDrink,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            Column(Modifier.weight(1f)) {
+                Text(sale.productName, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Text(
+                    "${sale.quantity} × ${sale.unitName} @ ${ksh(sale.unitPriceKsh)} · ${formatSaleTime(sale.createdAt)}",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (sale.undone) {
+                    Text("REFUNDED / UNDONE", color = MaterialTheme.colorScheme.error, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Text(
+                ksh(sale.totalKsh),
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp,
+                color = if (sale.undone) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProductThumbnail(product: ProductEntity, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val imageId = remember(product.imageAssetName) {
         context.resources.getIdentifier(product.imageAssetName, "drawable", context.packageName)
@@ -885,717 +2095,35 @@ private fun ProductPhoto(product: ProductEntity, modifier: Modifier = Modifier) 
                 imageVector = Icons.Default.Inventory2,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                modifier = Modifier.size(28.dp)
+                modifier = Modifier.size(26.dp)
             )
         }
     }
 }
 
 @Composable
-private fun StockPill(quantity: Int, threshold: Int, modifier: Modifier = Modifier) {
-    val outOfStock = quantity <= 0
-    val low = quantity in 1..threshold
-    val color = when {
-        outOfStock -> Color(0xFFFFE4E6)
-        low -> Color(0xFFFEF3C7)
-        else -> Color(0xFFD1FAE5)
-    }
-    val textColor = when {
-        outOfStock -> Color(0xFFBE123C)
-        low -> Color(0xFFB45309)
-        else -> Color(0xFF047857)
-    }
-    val text = when {
-        outOfStock -> "Out of stock"
-        else -> "$quantity left"
-    }
-    Surface(
-        modifier = modifier,
-        color = color,
-        contentColor = textColor,
-        shape = RoundedCornerShape(50)
-    ) {
-        Text(
-            text,
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold
-        )
-    }
-}
-
-@Composable
-private fun SalesScreen(
-    modifier: Modifier,
-    sales: List<SaleEntity>,
-    todaySummary: Pair<Int, Int>,
-    onUndo: () -> Unit
-) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 14.dp, vertical = 12.dp)
-    ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatCard("Total Revenue Today", ksh(todaySummary.first), Modifier.weight(1f))
-            StatCard("Total Bottles Sold", todaySummary.second.toString(), Modifier.weight(1f))
-        }
-        OutlinedButton(
-            onClick = onUndo,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 10.dp, bottom = 12.dp)
-        ) {
-            Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(7.dp))
-            Text("Undo last sale")
-        }
-        Text("Sale Receipts", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(bottom = 7.dp))
-        if (sales.isEmpty()) {
-            EmptyMessage("No sales recorded yet today.")
-        } else {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(bottom = 14.dp)
-            ) {
-                items(sales, key = { it.id }) { sale -> SaleRow(sale) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SaleRow(sale: SaleEntity) {
-    val productForImage = ProductEntity(
-        catalogCode = sale.catalogCode,
-        verifiedBarcode = null,
-        name = sale.productName,
-        brand = "",
-        size = "",
-        category = "",
-        suggestedPriceKsh = sale.unitPriceKsh,
-        sellingPriceKsh = sale.unitPriceKsh,
-        stockQuantity = 0,
-        inMyStock = true,
-        lowStockThreshold = 5,
-        imageAssetName = sale.imageAssetName,
-        photoOverrideUri = sale.photoOverrideUri
-    )
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            ProductPhoto(
-                productForImage,
-                Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(9.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(2.dp)
-            )
-            Column(Modifier.weight(1f)) {
-                Text(sale.productName, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    "${sale.quantity} × ${ksh(sale.unitPriceKsh)} · ${saleTime(sale.createdAt)}",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                if (sale.undone) {
-                    Text("UNDONE / REFUNDED", color = MaterialTheme.colorScheme.error, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-            Text(
-                ksh(sale.totalKsh),
-                fontWeight = FontWeight.Bold,
-                color = if (sale.undone) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary
-            )
-        }
-    }
-}
-
-@Composable
-private fun StatCard(label: String, value: String, modifier: Modifier = Modifier) {
-    Card(
-        modifier = modifier,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp)
-        ) {
-            Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(value, fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 2.dp))
-        }
-    }
-}
-
-@Composable
-private fun ModeButton(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    if (selected) {
-        Button(
-            onClick = onClick,
-            modifier = modifier,
-            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
-        ) {
-            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp)
-        }
-    } else {
-        OutlinedButton(
-            onClick = onClick,
-            modifier = modifier,
-            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
-        ) {
-            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp)
-        }
-    }
-}
-
-@Composable
-private fun StockProductRow(
-    product: ProductEntity,
-    onRestockSix: () -> Unit,
-    onRestockTwentyFour: () -> Unit,
-    onChangePhoto: () -> Unit
-) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(10.dp),
-            verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            ProductPhoto(
-                product,
-                Modifier
-                    .size(72.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(3.dp)
-            )
-            Column(Modifier.weight(1f)) {
-                Text(product.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(
-                    "${product.size} · ${ksh(product.sellingPriceKsh)}",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    "Barcode: ${product.verifiedBarcode ?: product.catalogCode}",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.padding(top = 6.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = onRestockSix,
-                        contentPadding = PaddingValues(horizontal = 9.dp, vertical = 2.dp),
-                        modifier = Modifier.height(32.dp)
-                    ) { Text("+6", fontSize = 11.sp) }
-                    OutlinedButton(
-                        onClick = onRestockTwentyFour,
-                        contentPadding = PaddingValues(horizontal = 9.dp, vertical = 2.dp),
-                        modifier = Modifier.height(32.dp)
-                    ) { Text("+24 (Crate)", fontSize = 11.sp) }
-                    OutlinedButton(
-                        onClick = onChangePhoto,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        modifier = Modifier.height(32.dp)
-                    ) {
-                        Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(13.dp))
-                        Spacer(Modifier.width(3.dp))
-                        Text("Photo", fontSize = 10.sp)
-                    }
-                }
-            }
-            StockPill(product.stockQuantity, product.lowStockThreshold)
-        }
-    }
-}
-
-@Composable
-private fun LibraryProductRow(product: ProductEntity, onAdd: () -> Unit) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            ProductPhoto(
-                product,
-                Modifier
-                    .size(68.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(3.dp)
-            )
-            Column(Modifier.weight(1f)) {
-                Text(product.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text("${product.brand} · ${product.size}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(product.category, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Suggested retail: ${ksh(product.suggestedPriceKsh)}", fontSize = 12.sp, fontWeight = FontWeight.Medium)
-            }
-            Button(
-                onClick = onAdd,
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
-            ) { Text("Add") }
-        }
-    }
-}
-
-@Composable
-private fun SaleSheet(
-    product: ProductEntity,
-    quantity: Int,
-    error: String?,
-    onQuantityChange: (Int) -> Unit,
-    onConfirm: () -> Unit
-) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 12.dp)
-    ) {
-        ProductPhoto(
-            product,
-            Modifier
-                .fillMaxWidth()
-                .height(155.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-                .padding(6.dp)
-        )
-        Text(product.name, fontSize = 21.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
-        Text(
-            "${product.brand} · ${product.size} · Barcode ${product.verifiedBarcode ?: product.catalogCode}",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 13.sp
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 12.dp)) {
-            StatCard("Price per unit", ksh(product.sellingPriceKsh), Modifier.weight(1f))
-            StatCard("Available Stock", product.stockQuantity.toString(), Modifier.weight(1f))
-        }
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text("Quantity to sell", fontWeight = FontWeight.Medium)
-            QuantityStepper(quantity = quantity, onChange = onQuantityChange, maxQuantity = product.stockQuantity)
-        }
-        Text(
-            "Total: ${ksh(product.sellingPriceKsh * quantity)}",
-            fontWeight = FontWeight.Bold,
-            fontSize = 19.sp,
-            color = MaterialTheme.colorScheme.primary
-        )
-        if (!error.isNullOrBlank()) {
-            Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
-        }
-        Button(
-            onClick = onConfirm,
-            enabled = product.stockQuantity > 0,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 12.dp, bottom = 18.dp)
-        ) {
-            Text(if (product.stockQuantity > 0) "Complete Sale · ${ksh(product.sellingPriceKsh * quantity)}" else "Out of stock")
-        }
-    }
-}
-
-@Composable
-private fun AddToStockSheet(
-    product: ProductEntity,
-    quantity: Int,
-    priceText: String,
-    error: String?,
-    onQuantityChange: (Int) -> Unit,
-    onAddQuantity: (Int) -> Unit,
-    onSetQuantity: (Int) -> Unit,
-    onPriceChange: (String) -> Unit,
-    onConfirm: () -> Unit
-) {
-    var quantityText by remember(product.catalogCode, quantity) { mutableStateOf(quantity.toString()) }
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 12.dp)
-    ) {
-        ProductPhoto(
-            product,
-            Modifier
-                .fillMaxWidth()
-                .height(140.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-                .padding(6.dp)
-        )
-        Text(product.name, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
-        Text("${product.brand} · ${product.size} · ${product.category}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-        Text(
-            "Barcode: ${product.verifiedBarcode ?: product.catalogCode}",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(top = 4.dp)
-        )
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 10.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-        ) {
-            Column(Modifier.padding(12.dp)) {
-                Text("Suggested retail price", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(ksh(product.suggestedPriceKsh), fontSize = 17.sp, fontWeight = FontWeight.Bold)
-            }
-        }
-        OutlinedTextField(
-            value = priceText,
-            onValueChange = { onPriceChange(it.filter(Char::isDigit)) },
-            label = { Text("Your selling price (KSh)") },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 12.dp),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-        )
-        Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
-            Text("Initial stock quantity", fontWeight = FontWeight.Medium)
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedTextField(
-                    value = quantityText,
-                    onValueChange = { entered ->
-                        val digits = entered.filter(Char::isDigit)
-                        quantityText = digits
-                        digits.toIntOrNull()?.let(onSetQuantity)
-                    },
-                    label = { Text("Units") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                )
-                QuantityStepper(quantity = quantity, onChange = onQuantityChange, maxQuantity = Int.MAX_VALUE)
-            }
-        }
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp)
-        ) {
-            listOf(6, 12, 24).forEach { amount ->
-                OutlinedButton(onClick = { onAddQuantity(amount) }, modifier = Modifier.weight(1f)) {
-                    Text("+$amount")
-                }
-            }
-        }
-        if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
-        Button(
-            onClick = onConfirm,
-            enabled = quantity > 0 && (priceText.toIntOrNull() ?: 0) > 0,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 12.dp, bottom = 18.dp)
-        ) {
-            Text("Add $quantity to Shop Stock")
-        }
-    }
-}
-
-@Composable
-private fun QuantityStepper(quantity: Int, onChange: (Int) -> Unit, maxQuantity: Int) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        OutlinedButton(
-            onClick = { onChange(-1) },
-            enabled = quantity > 1,
-            contentPadding = PaddingValues(0.dp),
-            modifier = Modifier.size(42.dp)
-        ) { Icon(Icons.Default.Remove, contentDescription = "Decrease quantity") }
-        Text(
-            quantity.toString(),
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.widthIn(min = 26.dp),
-            textAlign = TextAlign.Center
-        )
-        OutlinedButton(
-            onClick = { onChange(1) },
-            enabled = quantity < maxQuantity,
-            contentPadding = PaddingValues(0.dp),
-            modifier = Modifier.size(42.dp)
-        ) { Icon(Icons.Default.Add, contentDescription = "Increase quantity") }
-    }
-}
-
-@Composable
-private fun ReceiveStockSheet(
-    products: List<ProductEntity>,
-    error: String?,
-    onReceive: (String, Int) -> Unit,
-    onOpenScanner: () -> Unit
-) {
-    var query by remember { mutableStateOf("") }
-    var selectedCode by remember { mutableStateOf<String?>(null) }
-    var quantityText by remember { mutableStateOf("6") }
-    val selected = products.firstOrNull { it.catalogCode == selectedCode }
-    val matches = products.filter { it.matches(query) }
-
-    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Receive Stock", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            IconButton(onClick = onOpenScanner) {
-                Icon(
-                    Icons.Default.QrCodeScanner,
-                    contentDescription = "Scan barcode to receive",
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            }
-        }
-
-        if (selected == null) {
-            LeanSearchBar(
-                value = query,
-                onValueChange = { query = it },
-                placeholder = "Search product to receive...",
-                onScanClick = onOpenScanner,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp)
-            )
-            LazyColumn(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 320.dp)
-            ) {
-                items(matches, key = { it.catalogCode }) { product ->
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable { selectedCode = product.catalogCode }
-                            .padding(vertical = 9.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        ProductPhoto(
-                            product,
-                            Modifier
-                                .size(46.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .padding(2.dp)
-                        )
-                        Column(Modifier.weight(1f)) {
-                            Text(product.name, fontWeight = FontWeight.SemiBold)
-                            Text("${product.stockQuantity} currently in stock", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-            }
-        } else {
-            TextButton(onClick = { selectedCode = null }) { Text("← Choose different item") }
-            Text(selected.name, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
-            Text("Current stock: ${selected.stockQuantity}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedTextField(
-                value = quantityText,
-                onValueChange = { quantityText = it.filter(Char::isDigit) },
-                label = { Text("Quantity received") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 10.dp),
-                singleLine = true
-            )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp)
-            ) {
-                listOf(6, 12, 24).forEach { amount ->
-                    OutlinedButton(
-                        onClick = { quantityText = amount.toString() },
-                        modifier = Modifier.weight(1f)
-                    ) { Text("+$amount") }
-                }
-            }
-            if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 6.dp))
-            Button(
-                onClick = { quantityText.toIntOrNull()?.takeIf { it > 0 }?.let { onReceive(selected.catalogCode, it) } },
-                enabled = (quantityText.toIntOrNull() ?: 0) > 0,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 12.dp, bottom = 16.dp)
-            ) { Text("Receive ${quantityText.toIntOrNull() ?: 0} units into stock") }
-        }
-    }
-}
-
-@Composable
-private fun RegisterBarcodeSheet(
-    barcode: String,
-    error: String?,
-    onDismiss: () -> Unit,
-    onRegister: (barcode: String, name: String, category: String, price: Int, stock: Int) -> Unit
-) {
-    var name by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf("Beverage") }
-    var priceText by remember { mutableStateOf("250") }
-    var stockText by remember { mutableStateOf("12") }
-
-    val categories = listOf("Beer", "Cider", "RTD", "Spirit", "Wine", "Soft Drink", "Water", "Snack")
-
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 14.dp)
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.primaryContainer,
-                modifier = Modifier.size(40.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        Icons.Default.QrCodeScanner,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-            }
-            Column {
-                Text("New Product Barcode Scanned", fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                Text("Barcode: $barcode", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-
-        Spacer(Modifier.height(14.dp))
-
-        OutlinedTextField(
-            value = name,
-            onValueChange = { name = it },
-            label = { Text("Product Name (e.g. Guinness Draught)") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Text(
-            "Category",
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
-        )
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            categories.forEach { cat ->
-                FilterChip(
-                    selected = selectedCategory == cat,
-                    onClick = { selectedCategory = cat },
-                    label = { Text(cat, fontSize = 11.sp) }
-                )
-            }
-        }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            OutlinedTextField(
-                value = priceText,
-                onValueChange = { priceText = it.filter(Char::isDigit) },
-                label = { Text("Selling Price (KSh)") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.weight(1f)
-            )
-            OutlinedTextField(
-                value = stockText,
-                onValueChange = { stockText = it.filter(Char::isDigit) },
-                label = { Text("Initial Stock") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        if (!error.isNullOrBlank()) {
-            Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
-        }
-
-        Button(
-            onClick = {
-                val price = priceText.toIntOrNull() ?: 0
-                val stock = stockText.toIntOrNull() ?: 0
-                onRegister(barcode, name, selectedCategory, price, stock)
-            },
-            enabled = name.isNotBlank() && (priceText.toIntOrNull() ?: 0) > 0,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 16.dp, bottom = 12.dp)
-        ) {
-            Text("Register & Add to Shop Stock")
-        }
-    }
-}
-
-@Composable
-private fun EmptyMessage(text: String) {
+private fun EmptyStateMessage(message: String) {
     Box(
         Modifier
             .fillMaxWidth()
-            .padding(vertical = 32.dp, horizontal = 12.dp),
+            .padding(vertical = 36.dp, horizontal = 16.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text,
+            message,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
-            fontSize = 13.sp
+            fontSize = 13.sp,
+            lineHeight = 18.sp
         )
     }
 }
 
 private fun ProductEntity.matches(query: String): Boolean {
     if (query.isBlank()) return true
+    val q = query.trim()
     return listOf(name, brand, size, category, catalogCode, verifiedBarcode.orEmpty())
-        .any { it.contains(query.trim(), ignoreCase = true) }
+        .any { it.contains(q, ignoreCase = true) }
 }
 
 private fun ksh(value: Int): String = "KSh " + NumberFormat.getIntegerInstance(Locale.US).format(value)
@@ -1612,7 +2140,7 @@ private fun salesTodaySummary(sales: List<SaleEntity>): Pair<Int, Int> {
     return activeToday.sumOf { it.totalKsh } to activeToday.sumOf { it.quantity }
 }
 
-private fun saleTime(timestamp: Long): String =
+private fun formatSaleTime(timestamp: Long): String =
     SimpleDateFormat("h:mm a", Locale.getDefault()).apply {
         timeZone = TimeZone.getTimeZone("Africa/Nairobi")
     }.format(Date(timestamp))

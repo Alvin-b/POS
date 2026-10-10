@@ -9,12 +9,11 @@ data class SaleEntity(
     val catalogCode: String,
     val productName: String,
     val imageAssetName: String,
+    val unitName: String = "Bottle",
     val quantity: Int,
     val unitPriceKsh: Int,
     val totalKsh: Int,
     val createdAt: Long,
     val undone: Boolean = false,
-    val photoOverrideUri: String? = null,
-    val backendSaleId: String? = null,
-    val backendProductId: String? = null
+    val photoOverrideUri: String? = null
 )

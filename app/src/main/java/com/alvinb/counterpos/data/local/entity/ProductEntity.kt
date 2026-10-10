@@ -21,9 +21,5 @@ data class ProductEntity(
     val productSourceUrl: String? = null,
     val imageSourceUrl: String? = null,
     val verificationNote: String = "",
-    val backendProductId: String? = null,
-    val backendCatalogId: String? = null,
-    val shopId: String? = null,
-    val remoteImageUrl: String? = null,
-    val photoPath: String? = null
+    val salesUnitsJson: String = ""
 )

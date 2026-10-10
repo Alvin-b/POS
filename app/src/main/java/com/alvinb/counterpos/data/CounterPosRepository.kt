@@ -4,6 +4,8 @@ import android.content.res.AssetManager
 import com.alvinb.counterpos.data.local.dao.CounterPosDao
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
+import com.alvinb.counterpos.data.local.entity.SaleUnit
+import com.alvinb.counterpos.data.local.entity.serializeSaleUnits
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -26,6 +28,10 @@ class CounterPosRepository(
                 fun nullableString(key: String): String? =
                     if (item.isNull(key)) null else item.optString(key).takeIf(String::isNotBlank)
 
+                val sellingPrice = item.optInt("sellingPriceKsh", 0)
+                // Default units: Bottle at selling price
+                val defaultUnits = serializeSaleUnits(listOf(SaleUnit("Bottle", sellingPrice)))
+
                 add(
                     ProductEntity(
                         catalogCode = item.getString("catalogCode"),
@@ -35,14 +41,15 @@ class CounterPosRepository(
                         size = item.optString("size", ""),
                         category = item.optString("category", "Beverage"),
                         suggestedPriceKsh = item.optInt("suggestedPriceKsh", 0),
-                        sellingPriceKsh = item.optInt("sellingPriceKsh", 0),
+                        sellingPriceKsh = sellingPrice,
                         stockQuantity = item.optInt("stockQuantity", 0),
                         inMyStock = item.optBoolean("inMyStock", false),
                         lowStockThreshold = item.optInt("lowStockThreshold", 5),
                         imageAssetName = item.getString("imageAssetName"),
                         productSourceUrl = nullableString("productSourceUrl"),
                         imageSourceUrl = nullableString("imageSourceUrl"),
-                        verificationNote = item.optString("verificationNote", "")
+                        verificationNote = item.optString("verificationNote", ""),
+                        salesUnitsJson = defaultUnits
                     )
                 )
             }
@@ -53,11 +60,25 @@ class CounterPosRepository(
     suspend fun sell(code: String, quantity: Int): Boolean =
         dao.completeSale(code, quantity, System.currentTimeMillis())
 
+    suspend fun sellWithUnit(
+        code: String,
+        quantity: Int,
+        unitName: String,
+        unitPriceKsh: Int
+    ): Boolean =
+        dao.completeSaleWithUnit(code, quantity, unitName, unitPriceKsh, System.currentTimeMillis())
+
     suspend fun addFromLibrary(code: String, quantity: Int, priceKsh: Int): Boolean =
         dao.addCatalogProduct(code, quantity, priceKsh)
 
     suspend fun restock(code: String, quantity: Int): Boolean =
         quantity > 0 && dao.receiveStock(code, quantity) == 1
+
+    suspend fun setStock(code: String, newStock: Int): Boolean =
+        dao.setProductStock(code, newStock.coerceAtLeast(0)) == 1
+
+    suspend fun updateProduct(product: ProductEntity): Boolean =
+        dao.updateProduct(product) == 1
 
     suspend fun undoLatestSale(): Boolean = dao.undoLatestSale()
 
@@ -74,18 +95,25 @@ class CounterPosRepository(
         priceKsh: Int,
         initialStock: Int,
         brand: String = "",
-        size: String = ""
+        size: String = "",
+        salesUnits: List<SaleUnit> = emptyList()
     ): Boolean = withContext(Dispatchers.IO) {
         val cleanBarcode = barcode.trim()
         val existing = dao.getProductByBarcode(cleanBarcode)
+        val unitsJson = if (salesUnits.isNotEmpty()) {
+            serializeSaleUnits(salesUnits)
+        } else {
+            serializeSaleUnits(listOf(SaleUnit("Bottle", priceKsh)))
+        }
+
         if (existing != null) {
-            // Already exists: update it to be in stock
             dao.updateProduct(
                 existing.copy(
                     name = name.ifBlank { existing.name },
                     sellingPriceKsh = if (priceKsh > 0) priceKsh else existing.sellingPriceKsh,
                     stockQuantity = existing.stockQuantity + initialStock,
-                    inMyStock = true
+                    inMyStock = true,
+                    salesUnitsJson = unitsJson
                 )
             ) > 0
         } else {
@@ -102,7 +130,8 @@ class CounterPosRepository(
                 inMyStock = true,
                 lowStockThreshold = 5,
                 imageAssetName = "product_stock_001",
-                verificationNote = "Registered via Barcode Scanner"
+                verificationNote = "Custom Registered Product",
+                salesUnitsJson = unitsJson
             )
             dao.insertProduct(newProduct) > 0
         }

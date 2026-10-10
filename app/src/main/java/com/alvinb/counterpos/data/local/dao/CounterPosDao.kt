@@ -39,6 +39,9 @@ interface CounterPosDao {
     @Query("UPDATE products SET stockQuantity = stockQuantity + :quantity WHERE catalogCode = :code AND inMyStock = 1")
     suspend fun receiveStock(code: String, quantity: Int): Int
 
+    @Query("UPDATE products SET stockQuantity = :newStock, inMyStock = 1 WHERE catalogCode = :code")
+    suspend fun setProductStock(code: String, newStock: Int): Int
+
     @Query("UPDATE products SET stockQuantity = stockQuantity - :quantity WHERE catalogCode = :code AND inMyStock = 1 AND stockQuantity >= :quantity")
     suspend fun decrementStock(code: String, quantity: Int): Int
 
@@ -58,6 +61,47 @@ interface CounterPosDao {
     suspend fun updatePhotoOverride(code: String, uri: String): Int
 
     @Transaction
+    suspend fun completeSaleWithUnit(
+        code: String,
+        quantity: Int,
+        unitName: String,
+        unitPriceKsh: Int,
+        createdAt: Long
+    ): Boolean {
+        if (quantity < 1 || unitPriceKsh < 1) return false
+        val product = getProductByCode(code) ?: return false
+        if (!product.inMyStock) return false
+
+        // For bottle or primary unit, decrement shelf stock by quantity (if stock available).
+        // If selling smaller units like cup or glass, decrement 1 bottle if quantity exceeds,
+        // or decrement 1 bottle per cup/glass sold if tracking per serving, or decrement minimum 1 if bottle unit.
+        val shouldDecrement = if (unitName.equals("Bottle", ignoreCase = true) || unitName.equals("Can", ignoreCase = true)) {
+            quantity
+        } else {
+            // For cup/glass, decrement 1 unit from stock if available, or allow sales if stocked
+            if (product.stockQuantity >= 1) 1 else 0
+        }
+        if (shouldDecrement > 0 && product.stockQuantity >= shouldDecrement) {
+            decrementStock(code, shouldDecrement)
+        }
+
+        insertSale(
+            SaleEntity(
+                catalogCode = product.catalogCode,
+                productName = product.name,
+                imageAssetName = product.imageAssetName,
+                unitName = unitName,
+                quantity = quantity,
+                unitPriceKsh = unitPriceKsh,
+                totalKsh = unitPriceKsh * quantity,
+                createdAt = createdAt,
+                photoOverrideUri = product.photoOverrideUri
+            )
+        )
+        return true
+    }
+
+    @Transaction
     suspend fun completeSale(code: String, quantity: Int, createdAt: Long): Boolean {
         if (quantity < 1) return false
         val product = getProductByCode(code) ?: return false
@@ -68,6 +112,7 @@ interface CounterPosDao {
                 catalogCode = product.catalogCode,
                 productName = product.name,
                 imageAssetName = product.imageAssetName,
+                unitName = "Bottle",
                 quantity = quantity,
                 unitPriceKsh = product.sellingPriceKsh,
                 totalKsh = product.sellingPriceKsh * quantity,
@@ -95,7 +140,7 @@ interface CounterPosDao {
     @Transaction
     suspend fun undoLatestSale(): Boolean {
         val sale = getLatestActiveSale() ?: return false
-        if (restoreStock(sale.catalogCode, sale.quantity) != 1) return false
+        restoreStock(sale.catalogCode, sale.quantity)
         return markSaleUndone(sale.id) == 1
     }
 }

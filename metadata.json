@@ -2,5 +2,5 @@
   "name": "Counter POS",
   "description": "Lean, high-performance point-of-sale and inventory system with real-time camera barcode scanning for instant sales and supermarket-style stock receiving.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
