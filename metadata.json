@@ -1,0 +1,6 @@
+{
+  "name": "Pulse Club POS",
+  "description": "High-speed nightclub point-of-sale system featuring fast bar tabs, VIP bottle service, speed rail ordering, shift summaries, and stock management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
