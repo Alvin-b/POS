@@ -19,7 +19,6 @@ class CounterPosRepository(
     val sales: Flow<List<SaleEntity>> = dao.observeSales()
 
     suspend fun seedCatalogIfEmpty() = withContext(Dispatchers.IO) {
-        if (dao.getProductCount() > 0) return@withContext
         val payload = assets.open("counterpos_catalog.json").bufferedReader().use { it.readText() }
         val array = JSONArray(payload)
         val seededProducts = buildList {
