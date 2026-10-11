@@ -21,5 +21,7 @@ data class ProductEntity(
     val productSourceUrl: String? = null,
     val imageSourceUrl: String? = null,
     val verificationNote: String = "",
-    val salesUnitsJson: String = ""
+    val salesUnitsJson: String = "",
+    val remoteId: String? = null,
+    val averageCostKsh: Int = 0
 )

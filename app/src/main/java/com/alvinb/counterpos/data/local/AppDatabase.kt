@@ -13,7 +13,7 @@ import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.TableOrderEntity
 @Database(
     entities = [ProductEntity::class, SaleEntity::class, DiningTableEntity::class, TableOrderEntity::class],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -30,6 +30,14 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE products ADD COLUMN remoteId TEXT")
+                db.execSQL("ALTER TABLE products ADD COLUMN averageCostKsh INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE sales ADD COLUMN remoteId TEXT")
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -38,7 +46,7 @@ abstract class AppDatabase : RoomDatabase() {
                 context.applicationContext,
                 AppDatabase::class.java,
                 "counterpos.db"
-            ).addMigrations(MIGRATION_3_4).fallbackToDestructiveMigration(dropAllTables = true).build().also { instance = it }
+            ).addMigrations(MIGRATION_3_4, MIGRATION_4_5).fallbackToDestructiveMigration(dropAllTables = true).build().also { instance = it }
         }
     }
 }

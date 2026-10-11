@@ -13,6 +13,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.alvinb.counterpos.data.CounterPosRepository
 import com.alvinb.counterpos.data.local.AppDatabase
+import com.alvinb.counterpos.data.remote.SupabaseRestClient
 import com.alvinb.counterpos.ui.CounterPosApp
 import com.alvinb.counterpos.ui.CounterPosTheme
 import com.alvinb.counterpos.ui.CounterPosViewModel
@@ -27,7 +28,8 @@ class MainActivity : ComponentActivity() {
         val database = AppDatabase.getInstance(applicationContext)
         val repository = CounterPosRepository(
             dao = database.counterPosDao(),
-            assets = assets
+            assets = assets,
+            remote = SupabaseRestClient(applicationContext)
         )
 
         setContent {

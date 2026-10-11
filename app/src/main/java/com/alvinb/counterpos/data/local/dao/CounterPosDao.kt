@@ -39,8 +39,31 @@ interface CounterPosDao {
     @Query("SELECT COUNT(*) FROM products")
     suspend fun getProductCount(): Int
 
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertProducts(products: List<ProductEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSales(sales: List<SaleEntity>)
+
+    @Query("DELETE FROM table_orders")
+    suspend fun clearTableOrders()
+
+    @Query("DELETE FROM dining_tables")
+    suspend fun clearDiningTables()
+
+    @Query("DELETE FROM sales")
+    suspend fun clearSales()
+
+    @Query("DELETE FROM products")
+    suspend fun clearProducts()
+
+    @Transaction
+    suspend fun clearTenantCache() {
+        clearTableOrders()
+        clearDiningTables()
+        clearSales()
+        clearProducts()
+    }
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertProduct(product: ProductEntity): Long

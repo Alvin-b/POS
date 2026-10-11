@@ -124,8 +124,9 @@ import java.util.TimeZone
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-fun CounterPosApp(viewModel: CounterPosViewModel) {
+fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val session by viewModel.session.collectAsStateWithLifecycle()
     val products by viewModel.products.collectAsStateWithLifecycle()
     val sales by viewModel.sales.collectAsStateWithLifecycle()
     val diningTables by viewModel.diningTables.collectAsStateWithLifecycle()
@@ -153,6 +154,9 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
     }
 
     val summary = remember(sales) { salesTodaySummary(sales) }
+    val role = session.activeBusiness?.role.orEmpty()
+    val canReceiveStock = role in setOf("owner", "manager", "inventory_clerk")
+    val canEditProducts = role in setOf("owner", "manager")
 
     LaunchedEffect(state.notice) {
         state.notice?.let {
@@ -197,6 +201,7 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                 onClearSearch = viewModel::clearSearch,
                 onOpenScanner = { viewModel.openScanner(if (state.tab == PosTab.STOCK) ScannerMode.TAKE_STOCK else ScannerMode.SELL) },
                 onAddNewProduct = { viewModel.openAddNewProduct() },
+                canAddNewProduct = canReceiveStock,
                 modifier = Modifier.statusBarsPadding()
             )
         },
@@ -266,6 +271,8 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                     onEditProductClick = viewModel::openEditProduct,
                     onAddNewProductClick = { viewModel.openAddNewProduct() },
                     onAddCatalogClick = viewModel::openCatalogItem,
+                    canReceiveStock = canReceiveStock,
+                    canEditProducts = canEditProducts,
                     onChangePhoto = { product ->
                         photoTargetCode = product.catalogCode
                         photoPicker.launch(arrayOf("image/*"))
@@ -323,7 +330,7 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                 product = product,
                 error = state.actionError,
                 onDismiss = viewModel::dismissAddStock,
-                onConfirm = { bottles -> viewModel.confirmAddStock(product, bottles) }
+                onConfirm = { bottles, unitCost -> viewModel.confirmAddStock(product, bottles, unitCost) }
             )
         }
     }
@@ -356,8 +363,8 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                 viewModel.dismissAddNewProduct()
                 viewModel.openScanner(ScannerMode.TAKE_STOCK)
             },
-            onConfirm = { name, barcode, cat, price, stock, units ->
-                viewModel.confirmCreateProduct(name, barcode, cat, price, stock, units)
+            onConfirm = { name, barcode, cat, price, stock, unitCost, units ->
+                viewModel.confirmCreateProduct(name, barcode, cat, price, stock, unitCost, units)
             }
         )
     }
@@ -369,8 +376,8 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                 product = product,
                 error = state.actionError,
                 onDismiss = viewModel::dismissCatalogItem,
-                onConfirm = { qty, price ->
-                    viewModel.confirmAddCatalogItem(code, qty, price)
+                onConfirm = { qty, price, unitCost ->
+                    viewModel.confirmAddCatalogItem(code, qty, price, unitCost)
                 }
             )
         }
@@ -393,6 +400,7 @@ private fun LeanTopBar(
     onClearSearch: () -> Unit,
     onOpenScanner: () -> Unit,
     onAddNewProduct: () -> Unit,
+    canAddNewProduct: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val focusManager = LocalFocusManager.current
@@ -521,7 +529,7 @@ private fun LeanTopBar(
                     }
 
                     // In Stock section, show Add New Product icon
-                    if (state.tab == PosTab.STOCK) {
+                    if (state.tab == PosTab.STOCK && canAddNewProduct) {
                         IconButton(
                             onClick = onAddNewProduct,
                             modifier = Modifier.testTag("add_product_icon_button")
@@ -682,6 +690,8 @@ private fun FullscreenStockScreen(
     onEditProductClick: (ProductEntity) -> Unit,
     onAddNewProductClick: () -> Unit,
     onAddCatalogClick: (ProductEntity) -> Unit,
+    canReceiveStock: Boolean,
+    canEditProducts: Boolean,
     onChangePhoto: (ProductEntity) -> Unit
 ) {
     val mine = remember(products) { products.filter { it.inMyStock } }
@@ -704,14 +714,16 @@ private fun FullscreenStockScreen(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         // Stock Camera Restock Strip inside scrollable area
-        item {
-            QuickScanActionStrip(
-                title = "Scan to Take Stock / Restock",
-                subtitle = "Point camera at cartons or bottles to increase stock",
-                actionLabel = "TAKE STOCK",
-                backgroundColor = Color(0xFFD97706),
-                onClick = onOpenStockScanner
-            )
+        if (canReceiveStock) {
+            item {
+                QuickScanActionStrip(
+                    title = "Scan to Take Stock / Restock",
+                    subtitle = "Point camera at cartons or bottles to increase stock",
+                    actionLabel = "TAKE STOCK",
+                    backgroundColor = Color(0xFFD97706),
+                    onClick = onOpenStockScanner
+                )
+            }
         }
 
         // Mode switch + Add Product action bar
@@ -750,29 +762,31 @@ private fun FullscreenStockScreen(
                 }
 
                 // "+ Add New Product" Button
-                Surface(
-                    onClick = onAddNewProductClick,
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier.height(40.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 10.dp)
+                if (canReceiveStock) {
+                    Surface(
+                        onClick = onAddNewProductClick,
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.height(40.dp)
                     ) {
-                        Icon(
-                            Icons.Default.Add,
-                            contentDescription = "New Product",
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            "New",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 10.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = "New Product",
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                "New",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
                     }
                 }
             }
@@ -844,6 +858,8 @@ private fun FullscreenStockScreen(
             items(visible, key = { it.catalogCode }) { product ->
                 StockProductCard(
                     product = product,
+                    canReceiveStock = canReceiveStock,
+                    canEditProducts = canEditProducts,
                     onAddStock = { onAddStockClick(product) },
                     onEditProduct = { onEditProductClick(product) },
                     onChangePhoto = { onChangePhoto(product) }
@@ -853,6 +869,7 @@ private fun FullscreenStockScreen(
             items(visible, key = { it.catalogCode }) { product ->
                 CatalogProductCard(
                     product = product,
+                    canAdd = canReceiveStock,
                     onAdd = { onAddCatalogClick(product) }
                 )
             }
@@ -1040,6 +1057,8 @@ private fun ProductSellCard(
 @Composable
 private fun StockProductCard(
     product: ProductEntity,
+    canReceiveStock: Boolean,
+    canEditProducts: Boolean,
     onAddStock: () -> Unit,
     onEditProduct: () -> Unit,
     onChangePhoto: () -> Unit
@@ -1114,43 +1133,49 @@ private fun StockProductCard(
                 )
 
                 // Clean Action Buttons: ONLY "+ Add" and "Edit" (No bulky +24 or +6 buttons!)
-                Row(
+                if (canReceiveStock || canEditProducts) Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.padding(top = 8.dp)
                 ) {
                     // "+ Add" button (Opens input box for bottle count)
-                    Button(
-                        onClick = onAddStock,
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
-                        modifier = Modifier.height(34.dp)
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Add Stock", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    if (canReceiveStock) {
+                        Button(
+                            onClick = onAddStock,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Add Stock", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
 
                     // "Edit" button (Allows editing stock count, price, units)
-                    OutlinedButton(
-                        onClick = onEditProduct,
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                        modifier = Modifier.height(34.dp)
-                    ) {
-                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Edit", fontSize = 12.sp)
+                    if (canEditProducts) {
+                        OutlinedButton(
+                            onClick = onEditProduct,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Edit", fontSize = 12.sp)
+                        }
                     }
 
                     // Photo button
-                    IconButton(
-                        onClick = onChangePhoto,
-                        modifier = Modifier.size(34.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.PhotoCamera,
-                            contentDescription = "Change photo",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp)
-                        )
+                    if (canEditProducts) {
+                        IconButton(
+                            onClick = onChangePhoto,
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.PhotoCamera,
+                                contentDescription = "Change photo",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -1164,6 +1189,7 @@ private fun StockProductCard(
 @Composable
 private fun CatalogProductCard(
     product: ProductEntity,
+    canAdd: Boolean,
     onAdd: () -> Unit
 ) {
     Card(
@@ -1192,11 +1218,13 @@ private fun CatalogProductCard(
                 Text("Suggested: ${ksh(product.suggestedPriceKsh)}", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
             }
 
-            Button(
-                onClick = onAdd,
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-            ) {
-                Text("Add", fontSize = 12.sp)
+            if (canAdd) {
+                Button(
+                    onClick = onAdd,
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Text("Add", fontSize = 12.sp)
+                }
             }
         }
     }
@@ -1362,9 +1390,10 @@ private fun AddBottlesDialog(
     product: ProductEntity,
     error: String?,
     onDismiss: () -> Unit,
-    onConfirm: (Int) -> Unit
+    onConfirm: (Int, Int) -> Unit
 ) {
     var bottlesText by remember { mutableStateOf("") }
+    var unitCostText by remember(product.catalogCode) { mutableStateOf(product.averageCostKsh.toString()) }
     val focusRequester = remember { FocusRequester() }
 
     AlertDialog(
@@ -1398,6 +1427,16 @@ private fun AddBottlesDialog(
                         .fillMaxWidth()
                         .focusRequester(focusRequester)
                         .testTag("add_bottles_input")
+                )
+
+                OutlinedTextField(
+                    value = unitCostText,
+                    onValueChange = { unitCostText = it.filter(Char::isDigit) },
+                    label = { Text("Unit cost (KSh)") },
+                    placeholder = { Text("0 if unknown") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                 )
 
                 // Quick helper chips for convenience
@@ -1434,7 +1473,8 @@ private fun AddBottlesDialog(
             Button(
                 onClick = {
                     val count = bottlesText.toIntOrNull() ?: 0
-                    if (count > 0) onConfirm(count)
+                    val cost = unitCostText.toIntOrNull() ?: 0
+                    if (count > 0 && cost >= 0) onConfirm(count, cost)
                 },
                 enabled = (bottlesText.toIntOrNull() ?: 0) > 0,
                 modifier = Modifier.testTag("confirm_add_bottles_button")
@@ -1647,13 +1687,14 @@ private fun AddNewProductDialog(
     error: String?,
     onDismiss: () -> Unit,
     onScanBarcode: () -> Unit,
-    onConfirm: (name: String, barcode: String, category: String, price: Int, stock: Int, units: List<SaleUnit>) -> Unit
+    onConfirm: (name: String, barcode: String, category: String, price: Int, stock: Int, unitCost: Int, units: List<SaleUnit>) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var barcode by remember(prefilledBarcode) { mutableStateOf(prefilledBarcode.orEmpty()) }
     var selectedCategory by remember { mutableStateOf("Local Liquor") }
     var stockText by remember { mutableStateOf("12") }
     var basePriceText by remember { mutableStateOf("250") }
+    var unitCostText by remember { mutableStateOf("") }
 
     val categories = listOf("Local Liquor", "Beer", "Spirit", "Cider", "RTD", "Wine", "Soft Drink", "Water")
 
@@ -1764,6 +1805,16 @@ private fun AddNewProductDialog(
                     )
                 }
 
+                OutlinedTextField(
+                    value = unitCostText,
+                    onValueChange = { unitCostText = it.filter(Char::isDigit) },
+                    label = { Text("Unit cost (KSh)") },
+                    placeholder = { Text("0 if unknown") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                )
+
                 Spacer(Modifier.height(12.dp))
                 Text(
                     "Configure Units of Sales:",
@@ -1848,7 +1899,8 @@ private fun AddNewProductDialog(
                 onClick = {
                     val p = basePriceText.toIntOrNull() ?: 0
                     val s = stockText.toIntOrNull() ?: 0
-                    onConfirm(name.trim(), barcode.trim(), selectedCategory, p, s, unitsList.toList())
+                    val cost = unitCostText.toIntOrNull() ?: 0
+                    onConfirm(name.trim(), barcode.trim(), selectedCategory, p, s, cost, unitsList.toList())
                 },
                 enabled = name.isNotBlank() && (basePriceText.toIntOrNull() ?: 0) > 0,
                 modifier = Modifier.testTag("confirm_create_product_button")
@@ -1870,10 +1922,11 @@ private fun AddCatalogItemDialog(
     product: ProductEntity,
     error: String?,
     onDismiss: () -> Unit,
-    onConfirm: (quantity: Int, priceKsh: Int) -> Unit
+    onConfirm: (quantity: Int, priceKsh: Int, unitCostKsh: Int) -> Unit
 ) {
     var quantityText by remember(product.catalogCode) { mutableStateOf("12") }
     var priceText by remember(product.catalogCode) { mutableStateOf(product.suggestedPriceKsh.toString()) }
+    var unitCostText by remember(product.catalogCode) { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1900,6 +1953,15 @@ private fun AddCatalogItemDialog(
                         .fillMaxWidth()
                         .padding(top = 8.dp)
                 )
+                OutlinedTextField(
+                    value = unitCostText,
+                    onValueChange = { unitCostText = it.filter(Char::isDigit) },
+                    label = { Text("Unit cost (KSh)") },
+                    placeholder = { Text("0 if unknown") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                )
                 if (!error.isNullOrBlank()) {
                     Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
                 }
@@ -1910,7 +1972,8 @@ private fun AddCatalogItemDialog(
                 onClick = {
                     val q = quantityText.toIntOrNull() ?: 0
                     val p = priceText.toIntOrNull() ?: 0
-                    if (q > 0 && p > 0) onConfirm(q, p)
+                    val cost = unitCostText.toIntOrNull() ?: 0
+                    if (q > 0 && p > 0 && cost >= 0) onConfirm(q, p, cost)
                 },
                 enabled = (quantityText.toIntOrNull() ?: 0) > 0 && (priceText.toIntOrNull() ?: 0) > 0
             ) {

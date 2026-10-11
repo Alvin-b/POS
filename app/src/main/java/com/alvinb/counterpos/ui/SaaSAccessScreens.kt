@@ -1,0 +1,302 @@
+package com.alvinb.counterpos.ui
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.alvinb.counterpos.data.remote.AdminBusiness
+
+@Composable
+fun CounterPosApp(viewModel: CounterPosViewModel) {
+    val session by viewModel.session.collectAsStateWithLifecycle()
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        when {
+            !state.isReady -> LoadingScreen()
+            !session.isAuthenticated -> AuthScreen(
+                error = state.startupError,
+                notice = state.notice,
+                onSignIn = viewModel::signIn,
+                onSignUp = viewModel::signUp,
+                onClearError = viewModel::clearStartupError
+            )
+            session.isPlatformAdmin -> AdminConsoleScreen(
+                viewModel = viewModel,
+                email = session.email,
+                error = state.startupError,
+                onSignOut = viewModel::signOut,
+                onClearError = viewModel::clearStartupError
+            )
+            session.activeBusiness != null -> CounterPosWorkspace(viewModel)
+            session.memberships.any { it.status == "active" } -> BusinessPickerScreen(
+                session = session,
+                onSelect = viewModel::selectBusiness,
+                onSignOut = viewModel::signOut
+            )
+            session.memberships.isNotEmpty() -> BusinessAccessBlockedScreen(
+                session = session,
+                onSignOut = viewModel::signOut
+            )
+            else -> BusinessSetupScreen(
+                email = session.email,
+                error = state.startupError,
+                onCreate = viewModel::createBusiness,
+                onSignOut = viewModel::signOut,
+                onClearError = viewModel::clearStartupError
+            )
+        }
+    }
+}
+
+@Composable
+private fun LoadingScreen() {
+    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        CircularProgressIndicator()
+        Spacer(Modifier.height(12.dp))
+        Text("Connecting securely…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun AuthScreen(
+    error: String?,
+    notice: String?,
+    onSignIn: (String, String) -> Unit,
+    onSignUp: (String, String) -> Unit,
+    onClearError: () -> Unit
+) {
+    var isSignUp by remember { mutableStateOf(false) }
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+
+    Column(
+        modifier = Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("Counter POS", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+        Text("Secure business point of sale", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(24.dp))
+        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(if (isSignUp) "Create your account" else "Sign in", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it; onClearError() },
+                    label = { Text("Email") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it; onClearError() },
+                    label = { Text("Password") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                if (!notice.isNullOrBlank()) Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                Button(
+                    onClick = {
+                        if (isSignUp) onSignUp(email, password) else onSignIn(email, password)
+                    },
+                    enabled = email.contains("@") && password.length >= 6,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text(if (isSignUp) "Create account" else "Sign in") }
+                TextButton(onClick = { isSignUp = !isSignUp; onClearError() }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (isSignUp) "Already have an account? Sign in" else "New business? Create an account")
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Text("Your data is isolated by business membership and protected by backend authorization.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun BusinessSetupScreen(
+    email: String,
+    error: String?,
+    onCreate: (String) -> Unit,
+    onSignOut: () -> Unit,
+    onClearError: () -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
+        Text("Set up your business", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Text("Signed in as $email. Create the business account that will own your inventory and staff access.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(18.dp))
+        OutlinedTextField(value = name, onValueChange = { name = it; onClearError() }, label = { Text("Business name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+        Button(onClick = { onCreate(name) }, enabled = name.trim().isNotBlank(), modifier = Modifier.fillMaxWidth().padding(top = 14.dp)) { Text("Create business") }
+        TextButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
+    }
+}
+
+@Composable
+private fun BusinessPickerScreen(
+    session: com.alvinb.counterpos.data.SessionSnapshot,
+    onSelect: (String) -> Unit,
+    onSignOut: () -> Unit
+) {
+    Column(Modifier.fillMaxSize().padding(24.dp)) {
+        Text("Choose a business", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        Text("Select the active business for this device.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp, bottom = 16.dp))
+        session.memberships.filter { it.status == "active" }.forEach { membership ->
+            Card(onClick = { onSelect(membership.shopId) }, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(membership.shopName, fontWeight = FontWeight.SemiBold)
+                    Text("Role: ${membership.role}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        TextButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
+    }
+}
+
+@Composable
+private fun BusinessAccessBlockedScreen(
+    session: com.alvinb.counterpos.data.SessionSnapshot,
+    onSignOut: () -> Unit
+) {
+    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
+        Text("Business access unavailable", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        Text("The platform administrator has suspended or closed this business. Inventory and sales are retained, but all staff access is blocked until it is reopened.", modifier = Modifier.padding(top = 10.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(18.dp))
+        session.memberships.forEach { membership ->
+            Text("${membership.shopName}: ${membership.status}", fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(24.dp))
+        Button(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
+    }
+}
+
+@Composable
+private fun AdminConsoleScreen(
+    viewModel: CounterPosViewModel,
+    email: String,
+    error: String?,
+    onSignOut: () -> Unit,
+    onClearError: () -> Unit
+) {
+    val businesses by viewModel.adminBusinesses.collectAsStateWithLifecycle()
+    var businessName by remember { mutableStateOf("") }
+    var ownerEmail by remember { mutableStateOf("") }
+    var reason by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) { viewModel.loadAdminBusinesses() }
+
+    Scaffold { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            item {
+                Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column {
+                        Text("Platform Admin", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                        Text(email, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    TextButton(onClick = onSignOut) { Text("Sign out") }
+                }
+            }
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Add a client business", fontWeight = FontWeight.SemiBold)
+                        OutlinedTextField(value = businessName, onValueChange = { businessName = it; onClearError() }, label = { Text("Business name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = ownerEmail, onValueChange = { ownerEmail = it; onClearError() }, label = { Text("Existing owner email") }, singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+                        OutlinedTextField(value = reason, onValueChange = { reason = it }, label = { Text("Lifecycle reason (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                        Button(
+                            onClick = {
+                                viewModel.createBusinessForOwner(businessName, ownerEmail)
+                                businessName = ""
+                                ownerEmail = ""
+                            },
+                            enabled = businessName.trim().isNotBlank() && ownerEmail.contains("@"),
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Create client business") }
+                    }
+                }
+            }
+            item { Text("Client businesses (${businesses.size})", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp)) }
+            items(businesses, key = { it.shopId }) { business ->
+                AdminBusinessCard(business, reason, viewModel::setBusinessStatus)
+            }
+            if (businesses.isEmpty()) item { Text("No businesses returned yet.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+    }
+}
+
+@Composable
+private fun AdminBusinessCard(
+    business: AdminBusiness,
+    reason: String,
+    onStatusChange: (String, String, String?) -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(business.shopName, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text(business.status.uppercase(), color = when (business.status) {
+                    "active" -> MaterialTheme.colorScheme.primary
+                    "suspended" -> MaterialTheme.colorScheme.error
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                }, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+            Text("Owner: ${business.ownerEmail}", fontSize = 12.sp)
+            Text("${business.memberCount} staff · ${business.productCount} products · ${business.stockUnits} units", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (!business.lifecycleReason.isNullOrBlank()) Text("Reason: ${business.lifecycleReason}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (business.status != "active") {
+                    Button(onClick = { onStatusChange(business.shopId, "active", reason.ifBlank { "Reopened by platform administrator" }) }) { Text("Reopen") }
+                }
+                if (business.status == "active") {
+                    OutlinedButton(onClick = { onStatusChange(business.shopId, "suspended", reason.ifBlank { "Suspended by platform administrator" }) }) { Text("Suspend") }
+                }
+                if (business.status != "closed") {
+                    OutlinedButton(onClick = { onStatusChange(business.shopId, "closed", reason.ifBlank { "Closed by platform administrator" }) }) { Text("Close") }
+                }
+            }
+        }
+    }
+}

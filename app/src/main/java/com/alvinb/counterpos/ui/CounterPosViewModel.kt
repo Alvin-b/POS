@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.alvinb.counterpos.data.CounterPosRepository
+import com.alvinb.counterpos.data.remote.AdminBusiness
+import com.alvinb.counterpos.data.SessionSnapshot
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.DiningTableEntity
@@ -65,6 +67,9 @@ data class CounterPosUiState(
 )
 
 class CounterPosViewModel(private val repository: CounterPosRepository) : ViewModel() {
+    val session = repository.session.stateIn(viewModelScope, SharingStarted.Eagerly, SessionSnapshot())
+    private val _adminBusinesses = MutableStateFlow<List<AdminBusiness>>(emptyList())
+    val adminBusinesses = _adminBusinesses.asStateFlow()
     val products = repository.products.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val sales = repository.sales.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val diningTables = repository.diningTables.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -77,12 +82,59 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
     init {
         viewModelScope.launch {
             try {
-                repository.seedCatalogIfEmpty()
+                repository.restoreSession()
                 _uiState.update { it.copy(isReady = true) }
             } catch (e: Exception) {
                 _uiState.update { it.copy(isReady = true, startupError = e.message) }
             }
         }
+    }
+
+    fun signIn(email: String, password: String) = viewModelScope.launch {
+        _uiState.update { it.copy(startupError = null, notice = null) }
+        runCatching { repository.signIn(email, password) }
+            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Sign in failed") } }
+    }
+
+    fun signUp(email: String, password: String) = viewModelScope.launch {
+        _uiState.update { it.copy(startupError = null, notice = null) }
+        runCatching { repository.signUp(email, password) }
+            .onSuccess { snapshot ->
+                snapshot.message?.let { message -> _uiState.update { it.copy(notice = message) } }
+            }
+            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not create account") } }
+    }
+
+    fun createBusiness(name: String) = viewModelScope.launch {
+        runCatching { repository.createBusiness(name) }
+            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not create business") } }
+    }
+
+    fun selectBusiness(shopId: String) = viewModelScope.launch {
+        runCatching { repository.selectBusiness(shopId) }
+            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not open business") } }
+    }
+
+    fun signOut() = viewModelScope.launch { repository.signOut() }
+
+    fun clearStartupError() = _uiState.update { it.copy(startupError = null) }
+
+    fun loadAdminBusinesses() = viewModelScope.launch {
+        runCatching { repository.adminBusinesses() }
+            .onSuccess { _adminBusinesses.value = it }
+            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not load businesses") } }
+    }
+
+    fun setBusinessStatus(shopId: String, status: String, reason: String?) = viewModelScope.launch {
+        runCatching { repository.adminSetBusinessStatus(shopId, status, reason) }
+            .onSuccess { _adminBusinesses.value = it }
+            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not change business status") } }
+    }
+
+    fun createBusinessForOwner(name: String, ownerEmail: String) = viewModelScope.launch {
+        runCatching { repository.adminCreateBusiness(name, ownerEmail) }
+            .onSuccess { _adminBusinesses.value = it }
+            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not create business") } }
     }
 
     fun selectTab(tab: PosTab) = _uiState.update {
@@ -148,7 +200,6 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
     fun setLibraryCategory(category: String) = _uiState.update { it.copy(libraryCategory = category) }
 
     fun clearNotice() = _uiState.update { it.copy(notice = null) }
-    fun clearStartupError() = _uiState.update { it.copy(startupError = null) }
 
     // Scanner
     fun openScanner(mode: ScannerMode) = _uiState.update {
@@ -341,18 +392,22 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
 
     fun dismissAddStock() = _uiState.update { it.copy(addStockProductCode = null, actionError = null) }
 
-    fun confirmAddStock(product: ProductEntity, additionalBottles: Int) {
+    fun confirmAddStock(product: ProductEntity, additionalBottles: Int, unitCostKsh: Int) {
         if (additionalBottles < 1) {
             _uiState.update { it.copy(actionError = "Please enter at least 1 bottle.") }
             return
         }
+        if (unitCostKsh < 0) {
+            _uiState.update { it.copy(actionError = "Enter a valid unit cost.") }
+            return
+        }
         viewModelScope.launch {
-            val success = repository.restock(product.catalogCode, additionalBottles)
+            val success = repository.restock(product.catalogCode, additionalBottles, unitCostKsh)
             if (success) {
                 _uiState.update {
                     it.copy(
                         addStockProductCode = null,
-                        notice = "✓ Added $additionalBottles bottles to ${product.name} (Total: ${product.stockQuantity + additionalBottles})"
+                        notice = "✓ Added $additionalBottles bottles at KSh $unitCostKsh to ${product.name}"
                     )
                 }
             } else {
@@ -419,6 +474,7 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
         category: String,
         basePrice: Int,
         initialStock: Int,
+        unitCostKsh: Int,
         units: List<SaleUnit>,
         brand: String = "",
         size: String = ""
@@ -435,6 +491,7 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                 category = category.trim().ifBlank { "Local Liquor" },
                 priceKsh = basePrice,
                 initialStock = initialStock.coerceAtLeast(0),
+                unitCostKsh = unitCostKsh,
                 brand = brand,
                 size = size,
                 salesUnits = units
@@ -468,13 +525,13 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
         it.copy(selectedCatalogCode = null, actionError = null)
     }
 
-    fun confirmAddCatalogItem(code: String, quantity: Int, priceKsh: Int) {
-        if (quantity < 1 || priceKsh < 1) {
-            _uiState.update { it.copy(actionError = "Enter valid quantity and price.") }
+    fun confirmAddCatalogItem(code: String, quantity: Int, priceKsh: Int, unitCostKsh: Int) {
+        if (quantity < 1 || priceKsh < 1 || unitCostKsh < 0) {
+            _uiState.update { it.copy(actionError = "Enter valid quantity, cost, and selling price.") }
             return
         }
         viewModelScope.launch {
-            val success = repository.addFromLibrary(code, quantity, priceKsh)
+            val success = repository.addFromLibrary(code, quantity, priceKsh, unitCostKsh)
             if (success) {
                 val item = products.value.firstOrNull { it.catalogCode == code }
                 _uiState.update {
@@ -509,7 +566,7 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
 
     fun updatePhoto(product: ProductEntity, uri: String) {
         viewModelScope.launch {
-            repository.updatePhoto(product.catalogCode, uri)
+            repository.updatePhoto(product, uri)
             _uiState.update { it.copy(notice = "Photo updated for ${product.name}") }
         }
     }
