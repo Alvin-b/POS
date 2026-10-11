@@ -37,6 +37,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alvinb.counterpos.data.remote.AdminBusiness
+import com.alvinb.counterpos.ui.scanner.BarcodeScannerScreen
+import com.alvinb.counterpos.ui.scanner.ScannerMode
 
 @Composable
 fun CounterPosApp(viewModel: CounterPosViewModel) {
@@ -72,10 +74,8 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
             )
             else -> BusinessSetupScreen(
                 email = session.email,
-                error = state.startupError,
-                onCreate = viewModel::createBusiness,
                 onSignOut = viewModel::signOut,
-                onClearError = viewModel::clearStartupError
+                error = state.startupError
             )
         }
     }
@@ -153,19 +153,15 @@ private fun AuthScreen(
 private fun BusinessSetupScreen(
     email: String,
     error: String?,
-    onCreate: (String) -> Unit,
-    onSignOut: () -> Unit,
-    onClearError: () -> Unit
+    onSignOut: () -> Unit
 ) {
-    var name by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
-        Text("Set up your business", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        Text("Business access pending", fontSize = 26.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
-        Text("Signed in as $email. Create the business account that will own your inventory and staff access.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Signed in as $email. Client businesses are registered by the platform superadmin. Ask the administrator to scan your business QR and add your account as the owner.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(18.dp))
-        OutlinedTextField(value = name, onValueChange = { name = it; onClearError() }, label = { Text("Business name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
-        Button(onClick = { onCreate(name) }, enabled = name.trim().isNotBlank(), modifier = Modifier.fillMaxWidth().padding(top = 14.dp)) { Text("Create business") }
+        Text("After authorization, sign in again to access the business workspace.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
         TextButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
     }
 }
@@ -218,11 +214,27 @@ private fun AdminConsoleScreen(
     onClearError: () -> Unit
 ) {
     val businesses by viewModel.adminBusinesses.collectAsStateWithLifecycle()
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
     var businessName by remember { mutableStateOf("") }
     var ownerEmail by remember { mutableStateOf("") }
     var reason by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) { viewModel.loadAdminBusinesses() }
+
+    if (state.isScannerOpen) {
+        BarcodeScannerScreen(
+            mode = ScannerMode.ADMIN_QR,
+            products = emptyList(),
+            onClose = viewModel::closeScanner,
+            onProductScannedForSale = {},
+            onProductScannedForStock = {},
+            onProductScannedForTable = {},
+            onAdminQrCodeScanned = viewModel::handleAdminQrCode,
+            onBarcodeAssigned = {},
+            onBarcodeNotRecognized = viewModel::handleAdminQrCode
+        )
+        return
+    }
 
     Scaffold { padding ->
         LazyColumn(
@@ -242,6 +254,10 @@ private fun AdminConsoleScreen(
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Add a client business", fontWeight = FontWeight.SemiBold)
+                        OutlinedButton(onClick = { viewModel.openScanner(ScannerMode.ADMIN_QR) }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Scan business QR")
+                        }
+                        Text("Business QR format: COUNTERPOS|BUSINESS|name|registered-owner@email", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedTextField(value = businessName, onValueChange = { businessName = it; onClearError() }, label = { Text("Business name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                         OutlinedTextField(value = ownerEmail, onValueChange = { ownerEmail = it; onClearError() }, label = { Text("Existing owner email") }, singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
                         OutlinedTextField(value = reason, onValueChange = { reason = it }, label = { Text("Lifecycle reason (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -260,7 +276,14 @@ private fun AdminConsoleScreen(
             }
             item { Text("Client businesses (${businesses.size})", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp)) }
             items(businesses, key = { it.shopId }) { business ->
-                AdminBusinessCard(business, reason, viewModel::setBusinessStatus)
+                AdminBusinessCard(
+                    business = business,
+                    reason = reason,
+                    selected = state.adminSelectedBusinessId == business.shopId,
+                    onSelect = { viewModel.selectAdminBusiness(business.shopId) },
+                    onScanUser = { viewModel.openScanner(ScannerMode.ADMIN_QR) },
+                    onStatusChange = viewModel::setBusinessStatus
+                )
             }
             if (businesses.isEmpty()) item { Text("No businesses returned yet.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
@@ -271,6 +294,9 @@ private fun AdminConsoleScreen(
 private fun AdminBusinessCard(
     business: AdminBusiness,
     reason: String,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    onScanUser: () -> Unit,
     onStatusChange: (String, String, String?) -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -286,6 +312,13 @@ private fun AdminBusinessCard(
             Text("Owner: ${business.ownerEmail}", fontSize = 12.sp)
             Text("${business.memberCount} staff · ${business.productCount} products · ${business.stockUnits} units", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (!business.lifecycleReason.isNullOrBlank()) Text("Reason: ${business.lifecycleReason}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedButton(onClick = onSelect, modifier = Modifier.fillMaxWidth()) {
+                Text(if (selected) "Business profile open" else "Open business profile")
+            }
+            if (selected) {
+                Text("User QR format: COUNTERPOS|USER|registered-user@email|cashier", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Button(onClick = onScanUser, modifier = Modifier.fillMaxWidth()) { Text("Scan user QR") }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (business.status != "active") {
                     Button(onClick = { onStatusChange(business.shopId, "active", reason.ifBlank { "Reopened by platform administrator" }) }) { Text("Reopen") }

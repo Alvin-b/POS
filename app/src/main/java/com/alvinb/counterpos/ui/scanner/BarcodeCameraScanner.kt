@@ -113,6 +113,7 @@ enum class ScannerMode {
     SELL,
     TAKE_STOCK,
     TABLE_ADD,
+    ADMIN_QR,
     ASSIGN_BARCODE
 }
 
@@ -124,6 +125,7 @@ fun BarcodeScannerScreen(
     onProductScannedForSale: (ProductEntity) -> Unit,
     onProductScannedForStock: (ProductEntity) -> Unit,
     onProductScannedForTable: (ProductEntity) -> Unit,
+    onAdminQrCodeScanned: (String) -> Unit,
     onBarcodeAssigned: (String) -> Unit,
     onBarcodeNotRecognized: (String) -> Unit
 ) {
@@ -154,6 +156,7 @@ fun BarcodeScannerScreen(
             onProductScannedForSale = onProductScannedForSale,
             onProductScannedForStock = onProductScannedForStock,
             onProductScannedForTable = onProductScannedForTable,
+            onAdminQrCodeScanned = onAdminQrCodeScanned,
             onBarcodeAssigned = onBarcodeAssigned,
             onBarcodeNotRecognized = onBarcodeNotRecognized
         )
@@ -172,6 +175,7 @@ fun BarcodeScannerScreen(
                     onProductScannedForSale = onProductScannedForSale,
                     onProductScannedForStock = onProductScannedForStock,
                     onProductScannedForTable = onProductScannedForTable,
+                    onAdminQrCodeScanned = onAdminQrCodeScanned,
                     onBarcodeAssigned = onBarcodeAssigned,
                     onBarcodeNotRecognized = onBarcodeNotRecognized
                 )
@@ -189,6 +193,7 @@ private fun CameraScannerView(
     onProductScannedForSale: (ProductEntity) -> Unit,
     onProductScannedForStock: (ProductEntity) -> Unit,
     onProductScannedForTable: (ProductEntity) -> Unit,
+    onAdminQrCodeScanned: (String) -> Unit,
     onBarcodeAssigned: (String) -> Unit,
     onBarcodeNotRecognized: (String) -> Unit
 ) {
@@ -264,6 +269,7 @@ private fun CameraScannerView(
             onProductScannedForSale = onProductScannedForSale,
             onProductScannedForStock = onProductScannedForStock,
             onProductScannedForTable = onProductScannedForTable,
+            onAdminQrCodeScanned = onAdminQrCodeScanned,
             onBarcodeAssigned = onBarcodeAssigned,
             onBarcodeNotRecognized = onBarcodeNotRecognized
         )
@@ -425,6 +431,7 @@ private fun CameraScannerView(
                 Surface(
                     color = when (mode) {
                         ScannerMode.SELL, ScannerMode.TABLE_ADD -> Color(0xFF0F766E).copy(alpha = 0.9f)
+                        ScannerMode.ADMIN_QR -> Color(0xFF4338CA).copy(alpha = 0.9f)
                         else -> Color(0xFFB45309).copy(alpha = 0.9f)
                     },
                     shape = RoundedCornerShape(20.dp)
@@ -444,6 +451,7 @@ private fun CameraScannerView(
                             text = when (mode) {
                                 ScannerMode.SELL -> "SELLING / REGISTER"
                                 ScannerMode.TABLE_ADD -> "ADD TO TABLE BILL"
+                                ScannerMode.ADMIN_QR -> "ADMIN ENROLLMENT QR"
                                 else -> "TAKING STOCK / RECEIVE"
                             },
                             fontSize = 12.sp,
@@ -489,9 +497,11 @@ private fun CameraScannerView(
                 }
             }
 
-            if (mode == ScannerMode.SELL || mode == ScannerMode.TABLE_ADD) {
+            if (mode == ScannerMode.SELL || mode == ScannerMode.TABLE_ADD || mode == ScannerMode.ADMIN_QR) {
                 Text(
-                    if (mode == ScannerMode.TABLE_ADD) {
+                    if (mode == ScannerMode.ADMIN_QR) {
+                        "Scan a CounterPOS business or user enrollment QR. The backend still verifies superadmin permission and registered accounts."
+                    } else if (mode == ScannerMode.TABLE_ADD) {
                         "Scan an in-stock drink to add it to this table’s bill. Confirm the quantity and sale unit next."
                     } else {
                         "Scan a barcode to sell one unit immediately and deduct it from stock."
@@ -770,9 +780,14 @@ private fun handleBarcodeResult(
     onProductScannedForSale: (ProductEntity) -> Unit,
     onProductScannedForStock: (ProductEntity) -> Unit,
     onProductScannedForTable: (ProductEntity) -> Unit,
+    onAdminQrCodeScanned: (String) -> Unit,
     onBarcodeAssigned: (String) -> Unit,
     onBarcodeNotRecognized: (String) -> Unit
 ) {
+    if (mode == ScannerMode.ADMIN_QR) {
+        onAdminQrCodeScanned(barcode.trim())
+        return
+    }
     if (mode == ScannerMode.ASSIGN_BARCODE) {
         onBarcodeAssigned(barcode.trim())
         return
@@ -783,6 +798,7 @@ private fun handleBarcodeResult(
             ScannerMode.SELL -> onProductScannedForSale(matched)
             ScannerMode.TABLE_ADD -> onProductScannedForTable(matched)
             ScannerMode.TAKE_STOCK -> onProductScannedForStock(matched)
+            ScannerMode.ADMIN_QR -> Unit
             ScannerMode.ASSIGN_BARCODE -> Unit
         }
     } else {

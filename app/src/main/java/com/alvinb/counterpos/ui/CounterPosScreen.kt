@@ -174,6 +174,7 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
             onProductScannedForSale = viewModel::handleScannedSale,
             onProductScannedForStock = viewModel::handleScannedStock,
             onProductScannedForTable = viewModel::handleScannedTableProduct,
+            onAdminQrCodeScanned = viewModel::handleAdminQrCode,
             onBarcodeAssigned = viewModel::handleAssignedBarcode,
             onBarcodeNotRecognized = viewModel::handleUnrecognizedBarcode
         )

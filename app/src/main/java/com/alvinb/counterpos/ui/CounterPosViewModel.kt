@@ -32,6 +32,7 @@ data class CounterPosUiState(
     val libraryCategory: String = "All",
     val selectedTableId: String? = null,
     val isCreatingTable: Boolean = false,
+    val adminSelectedBusinessId: String? = null,
 
     // Sale sheet
     val selectedSaleCode: String? = null,
@@ -135,6 +136,48 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
         runCatching { repository.adminCreateBusiness(name, ownerEmail) }
             .onSuccess { _adminBusinesses.value = it }
             .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not create business") } }
+    }
+
+    fun selectAdminBusiness(shopId: String) = _uiState.update {
+        it.copy(adminSelectedBusinessId = shopId, notice = "Business selected. Scan a staff QR code to attach a user.")
+    }
+
+    fun handleAdminQrCode(payload: String) {
+        val parts = payload.trim().split('|', limit = 4)
+        if (parts.size < 3 || !parts[0].equals("COUNTERPOS", ignoreCase = true)) {
+            _uiState.update { it.copy(isScannerOpen = false, startupError = "Unrecognized CounterPOS QR. Use a business or user enrollment QR.") }
+            return
+        }
+        when (parts[1].uppercase()) {
+            "BUSINESS" -> {
+                val name = parts.getOrNull(2).orEmpty().trim()
+                val ownerEmail = parts.getOrNull(3).orEmpty().trim()
+                if (name.isBlank() || !ownerEmail.contains("@")) {
+                    _uiState.update { it.copy(isScannerOpen = false, startupError = "Business QR must contain a name and registered owner email.") }
+                } else {
+                    _uiState.update { it.copy(isScannerOpen = false, startupError = null, notice = "Registering $name…") }
+                    createBusinessForOwner(name, ownerEmail)
+                }
+            }
+            "USER" -> {
+                val shopId = _uiState.value.adminSelectedBusinessId
+                val email = parts.getOrNull(2).orEmpty().trim()
+                val role = parts.getOrNull(3).orEmpty().trim().ifBlank { "cashier" }
+                if (shopId.isNullOrBlank()) {
+                    _uiState.update { it.copy(isScannerOpen = false, startupError = "Open a business profile before scanning a staff QR.") }
+                } else {
+                    viewModelScope.launch {
+                        runCatching { repository.addMemberByEmail(shopId, email, role) }
+                            .onSuccess {
+                                _adminBusinesses.value = it
+                                _uiState.update { state -> state.copy(isScannerOpen = false, notice = "$email attached as $role") }
+                            }
+                            .onFailure { error -> _uiState.update { state -> state.copy(isScannerOpen = false, startupError = error.message ?: "Could not attach user") } }
+                    }
+                }
+            }
+            else -> _uiState.update { it.copy(isScannerOpen = false, startupError = "Unsupported CounterPOS QR type.") }
+        }
     }
 
     fun selectTab(tab: PosTab) = _uiState.update {

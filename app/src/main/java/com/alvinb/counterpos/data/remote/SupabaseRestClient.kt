@@ -265,6 +265,15 @@ class SupabaseRestClient(context: Context) {
             JSONObject().put("_name", name.trim()).put("_owner_email", ownerEmail.trim())
         )
 
+    suspend fun addMemberByEmail(shopId: String, email: String, role: String): JSONObject =
+        rpcObject(
+            "add_member_by_email",
+            JSONObject()
+                .put("_shop", shopId)
+                .put("_email", email.trim())
+                .put("_role", role)
+        )
+
     private suspend fun authenticate(grantType: String, email: String, password: String): AuthSession =
         withContext(Dispatchers.IO) {
             val response = requestRaw(

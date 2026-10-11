@@ -1,6 +1,8 @@
 package com.alvinb.counterpos.data.remote
 
 import android.content.Context
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
 import android.util.Base64
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
@@ -24,8 +26,17 @@ class EncryptedSessionStore(context: Context) {
         val existing = keyStore.getKey(keyAlias, null) as? SecretKey
         if (existing != null) return existing
 
-        val generator = KeyGenerator.getInstance("AES", "AndroidKeyStore")
-        generator.init(256)
+        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        generator.init(
+            KeyGenParameterSpec.Builder(
+                keyAlias,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+            )
+                .setKeySize(256)
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .build()
+        )
         return generator.generateKey()
     }
 

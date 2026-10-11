@@ -115,6 +115,12 @@ class CounterPosRepository(
         return remote.adminBusinesses()
     }
 
+    suspend fun addMemberByEmail(shopId: String, email: String, role: String): List<AdminBusiness> {
+        require(role in setOf("manager", "inventory_clerk", "cashier")) { "Choose a valid staff role." }
+        remote.addMemberByEmail(shopId, email, role)
+        return remote.adminBusinesses()
+    }
+
     private suspend fun loadAccount(autoSelectFirstBusiness: Boolean): SessionSnapshot {
         account = remote.account()
         val snapshot = publishAccount()
