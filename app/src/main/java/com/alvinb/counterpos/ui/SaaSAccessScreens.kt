@@ -99,8 +99,10 @@ private fun AuthScreen(
     onClearError: () -> Unit
 ) {
     var isSignUp by remember { mutableStateOf(false) }
+    var showSuperadminLogin by remember { mutableStateOf(false) }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var passkey by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -112,40 +114,60 @@ private fun AuthScreen(
         Spacer(Modifier.height(24.dp))
         Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(if (isSignUp) "Create your account" else "Sign in", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                OutlinedTextField(
-                    value = email,
-                    onValueChange = { email = it; onClearError() },
-                    label = { Text("Email") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it; onClearError() },
-                    label = { Text("Password") },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-                if (!notice.isNullOrBlank()) Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
-                Button(
-                    onClick = {
-                        if (isSignUp) onSignUp(email, password) else onSignIn(email, password)
-                    },
-                    enabled = email.contains("@") && password.length >= 6,
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text(if (isSignUp) "Create account" else "Sign in") }
-                TextButton(onClick = { isSignUp = !isSignUp; onClearError() }, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (isSignUp) "Already have an account? Sign in" else "New business? Create an account")
+                if (!showSuperadminLogin) {
+                    Text("Business sign in", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Have someone scan your secure QR code, or enter the passkey sent to you.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Button(onClick = { onClearError() }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Sign in with QR code")
+                    }
+                    OutlinedTextField(
+                        value = passkey,
+                        onValueChange = { passkey = it; onClearError() },
+                        label = { Text("Passkey") },
+                        placeholder = { Text("Paste your secure passkey") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedButton(
+                        onClick = { onClearError() },
+                        enabled = passkey.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Sign in with passkey") }
+                    TextButton(onClick = { showSuperadminLogin = true; isSignUp = false; onClearError() }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Superadmin sign in")
+                    }
+                } else {
+                    Text("Superadmin sign in", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                    OutlinedTextField(
+                        value = email,
+                        onValueChange = { email = it; onClearError() },
+                        label = { Text("Email") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it; onClearError() },
+                        label = { Text("Password") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    if (!notice.isNullOrBlank()) Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                    Button(
+                        onClick = { onSignIn(email, password) },
+                        enabled = email.contains("@") && password.length >= 6,
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Sign in") }
+                    TextButton(onClick = { showSuperadminLogin = false; onClearError() }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Back to QR/passkey sign in")
+                    }
                 }
             }
         }
-        Spacer(Modifier.height(14.dp))
-        Text("Your data is isolated by business membership and protected by backend authorization.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
