@@ -111,7 +111,7 @@ class CounterPosRepository(
     }
 
     suspend fun adminCreateBusiness(name: String, ownerEmail: String): List<AdminBusiness> {
-        remote.adminCreateBusiness(name, ownerEmail)
+        remote.adminCreateBusiness(name, ownerEmail.takeIf { it.isNotBlank() })
         return remote.adminBusinesses()
     }
 

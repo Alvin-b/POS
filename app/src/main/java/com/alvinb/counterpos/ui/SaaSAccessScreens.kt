@@ -274,14 +274,23 @@ private fun AdminConsoleScreen(
             }
             item {
                 Card(modifier = Modifier.fillMaxWidth()) {
+                    Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        AdminMetric("Businesses", businesses.size.toString())
+                        AdminMetric("Active", businesses.count { it.status == "active" }.toString())
+                        AdminMetric("Pending owners", businesses.count { it.ownerEmail == "Pending owner enrollment" }.toString())
+                    }
+                }
+            }
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Add a client business", fontWeight = FontWeight.SemiBold)
+                        Text("Register a client business", fontWeight = FontWeight.SemiBold)
+                        Text("Create the business profile first. You can enroll its owner later with a secure QR code or passkey.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedButton(onClick = { viewModel.openScanner(ScannerMode.ADMIN_QR) }, modifier = Modifier.fillMaxWidth()) {
                             Text("Scan business QR")
                         }
-                        Text("Business QR format: COUNTERPOS|BUSINESS|name|registered-owner@email", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedTextField(value = businessName, onValueChange = { businessName = it; onClearError() }, label = { Text("Business name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(value = ownerEmail, onValueChange = { ownerEmail = it; onClearError() }, label = { Text("Existing owner email") }, singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+                        OutlinedTextField(value = ownerEmail, onValueChange = { ownerEmail = it; onClearError() }, label = { Text("Owner email (optional)") }, supportingText = { Text("Leave blank if the owner will enroll later.") }, singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
                         OutlinedTextField(value = reason, onValueChange = { reason = it }, label = { Text("Lifecycle reason (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                         if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                         Button(
@@ -290,9 +299,9 @@ private fun AdminConsoleScreen(
                                 businessName = ""
                                 ownerEmail = ""
                             },
-                            enabled = businessName.trim().isNotBlank() && ownerEmail.contains("@"),
+                            enabled = businessName.trim().isNotBlank(),
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text("Create client business") }
+                        ) { Text("Create business profile") }
                     }
                 }
             }
@@ -309,6 +318,14 @@ private fun AdminConsoleScreen(
             }
             if (businesses.isEmpty()) item { Text("No businesses returned yet.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
+    }
+}
+
+@Composable
+private fun AdminMetric(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, fontSize = 21.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+        Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
