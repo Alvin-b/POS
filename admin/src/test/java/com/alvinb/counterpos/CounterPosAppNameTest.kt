@@ -15,7 +15,7 @@ class CounterPosAppNameTest {
     @Test
     fun appIsNamedCounterPosAndHasCatalogSeed() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        assertEquals("Counter POS", context.getString(R.string.app_name))
+        assertEquals("Counter POS Admin", context.getString(R.string.app_name))
         assertTrue(context.assets.list("")?.contains("counterpos_catalog.json") == true)
     }
 }

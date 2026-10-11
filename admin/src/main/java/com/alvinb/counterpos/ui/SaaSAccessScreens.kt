@@ -240,6 +240,7 @@ private fun AdminConsoleScreen(
     var businessName by remember { mutableStateOf("") }
     var ownerEmail by remember { mutableStateOf("") }
     var reason by remember { mutableStateOf("") }
+    var searchQuery by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) { viewModel.loadAdminBusinesses() }
 
@@ -258,40 +259,55 @@ private fun AdminConsoleScreen(
         return
     }
 
+    val visibleBusinesses = businesses.filter { business ->
+        searchQuery.isBlank() || business.shopName.contains(searchQuery, ignoreCase = true) || business.ownerEmail.contains(searchQuery, ignoreCase = true)
+    }
+
     Scaffold { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             item {
-                Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                ) {
+                    Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column {
-                        Text("Platform Admin", fontSize = 24.sp, fontWeight = FontWeight.Bold)
-                        Text(email, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Control Center", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Text("Platform administration", fontSize = 13.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f))
+                            Text(email, fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f), modifier = Modifier.padding(top = 8.dp))
+                        }
+                        TextButton(onClick = onSignOut) { Text("Sign out") }
                     }
-                    TextButton(onClick = onSignOut) { Text("Sign out") }
                 }
             }
             item {
                 Card(modifier = Modifier.fillMaxWidth()) {
-                    Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        AdminMetric("Businesses", businesses.size.toString())
-                        AdminMetric("Active", businesses.count { it.status == "active" }.toString())
-                        AdminMetric("Pending owners", businesses.count { it.ownerEmail == "Pending owner enrollment" }.toString())
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Portfolio overview", fontWeight = FontWeight.SemiBold)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            AdminMetric("Businesses", businesses.size.toString())
+                            AdminMetric("Active", businesses.count { it.status == "active" }.toString())
+                            AdminMetric("Pending owners", businesses.count { it.ownerEmail == "Pending owner enrollment" }.toString())
+                            AdminMetric("Suspended", businesses.count { it.status == "suspended" }.toString())
+                        }
                     }
                 }
             }
             item {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Register a client business", fontWeight = FontWeight.SemiBold)
-                        Text("Create the business profile first. You can enroll its owner later with a secure QR code or passkey.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        OutlinedButton(onClick = { viewModel.openScanner(ScannerMode.ADMIN_QR) }, modifier = Modifier.fillMaxWidth()) {
-                            Text("Scan business QR")
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Register business", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                                Text("Create the profile now; enroll the owner later.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            OutlinedButton(onClick = { viewModel.openScanner(ScannerMode.ADMIN_QR) }) { Text("Scan QR") }
                         }
                         OutlinedTextField(value = businessName, onValueChange = { businessName = it; onClearError() }, label = { Text("Business name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(value = ownerEmail, onValueChange = { ownerEmail = it; onClearError() }, label = { Text("Owner email (optional)") }, supportingText = { Text("Leave blank if the owner will enroll later.") }, singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
-                        OutlinedTextField(value = reason, onValueChange = { reason = it }, label = { Text("Lifecycle reason (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = ownerEmail, onValueChange = { ownerEmail = it; onClearError() }, label = { Text("Owner email (optional)") }, supportingText = { Text("Leave blank for pending enrollment.") }, singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
                         if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                         Button(
                             onClick = {
@@ -305,8 +321,22 @@ private fun AdminConsoleScreen(
                     }
                 }
             }
-            item { Text("Client businesses (${businesses.size})", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp)) }
-            items(businesses, key = { it.shopId }) { business ->
+            item {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    label = { Text("Search businesses or owners") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+                )
+            }
+            item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Businesses", fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+                    Text("${visibleBusinesses.size} shown", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            items(visibleBusinesses, key = { it.shopId }) { business ->
                 AdminBusinessCard(
                     business = business,
                     reason = reason,
@@ -338,35 +368,47 @@ private fun AdminBusinessCard(
     onScanUser: () -> Unit,
     onStatusChange: (String, String, String?) -> Unit
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(business.shopName, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                Text(business.status.uppercase(), color = when (business.status) {
-                    "active" -> MaterialTheme.colorScheme.primary
-                    "suspended" -> MaterialTheme.colorScheme.error
-                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                }, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+    val statusColor = when (business.status) {
+        "active" -> MaterialTheme.colorScheme.primary
+        "suspended" -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                Column(Modifier.weight(1f)) {
+                    Text(business.shopName, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Created ${business.createdAt.take(10)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text(business.status.uppercase(), color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
-            Text("Owner: ${business.ownerEmail}", fontSize = 12.sp)
-            Text("${business.memberCount} staff · ${business.productCount} products · ${business.stockUnits} units", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (!business.lifecycleReason.isNullOrBlank()) Text("Reason: ${business.lifecycleReason}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Owner enrollment", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(business.ownerEmail, fontWeight = FontWeight.Medium)
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                AdminMetric("Staff", business.memberCount.toString())
+                AdminMetric("Products", business.productCount.toString())
+                AdminMetric("Stock units", business.stockUnits.toString())
+            }
+            if (!business.lifecycleReason.isNullOrBlank()) Text(business.lifecycleReason, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedButton(onClick = onSelect, modifier = Modifier.fillMaxWidth()) {
-                Text(if (selected) "Business profile open" else "Open business profile")
+                Text(if (selected) "Business profile selected" else "Open business profile")
             }
             if (selected) {
-                Text("User QR format: COUNTERPOS|USER|registered-user@email|cashier", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Button(onClick = onScanUser, modifier = Modifier.fillMaxWidth()) { Text("Scan user QR") }
+                Button(onClick = onScanUser, modifier = Modifier.fillMaxWidth()) { Text("Scan owner or staff QR") }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (business.status != "active") {
-                    Button(onClick = { onStatusChange(business.shopId, "active", reason.ifBlank { "Reopened by platform administrator" }) }) { Text("Reopen") }
+                    Button(onClick = { onStatusChange(business.shopId, "active", reason.ifBlank { "Reopened by platform administrator" }) }, modifier = Modifier.weight(1f)) { Text("Reopen") }
                 }
                 if (business.status == "active") {
-                    OutlinedButton(onClick = { onStatusChange(business.shopId, "suspended", reason.ifBlank { "Suspended by platform administrator" }) }) { Text("Suspend") }
+                    OutlinedButton(onClick = { onStatusChange(business.shopId, "suspended", reason.ifBlank { "Suspended by platform administrator" }) }, modifier = Modifier.weight(1f)) { Text("Suspend") }
                 }
                 if (business.status != "closed") {
-                    OutlinedButton(onClick = { onStatusChange(business.shopId, "closed", reason.ifBlank { "Closed by platform administrator" }) }) { Text("Close") }
+                    OutlinedButton(onClick = { onStatusChange(business.shopId, "closed", reason.ifBlank { "Closed by platform administrator" }) }, modifier = Modifier.weight(1f)) { Text("Close") }
                 }
             }
         }
