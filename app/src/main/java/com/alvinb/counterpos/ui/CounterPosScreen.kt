@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ShoppingCart
+import androidx.compose.material.icons.filled.TableRestaurant
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -127,6 +128,8 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val products by viewModel.products.collectAsStateWithLifecycle()
     val sales by viewModel.sales.collectAsStateWithLifecycle()
+    val diningTables by viewModel.diningTables.collectAsStateWithLifecycle()
+    val tableOrders by viewModel.tableOrders.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -223,6 +226,13 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                     label = { Text("Sales", fontSize = 11.sp, fontWeight = if (state.tab == PosTab.SALES) FontWeight.Bold else FontWeight.Normal) },
                     modifier = Modifier.testTag("nav_sales")
                 )
+                NavigationBarItem(
+                    selected = state.tab == PosTab.TABLES,
+                    onClick = { viewModel.selectTab(PosTab.TABLES) },
+                    icon = { Icon(Icons.Default.TableRestaurant, contentDescription = "Tables") },
+                    label = { Text("Tables", fontSize = 11.sp, fontWeight = if (state.tab == PosTab.TABLES) FontWeight.Bold else FontWeight.Normal) },
+                    modifier = Modifier.testTag("nav_tables")
+                )
             }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -268,6 +278,18 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                     sales = sales,
                     todaySummary = summary,
                     onUndo = viewModel::undoLastSale
+                )
+                PosTab.TABLES -> TablesScreen(
+                    tables = diningTables,
+                    orders = tableOrders,
+                    products = products,
+                    selectedTableId = state.selectedTableId,
+                    actionError = state.actionError,
+                    isCreatingTable = state.isCreatingTable,
+                    onCreateTable = viewModel::createDiningTable,
+                    onOpenTable = viewModel::openTable,
+                    onBackToTables = viewModel::backToTables,
+                    onAddProduct = viewModel::openTableSale
                 )
             }
         }

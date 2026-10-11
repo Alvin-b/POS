@@ -1,0 +1,287 @@
+package com.alvinb.counterpos.ui
+
+import android.content.Context
+import android.print.PrintAttributes
+import android.print.PrintManager
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.filled.TableRestaurant
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.alvinb.counterpos.data.local.entity.DiningTableEntity
+import com.alvinb.counterpos.data.local.entity.ProductEntity
+import com.alvinb.counterpos.data.local.entity.TableOrderEntity
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun TablesScreen(
+    tables: List<DiningTableEntity>,
+    orders: List<TableOrderEntity>,
+    products: List<ProductEntity>,
+    selectedTableId: String?,
+    actionError: String?,
+    isCreatingTable: Boolean,
+    onCreateTable: (String) -> Unit,
+    onOpenTable: (DiningTableEntity) -> Unit,
+    onBackToTables: () -> Unit,
+    onAddProduct: (String, ProductEntity) -> Unit
+) {
+    val context = LocalContext.current
+    val selected = tables.firstOrNull { it.id == selectedTableId }
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var newTableName by remember { mutableStateOf("") }
+    var showProductPicker by remember { mutableStateOf(false) }
+    var productQuery by remember { mutableStateOf("") }
+    val currentOrders = orders.filter { it.tableId == selectedTableId }
+    val tableTotal = currentOrders.sumOf { it.totalKsh.toLong() }
+
+    LaunchedEffect(isCreatingTable, selectedTableId) {
+        if (!isCreatingTable && selectedTableId != null) showCreateDialog = false
+    }
+
+    if (showCreateDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!isCreatingTable) showCreateDialog = false },
+            title = { Text("Add a table") },
+            text = {
+                Column {
+                    Text("Name it so orders and the printed receipt are easy to identify.", fontSize = 13.sp)
+                    OutlinedTextField(
+                        value = newTableName,
+                        onValueChange = { newTableName = it.take(40) },
+                        label = { Text("Table name") },
+                        placeholder = { Text("e.g. Table 1, Patio A") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                    )
+                    if (!actionError.isNullOrBlank()) Text(actionError, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { onCreateTable(newTableName) },
+                    enabled = newTableName.isNotBlank() && !isCreatingTable
+                ) {
+                    if (isCreatingTable) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Text("Create table")
+                }
+            },
+            dismissButton = { TextButton(onClick = { showCreateDialog = false }) { Text("Cancel") } }
+        )
+    }
+
+    if (showProductPicker && selected != null) {
+        ModalBottomSheet(onDismissRequest = { showProductPicker = false }) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                Text("Add to ${selected.name}", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                OutlinedTextField(
+                    value = productQuery,
+                    onValueChange = { productQuery = it },
+                    label = { Text("Search in-stock products") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp)
+                )
+                val matches = products.filter {
+                    it.inMyStock && it.stockQuantity > 0 &&
+                        (productQuery.isBlank() || it.name.contains(productQuery, true) || it.brand.contains(productQuery, true))
+                }
+                LazyColumn(Modifier.fillMaxWidth().height(420.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
+                    items(matches, key = { it.catalogCode }) { product ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                showProductPicker = false
+                                productQuery = ""
+                                onAddProduct(selected.id, product)
+                            }.padding(vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(product.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${product.stockQuantity} in stock · ${product.category}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Icon(Icons.Default.Add, contentDescription = "Add ${product.name} to table")
+                        }
+                    }
+                    if (matches.isEmpty()) item { Text("No matching products in stock.", modifier = Modifier.padding(vertical = 20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                }
+            }
+        }
+    }
+
+    if (selected == null) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 10.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column {
+                    Text("Tables", fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                    Text("Open a table to add orders and print its check.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Button(onClick = { newTableName = ""; showCreateDialog = true }) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Text("Add table", modifier = Modifier.padding(start = 5.dp))
+                }
+            }
+            if (!actionError.isNullOrBlank() && !showCreateDialog) {
+                Text(actionError, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+            }
+            if (tables.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.TableRestaurant, contentDescription = null, modifier = Modifier.size(44.dp), tint = MaterialTheme.colorScheme.primary)
+                        Text("No tables yet", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
+                        Text("Create a named table to start assigning orders.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            } else {
+                LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 10.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    items(tables, key = { it.id }) { table ->
+                        val lines = orders.filter { it.tableId == table.id }
+                        val total = lines.sumOf { it.totalKsh.toLong() }
+                        Card(
+                            modifier = Modifier.fillMaxWidth().clickable { onOpenTable(table) },
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                        ) {
+                            Row(Modifier.fillMaxWidth().padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.TableRestaurant, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(27.dp))
+                                Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                                    Text(table.name, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                                    Text("${lines.size} served item${if (lines.size == 1) "" else "s"} · ${ksh(total)}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Text("Open", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 6.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBackToTables) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to tables") }
+                Column(Modifier.weight(1f)) {
+                    Text(selected.name, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text("${currentOrders.size} item line${if (currentOrders.size == 1) "" else "s"} served", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = { printTableReceipt(context, selected.name, currentOrders, tableTotal) }, enabled = currentOrders.isNotEmpty()) {
+                    Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = "Print receipt for ${selected.name}", tint = if (currentOrders.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            if (!actionError.isNullOrBlank()) Text(actionError, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+            if (currentOrders.isEmpty()) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("No items served yet", fontWeight = FontWeight.SemiBold)
+                        Text("Add ordered products to build this table’s check.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            } else {
+                LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    items(currentOrders, key = { it.id }) { line ->
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(line.productName, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("${line.quantity} × ${line.unitName} · ${ksh(line.unitPriceKsh)} each · ${time(line.servedAt)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Text(ksh(line.totalKsh), fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Running total", fontWeight = FontWeight.Medium)
+                    Text(ksh(tableTotal), fontSize = 19.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = { productQuery = ""; showProductPicker = true }, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Text("Add ordered items", modifier = Modifier.padding(start = 5.dp))
+                }
+                OutlinedButton(onClick = { printTableReceipt(context, selected.name, currentOrders, tableTotal) }, enabled = currentOrders.isNotEmpty()) {
+                    Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Text("Print", modifier = Modifier.padding(start = 4.dp))
+                }
+            }
+        }
+    }
+}
+
+private fun ksh(amount: Long): String = "KSh ${String.format(Locale.US, "%,d", amount)}"
+private fun ksh(amount: Int): String = ksh(amount.toLong())
+private fun time(epoch: Long): String = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(epoch))
+
+private fun printTableReceipt(context: Context, tableName: String, orders: List<TableOrderEntity>, total: Long) {
+    if (orders.isEmpty()) return
+    val htmlEncode: (String) -> String = { value ->
+        value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;")
+    }
+    val rows = orders.joinToString("") { item ->
+        "<tr><td>${htmlEncode(item.productName)}<br><small>${item.quantity} × ${htmlEncode(item.unitName)} @ ${ksh(item.unitPriceKsh)}</small></td><td class='amount'>${ksh(item.totalKsh)}</td></tr>"
+    }
+    val html = """
+        <!doctype html><html><head><meta charset='utf-8'><style>
+        body{font-family:Arial,sans-serif;color:#111;margin:24px;font-size:14px}h1{font-size:23px;margin:0 0 4px}.muted{color:#555;font-size:12px}table{width:100%;border-collapse:collapse;margin-top:18px}td{padding:9px 2px;border-bottom:1px solid #ddd;vertical-align:top}.amount{text-align:right;white-space:nowrap;font-weight:600}.total{font-size:18px;font-weight:bold;text-align:right;padding-top:14px}
+        </style></head><body><h1>CounterPOS</h1><div class='muted'>Table: ${htmlEncode(tableName)}</div><div class='muted'>${SimpleDateFormat("dd MMM yyyy, h:mm a", Locale.getDefault()).format(Date())}</div><table>$rows</table><div class='total'>TOTAL: ${ksh(total)}</div><p class='muted'>Thank you.</p></body></html>
+    """.trimIndent()
+    val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager ?: return
+    val webView = WebView(context)
+    webView.webViewClient = object : WebViewClient() {
+        override fun onPageFinished(view: WebView, url: String?) {
+            val adapter = view.createPrintDocumentAdapter("${tableName.replace(Regex("[^A-Za-z0-9_-]"), "_")}_receipt")
+            printManager.print("${tableName} receipt", adapter, PrintAttributes.Builder().build())
+        }
+    }
+    webView.loadDataWithBaseURL(null, html, "text/HTML", "UTF-8", null)
+}

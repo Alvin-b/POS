@@ -1,17 +1,35 @@
 package com.alvinb.counterpos.data.local.dao
-
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
+import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
+import com.alvinb.counterpos.data.local.entity.TableOrderEntity
 import kotlinx.coroutines.flow.Flow
-
 @Dao
 interface CounterPosDao {
+    @Query("SELECT * FROM dining_tables ORDER BY createdAt ASC, name COLLATE NOCASE ASC")
+    fun observeDiningTables(): Flow<List<DiningTableEntity>>
+    @Query("SELECT * FROM table_orders ORDER BY servedAt ASC, id ASC")
+    fun observeTableOrders(): Flow<List<TableOrderEntity>>
+    @Query("SELECT * FROM dining_tables WHERE id = :id LIMIT 1")
+    suspend fun getDiningTable(id: String): DiningTableEntity?
+    @Query("SELECT * FROM dining_tables WHERE name = :name COLLATE NOCASE LIMIT 1")
+    suspend fun getDiningTableByName(name: String): DiningTableEntity?
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertDiningTable(table: DiningTableEntity)
+    @Query("DELETE FROM dining_tables WHERE id = :id")
+    suspend fun deleteDiningTable(id: String): Int
+    @Insert
+    suspend fun insertTableOrder(order: TableOrderEntity): Long
+
+    @Query("DELETE FROM table_orders WHERE saleId = :saleId")
+    suspend fun deleteTableOrderBySaleId(saleId: Long): Int
+
     @Query("SELECT * FROM products ORDER BY name COLLATE NOCASE ASC")
     fun observeProducts(): Flow<List<ProductEntity>>
 
@@ -111,6 +129,51 @@ interface CounterPosDao {
     }
 
     @Transaction
+    suspend fun completeTableSaleWithUnit(
+        tableId: String,
+        code: String,
+        quantity: Int,
+        unitName: String,
+        unitPriceKsh: Int,
+        createdAt: Long
+    ): Boolean {
+        if (getDiningTable(tableId) == null || quantity < 1 || unitPriceKsh < 1) return false
+        val product = getProductByCode(code) ?: return false
+        if (!product.inMyStock || product.stockQuantity < 1) return false
+        val stockToDeduct = if (unitName.equals("Bottle", true) || unitName.equals("Can", true)) quantity else 1
+        if (product.stockQuantity < stockToDeduct || decrementStock(code, stockToDeduct) != 1) return false
+        val total = unitPriceKsh * quantity
+        val saleId = insertSale(
+            SaleEntity(
+                catalogCode = product.catalogCode,
+                productName = product.name,
+                imageAssetName = product.imageAssetName,
+                unitName = unitName,
+                quantity = quantity,
+                unitPriceKsh = unitPriceKsh,
+                totalKsh = total,
+                createdAt = createdAt,
+                photoOverrideUri = product.photoOverrideUri
+            )
+        )
+        if (saleId <= 0L) return false
+        insertTableOrder(
+            TableOrderEntity(
+                tableId = tableId,
+                saleId = saleId,
+                catalogCode = product.catalogCode,
+                productName = product.name,
+                unitName = unitName,
+                quantity = quantity,
+                unitPriceKsh = unitPriceKsh,
+                totalKsh = total,
+                servedAt = createdAt
+            )
+        )
+        return true
+    }
+
+    @Transaction
     suspend fun completeSale(code: String, quantity: Int, createdAt: Long): Boolean {
         if (quantity < 1) return false
         val product = getProductByCode(code) ?: return false
@@ -149,7 +212,9 @@ interface CounterPosDao {
     @Transaction
     suspend fun undoLatestSale(): Boolean {
         val sale = getLatestActiveSale() ?: return false
-        restoreStock(sale.catalogCode, sale.quantity)
+        val stockToRestore = if (sale.unitName.equals("Bottle", true) || sale.unitName.equals("Can", true)) sale.quantity else 1
+        if (restoreStock(sale.catalogCode, stockToRestore) != 1) return false
+        deleteTableOrderBySaleId(sale.id)
         return markSaleUndone(sale.id) == 1
     }
 }

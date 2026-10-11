@@ -4,19 +4,32 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.alvinb.counterpos.data.local.dao.CounterPosDao
+import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
-
+import com.alvinb.counterpos.data.local.entity.TableOrderEntity
 @Database(
-    entities = [ProductEntity::class, SaleEntity::class],
-    version = 3,
+    entities = [ProductEntity::class, SaleEntity::class, DiningTableEntity::class, TableOrderEntity::class],
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun counterPosDao(): CounterPosDao
 
     companion object {
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS dining_tables (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL, createdAt INTEGER NOT NULL)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_dining_tables_name ON dining_tables(name)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS table_orders (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, tableId TEXT NOT NULL, saleId INTEGER NOT NULL, catalogCode TEXT NOT NULL, productName TEXT NOT NULL, unitName TEXT NOT NULL, quantity INTEGER NOT NULL, unitPriceKsh INTEGER NOT NULL, totalKsh INTEGER NOT NULL, servedAt INTEGER NOT NULL, FOREIGN KEY(tableId) REFERENCES dining_tables(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_table_orders_tableId_servedAt ON table_orders(tableId, servedAt)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_table_orders_saleId ON table_orders(saleId)")
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -25,7 +38,7 @@ abstract class AppDatabase : RoomDatabase() {
                 context.applicationContext,
                 AppDatabase::class.java,
                 "counterpos.db"
-            ).fallbackToDestructiveMigration(dropAllTables = true).build().also { instance = it }
+            ).addMigrations(MIGRATION_3_4).fallbackToDestructiveMigration(dropAllTables = true).build().also { instance = it }
         }
     }
 }

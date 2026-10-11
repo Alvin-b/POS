@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.alvinb.counterpos.data.CounterPosRepository
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
+import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.SaleUnit
 import com.alvinb.counterpos.data.local.entity.parseSaleUnits
 import com.alvinb.counterpos.data.local.entity.serializeSaleUnits
@@ -18,7 +19,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
 
-enum class PosTab { SCAN, STOCK, SALES }
+enum class PosTab { SCAN, STOCK, SALES, TABLES }
 enum class StockMode { MY_STOCK, LIBRARY }
 
 data class CounterPosUiState(
@@ -27,6 +28,8 @@ data class CounterPosUiState(
     val searchQuery: String = "",
     val isSearchActive: Boolean = false,
     val libraryCategory: String = "All",
+    val selectedTableId: String? = null,
+    val isCreatingTable: Boolean = false,
 
     // Sale sheet
     val selectedSaleCode: String? = null,
@@ -64,6 +67,8 @@ data class CounterPosUiState(
 class CounterPosViewModel(private val repository: CounterPosRepository) : ViewModel() {
     val products = repository.products.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val sales = repository.sales.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val diningTables = repository.diningTables.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val tableOrders = repository.tableOrders.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _uiState = MutableStateFlow(CounterPosUiState())
     val uiState = _uiState.asStateFlow()
@@ -82,6 +87,50 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
 
     fun selectTab(tab: PosTab) = _uiState.update {
         it.copy(tab = tab, actionError = null, isSearchActive = false, searchQuery = "")
+    }
+
+    fun openTable(table: DiningTableEntity) = _uiState.update {
+        it.copy(selectedTableId = table.id, actionError = null)
+    }
+
+    fun backToTables() = _uiState.update { it.copy(selectedTableId = null, actionError = null) }
+
+    fun createDiningTable(name: String) {
+        if (_uiState.value.isCreatingTable) return
+        _uiState.update { it.copy(isCreatingTable = true, actionError = null) }
+        viewModelScope.launch {
+            try {
+                val table = repository.createDiningTable(name)
+                _uiState.update {
+                    it.copy(
+                        selectedTableId = table.id,
+                        isCreatingTable = false,
+                        notice = "${table.name} is ready for orders"
+                    )
+                }
+            } catch (error: Exception) {
+                _uiState.update { it.copy(isCreatingTable = false, actionError = error.message ?: "Could not create table.") }
+            }
+        }
+    }
+
+    fun openTableSale(tableId: String, product: ProductEntity) {
+        if (!product.inMyStock || product.stockQuantity <= 0) {
+            _uiState.update { it.copy(actionError = "${product.name} is out of stock.") }
+            return
+        }
+        val units = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+        val defaultUnit = units.firstOrNull() ?: SaleUnit("Bottle", product.sellingPriceKsh)
+        _uiState.update {
+            it.copy(
+                selectedTableId = tableId,
+                selectedSaleCode = product.catalogCode,
+                selectedUnitName = defaultUnit.name,
+                selectedUnitPrice = defaultUnit.priceKsh,
+                saleQuantity = 1,
+                actionError = null
+            )
+        }
     }
 
     fun setStockMode(mode: StockMode) = _uiState.update {
@@ -242,12 +291,23 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
 
         viewModelScope.launch {
             try {
-                val success = repository.sellWithUnit(
-                    code = code,
-                    quantity = state.saleQuantity,
-                    unitName = state.selectedUnitName,
-                    unitPriceKsh = state.selectedUnitPrice
-                )
+                val tableId = state.selectedTableId.takeIf { state.tab == PosTab.TABLES }
+                val success = if (tableId != null) {
+                    repository.sellToTable(
+                        tableId = tableId,
+                        code = code,
+                        quantity = state.saleQuantity,
+                        unitName = state.selectedUnitName,
+                        unitPriceKsh = state.selectedUnitPrice
+                    )
+                } else {
+                    repository.sellWithUnit(
+                        code = code,
+                        quantity = state.saleQuantity,
+                        unitName = state.selectedUnitName,
+                        unitPriceKsh = state.selectedUnitPrice
+                    )
+                }
                 if (success) {
                     val product = products.value.firstOrNull { it.catalogCode == code }
                     val total = state.selectedUnitPrice * state.saleQuantity
@@ -256,7 +316,11 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                             selectedSaleCode = null,
                             saleQuantity = 1,
                             actionError = null,
-                            notice = "✓ Sold ${state.saleQuantity}x ${product?.name ?: ""} (${state.selectedUnitName}) for KSh $total"
+                            notice = if (tableId != null) {
+                                "✓ Added ${state.saleQuantity} × ${product?.name ?: ""} to table order · KSh $total"
+                            } else {
+                                "✓ Sold ${state.saleQuantity}x ${product?.name ?: ""} (${state.selectedUnitName}) for KSh $total"
+                            }
                         )
                     }
                 } else {

@@ -3,13 +3,16 @@ package com.alvinb.counterpos.data
 import android.content.res.AssetManager
 import com.alvinb.counterpos.data.local.dao.CounterPosDao
 import com.alvinb.counterpos.data.local.entity.ProductEntity
+import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.SaleUnit
+import com.alvinb.counterpos.data.local.entity.TableOrderEntity
 import com.alvinb.counterpos.data.local.entity.serializeSaleUnits
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import java.util.UUID
 
 class CounterPosRepository(
     private val dao: CounterPosDao,
@@ -17,6 +20,35 @@ class CounterPosRepository(
 ) {
     val products: Flow<List<ProductEntity>> = dao.observeProducts()
     val sales: Flow<List<SaleEntity>> = dao.observeSales()
+    val diningTables: Flow<List<DiningTableEntity>> = dao.observeDiningTables()
+    val tableOrders: Flow<List<TableOrderEntity>> = dao.observeTableOrders()
+
+    suspend fun createDiningTable(name: String): DiningTableEntity {
+        val cleanName = name.trim()
+        require(cleanName.isNotBlank()) { "Enter a name for the table." }
+        require(cleanName.length <= 40) { "Table names must be 40 characters or fewer." }
+        require(dao.getDiningTableByName(cleanName) == null) { "A table with this name already exists." }
+        return DiningTableEntity(
+            id = UUID.randomUUID().toString(),
+            name = cleanName,
+            createdAt = System.currentTimeMillis()
+        ).also { dao.insertDiningTable(it) }
+    }
+
+    suspend fun sellToTable(
+        tableId: String,
+        code: String,
+        quantity: Int,
+        unitName: String,
+        unitPriceKsh: Int
+    ): Boolean = dao.completeTableSaleWithUnit(
+        tableId = tableId,
+        code = code,
+        quantity = quantity,
+        unitName = unitName,
+        unitPriceKsh = unitPriceKsh,
+        createdAt = System.currentTimeMillis()
+    )
 
     suspend fun seedCatalogIfEmpty() = withContext(Dispatchers.IO) {
         val payload = assets.open("counterpos_catalog.json").bufferedReader().use { it.readText() }

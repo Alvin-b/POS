@@ -14,6 +14,7 @@ The app uses the backend as the **source of truth**:
 - **Sales** reads shop sales and the backend's daily summary. Sale, undo, add-from-library, and receive-stock mutations use transactional backend RPCs, then the app reloads the shop snapshot.
 - **Stock → My stock** displays the selected shop's products and quantities.
 - **Stock → Library** loads the shared beverage catalog; adding an item calls the backend catalog RPC and records the user's actual quantity and selling price.
+- **Tables** lets the cashier create and name tables, open a running check, add in-stock products using their configured sale units, review the items served, and print a table receipt through Android's print dialog. Table/check records are persisted in the device's Room database in this app revision; they are not shared between devices.
 - **Product images** use bundled verified photos as the offline/catalog fallback. Owner-uploaded shop photos go to the private Supabase Storage bucket and are shown through short-lived signed URLs. Only owners are offered the photo-change control.
 
 Room (`counterpos.db`) is a local **cache**, not a second inventory authority. It is replaced with the selected shop's latest products and sales after refresh. Stock and sales mutations require a working network connection; this version does not queue offline writes. Signing out clears the shop cache from the device. To switch between several shop memberships, sign out and sign back in to open the shop chooser.
