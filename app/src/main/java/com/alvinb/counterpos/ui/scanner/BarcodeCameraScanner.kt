@@ -112,6 +112,7 @@ import java.util.concurrent.Executors
 enum class ScannerMode {
     SELL,
     TAKE_STOCK,
+    TABLE_ADD,
     ASSIGN_BARCODE
 }
 
@@ -122,6 +123,7 @@ fun BarcodeScannerScreen(
     onClose: () -> Unit,
     onProductScannedForSale: (ProductEntity) -> Unit,
     onProductScannedForStock: (ProductEntity) -> Unit,
+    onProductScannedForTable: (ProductEntity) -> Unit,
     onBarcodeAssigned: (String) -> Unit,
     onBarcodeNotRecognized: (String) -> Unit
 ) {
@@ -151,6 +153,7 @@ fun BarcodeScannerScreen(
             onClose = onClose,
             onProductScannedForSale = onProductScannedForSale,
             onProductScannedForStock = onProductScannedForStock,
+            onProductScannedForTable = onProductScannedForTable,
             onBarcodeAssigned = onBarcodeAssigned,
             onBarcodeNotRecognized = onBarcodeNotRecognized
         )
@@ -168,6 +171,7 @@ fun BarcodeScannerScreen(
                     context = context,
                     onProductScannedForSale = onProductScannedForSale,
                     onProductScannedForStock = onProductScannedForStock,
+                    onProductScannedForTable = onProductScannedForTable,
                     onBarcodeAssigned = onBarcodeAssigned,
                     onBarcodeNotRecognized = onBarcodeNotRecognized
                 )
@@ -184,6 +188,7 @@ private fun CameraScannerView(
     onClose: () -> Unit,
     onProductScannedForSale: (ProductEntity) -> Unit,
     onProductScannedForStock: (ProductEntity) -> Unit,
+    onProductScannedForTable: (ProductEntity) -> Unit,
     onBarcodeAssigned: (String) -> Unit,
     onBarcodeNotRecognized: (String) -> Unit
 ) {
@@ -258,6 +263,7 @@ private fun CameraScannerView(
             context = context,
             onProductScannedForSale = onProductScannedForSale,
             onProductScannedForStock = onProductScannedForStock,
+            onProductScannedForTable = onProductScannedForTable,
             onBarcodeAssigned = onBarcodeAssigned,
             onBarcodeNotRecognized = onBarcodeNotRecognized
         )
@@ -417,7 +423,10 @@ private fun CameraScannerView(
 
                 // Mode Title Pill
                 Surface(
-                    color = if (mode == ScannerMode.SELL) Color(0xFF0F766E).copy(alpha = 0.9f) else Color(0xFFB45309).copy(alpha = 0.9f),
+                    color = when (mode) {
+                        ScannerMode.SELL, ScannerMode.TABLE_ADD -> Color(0xFF0F766E).copy(alpha = 0.9f)
+                        else -> Color(0xFFB45309).copy(alpha = 0.9f)
+                    },
                     shape = RoundedCornerShape(20.dp)
                 ) {
                     Row(
@@ -426,13 +435,17 @@ private fun CameraScannerView(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Icon(
-                            imageVector = if (mode == ScannerMode.SELL) Icons.Default.ShoppingCart else Icons.Default.Inventory2,
+                            imageVector = if (mode == ScannerMode.TAKE_STOCK) Icons.Default.Inventory2 else Icons.Default.ShoppingCart,
                             contentDescription = null,
                             tint = Color.White,
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
-                            text = if (mode == ScannerMode.SELL) "SELLING / REGISTER" else "TAKING STOCK / RECEIVE",
+                            text = when (mode) {
+                                ScannerMode.SELL -> "SELLING / REGISTER"
+                                ScannerMode.TABLE_ADD -> "ADD TO TABLE BILL"
+                                else -> "TAKING STOCK / RECEIVE"
+                            },
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White
@@ -476,9 +489,13 @@ private fun CameraScannerView(
                 }
             }
 
-            if (mode == ScannerMode.SELL) {
+            if (mode == ScannerMode.SELL || mode == ScannerMode.TABLE_ADD) {
                 Text(
-                    "Scan a barcode to sell one unit immediately and deduct it from stock.",
+                    if (mode == ScannerMode.TABLE_ADD) {
+                        "Scan an in-stock drink to add it to this table’s bill. Confirm the quantity and sale unit next."
+                    } else {
+                        "Scan a barcode to sell one unit immediately and deduct it from stock."
+                    },
                     color = Color(0xFFD1D5DB),
                     fontSize = 11.sp,
                     modifier = Modifier
@@ -546,7 +563,7 @@ private fun CameraScannerView(
                             )
                             Text(
                                 text = if (item != null) {
-                                    if (mode == ScannerMode.SELL) {
+                                    if (mode == ScannerMode.SELL || mode == ScannerMode.TABLE_ADD) {
                                         "KSh ${item.sellingPriceKsh} · ${item.stockQuantity} in stock"
                                     } else {
                                         "Stock: ${item.stockQuantity} units · Size: ${item.size}"
@@ -588,7 +605,7 @@ private fun CameraScannerView(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 val sampleProducts = remember(products) {
-                    val available = if (mode == ScannerMode.SELL) products.filter { it.inMyStock } else products
+                    val available = if (mode == ScannerMode.TAKE_STOCK) products else products.filter { it.inMyStock }
                     available.take(7)
                 }
 
@@ -752,6 +769,7 @@ private fun handleBarcodeResult(
     context: Context,
     onProductScannedForSale: (ProductEntity) -> Unit,
     onProductScannedForStock: (ProductEntity) -> Unit,
+    onProductScannedForTable: (ProductEntity) -> Unit,
     onBarcodeAssigned: (String) -> Unit,
     onBarcodeNotRecognized: (String) -> Unit
 ) {
@@ -761,10 +779,11 @@ private fun handleBarcodeResult(
     }
     val matched = findProductByCodeOrBarcode(barcode, products)
     if (matched != null) {
-        if (mode == ScannerMode.SELL) {
-            onProductScannedForSale(matched)
-        } else {
-            onProductScannedForStock(matched)
+        when (mode) {
+            ScannerMode.SELL -> onProductScannedForSale(matched)
+            ScannerMode.TABLE_ADD -> onProductScannedForTable(matched)
+            ScannerMode.TAKE_STOCK -> onProductScannedForStock(matched)
+            ScannerMode.ASSIGN_BARCODE -> Unit
         }
     } else {
         onBarcodeNotRecognized(barcode)

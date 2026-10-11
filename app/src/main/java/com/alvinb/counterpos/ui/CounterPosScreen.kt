@@ -173,6 +173,7 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
             onClose = viewModel::closeScanner,
             onProductScannedForSale = viewModel::handleScannedSale,
             onProductScannedForStock = viewModel::handleScannedStock,
+            onProductScannedForTable = viewModel::handleScannedTableProduct,
             onBarcodeAssigned = viewModel::handleAssignedBarcode,
             onBarcodeNotRecognized = viewModel::handleUnrecognizedBarcode
         )
@@ -296,7 +297,8 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
                     onCreateTable = viewModel::createDiningTable,
                     onOpenTable = viewModel::openTable,
                     onBackToTables = viewModel::backToTables,
-                    onAddProduct = viewModel::openTableSale
+                    onAddProduct = viewModel::openTableSale,
+                    onScanProduct = { viewModel.openScanner(ScannerMode.TABLE_ADD) }
                 )
             }
         }

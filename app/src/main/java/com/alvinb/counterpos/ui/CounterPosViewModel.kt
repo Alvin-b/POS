@@ -266,6 +266,26 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
             }
         }
     }
+
+    fun handleScannedTableProduct(product: ProductEntity) {
+        val tableId = _uiState.value.selectedTableId
+        if (tableId.isNullOrBlank()) {
+            _uiState.update { it.copy(isScannerOpen = false, notice = "Open a table before scanning a product.") }
+            return
+        }
+        if (!product.inMyStock || product.stockQuantity < 1) {
+            _uiState.update {
+                it.copy(
+                    isScannerOpen = false,
+                    notice = "${product.name} is out of stock and cannot be added to this bill."
+                )
+            }
+            return
+        }
+        _uiState.update { it.copy(isScannerOpen = false, actionError = null) }
+        openTableSale(tableId, product)
+    }
+
     fun handleScannedStock(product: ProductEntity) {
         if (product.inMyStock) {
             _uiState.update {

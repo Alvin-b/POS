@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.TableRestaurant
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -72,7 +73,8 @@ internal fun TablesScreen(
     onCreateTable: (String) -> Unit,
     onOpenTable: (DiningTableEntity) -> Unit,
     onBackToTables: () -> Unit,
-    onAddProduct: (String, ProductEntity) -> Unit
+    onAddProduct: (String, ProductEntity) -> Unit,
+    onScanProduct: () -> Unit
 ) {
     val context = LocalContext.current
     val selected = tables.firstOrNull { it.id == selectedTableId }
@@ -159,8 +161,24 @@ internal fun TablesScreen(
 
     if (selected == null) {
         Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
-            Text("Tables", fontSize = 23.sp, fontWeight = FontWeight.Bold)
-            Text("Create a named table, add each order as you serve it, then print one consolidated bill.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Tables", fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                    Text("Open a running bill for each table and print it when guests are ready to pay.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Button(
+                    onClick = { newTableName = ""; showCreateDialog = true },
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    modifier = Modifier.padding(start = 10.dp)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Text("Add table", modifier = Modifier.padding(start = 5.dp), fontWeight = FontWeight.Bold)
+                }
+            }
             if (!actionError.isNullOrBlank() && !showCreateDialog) {
                 Text(actionError, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
             }
@@ -192,13 +210,6 @@ internal fun TablesScreen(
                         }
                     }
                 }
-            }
-            Button(
-                onClick = { newTableName = ""; showCreateDialog = true },
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp)
-            ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(20.dp))
-                Text("Create a table", modifier = Modifier.padding(start = 7.dp), fontWeight = FontWeight.Bold)
             }
         }
     } else {
@@ -242,10 +253,14 @@ internal fun TablesScreen(
                     Text(ksh(tableTotal), fontSize = 19.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 }
             }
-            Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { productQuery = ""; showProductPicker = true }, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Text("Add sale to bill", modifier = Modifier.padding(start = 5.dp))
+                    Text("Add manually", modifier = Modifier.padding(start = 5.dp))
+                }
+                OutlinedButton(onClick = onScanProduct, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Text("Scan barcode", modifier = Modifier.padding(start = 5.dp))
                 }
                 OutlinedButton(onClick = { printTableReceipt(context, selected.name, currentOrders, tableTotal) }, enabled = currentOrders.isNotEmpty()) {
                     Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = null, modifier = Modifier.size(18.dp))
