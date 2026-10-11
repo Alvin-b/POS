@@ -31,7 +31,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -159,30 +158,22 @@ internal fun TablesScreen(
     }
 
     if (selected == null) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 10.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column {
-                    Text("Tables", fontSize = 23.sp, fontWeight = FontWeight.Bold)
-                    Text("Open a table to add orders and print its check.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Button(onClick = { newTableName = ""; showCreateDialog = true }) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Text("Add table", modifier = Modifier.padding(start = 5.dp))
-                }
-            }
+        Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Text("Tables", fontSize = 23.sp, fontWeight = FontWeight.Bold)
+            Text("Create a named table, add each order as you serve it, then print one consolidated bill.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (!actionError.isNullOrBlank() && !showCreateDialog) {
                 Text(actionError, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
             }
             if (tables.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Default.TableRestaurant, contentDescription = null, modifier = Modifier.size(44.dp), tint = MaterialTheme.colorScheme.primary)
                         Text("No tables yet", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
-                        Text("Create a named table to start assigning orders.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Each table keeps its own running bill.\nAdd products from your stock as guests order.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                     }
                 }
             } else {
-                LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 10.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(top = 10.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                     items(tables, key = { it.id }) { table ->
                         val lines = orders.filter { it.tableId == table.id }
                         val total = lines.sumOf { it.totalKsh.toLong() }
@@ -201,6 +192,13 @@ internal fun TablesScreen(
                         }
                     }
                 }
+            }
+            Button(
+                onClick = { newTableName = ""; showCreateDialog = true },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(20.dp))
+                Text("Create a table", modifier = Modifier.padding(start = 7.dp), fontWeight = FontWeight.Bold)
             }
         }
     } else {
@@ -247,13 +245,19 @@ internal fun TablesScreen(
             Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(onClick = { productQuery = ""; showProductPicker = true }, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Text("Add ordered items", modifier = Modifier.padding(start = 5.dp))
+                    Text("Add sale to bill", modifier = Modifier.padding(start = 5.dp))
                 }
                 OutlinedButton(onClick = { printTableReceipt(context, selected.name, currentOrders, tableTotal) }, enabled = currentOrders.isNotEmpty()) {
                     Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = null, modifier = Modifier.size(18.dp))
                     Text("Print", modifier = Modifier.padding(start = 4.dp))
                 }
             }
+            Text(
+                "Add sale opens in-stock products. Choose a product, sale unit and quantity; stock and this table’s bill update together. Print opens Android’s printer picker for available Wi-Fi or installed print services.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+            )
         }
     }
 }
@@ -268,12 +272,12 @@ private fun printTableReceipt(context: Context, tableName: String, orders: List<
         value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;")
     }
     val rows = orders.joinToString("") { item ->
-        "<tr><td>${htmlEncode(item.productName)}<br><small>${item.quantity} × ${htmlEncode(item.unitName)} @ ${ksh(item.unitPriceKsh)}</small></td><td class='amount'>${ksh(item.totalKsh)}</td></tr>"
+        "<tr><td class='item'><strong>${htmlEncode(item.productName)}</strong><div class='detail'>${item.quantity} × ${htmlEncode(item.unitName)} @ ${ksh(item.unitPriceKsh)}</div><div class='detail'>Served ${time(item.servedAt)}</div></td><td class='amount'>${ksh(item.totalKsh)}</td></tr>"
     }
     val html = """
         <!doctype html><html><head><meta charset='utf-8'><style>
-        body{font-family:Arial,sans-serif;color:#111;margin:24px;font-size:14px}h1{font-size:23px;margin:0 0 4px}.muted{color:#555;font-size:12px}table{width:100%;border-collapse:collapse;margin-top:18px}td{padding:9px 2px;border-bottom:1px solid #ddd;vertical-align:top}.amount{text-align:right;white-space:nowrap;font-weight:600}.total{font-size:18px;font-weight:bold;text-align:right;padding-top:14px}
-        </style></head><body><h1>CounterPOS</h1><div class='muted'>Table: ${htmlEncode(tableName)}</div><div class='muted'>${SimpleDateFormat("dd MMM yyyy, h:mm a", Locale.getDefault()).format(Date())}</div><table>$rows</table><div class='total'>TOTAL: ${ksh(total)}</div><p class='muted'>Thank you.</p></body></html>
+        *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#17211c;margin:28px auto;max-width:680px;font-size:14px;line-height:1.4}.brand{text-align:center;border-bottom:2px solid #183d2d;padding:4px 0 16px}.brand h1{font-size:26px;letter-spacing:1px;margin:0;color:#183d2d}.brand p{margin:4px 0 0;color:#607168;font-size:11px;letter-spacing:2px;text-transform:uppercase}.title{font-weight:700;font-size:17px;text-align:center;margin:18px 0 3px}.meta{text-align:center;color:#5e6a63;font-size:12px}.table-name{text-align:center;font-size:15px;font-weight:700;margin:3px 0 14px}table{width:100%;border-collapse:collapse;margin-top:14px;border-top:1px solid #cbd5ce}td{padding:10px 3px;border-bottom:1px solid #dce3de;vertical-align:top}.item{width:74%}.detail{font-size:11px;color:#647168;margin-top:2px}.amount{text-align:right;white-space:nowrap;font-weight:700}.total{border-top:2px solid #183d2d;margin-top:8px;padding-top:12px;display:flex;justify-content:space-between;font-size:18px;font-weight:700}.foot{text-align:center;margin-top:22px;padding-top:10px;border-top:1px dashed #aab7ae;color:#607168;font-size:11px}@media print{body{margin:0 auto;padding:10px;max-width:100%}.brand h1{font-size:20px}.title{margin-top:12px}}
+        </style></head><body><header class='brand'><h1>COUNTERPOS</h1><p>Thank you for choosing us</p></header><div class='title'>TABLE BILL</div><div class='table-name'>${htmlEncode(tableName)}</div><div class='meta'>${SimpleDateFormat("EEE, dd MMM yyyy · h:mm a", Locale.getDefault()).format(Date())}</div><table>$rows</table><div class='total'><span>TOTAL DUE</span><span>${ksh(total)}</span></div><div class='foot'>Please confirm your order before payment.<br/>We appreciate your visit.</div></body></html>
     """.trimIndent()
     val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager ?: return
     val webView = WebView(context)
