@@ -25,3 +25,4 @@ dependencyResolutionManagement {
 rootProject.name = "Counter POS"
 
 include(":app")
+include(":admin")

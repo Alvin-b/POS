@@ -133,9 +133,6 @@ private fun AuthScreen(
                         enabled = passkey.isNotBlank(),
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Sign in with passkey") }
-                    TextButton(onClick = { showSuperadminLogin = true; isSignUp = false; onClearError() }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Superadmin sign in")
-                    }
                 } else {
                     Text("Superadmin sign in", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                     OutlinedTextField(
