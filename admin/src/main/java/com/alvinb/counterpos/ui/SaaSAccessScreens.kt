@@ -284,6 +284,7 @@ private fun AdminConsoleScreen(
                 }
             }
             item {
+                AdminSectionLabel("Overview")
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text("Portfolio overview", fontWeight = FontWeight.SemiBold)
@@ -297,6 +298,7 @@ private fun AdminConsoleScreen(
                 }
             }
             item {
+                AdminSectionLabel("Business onboarding")
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -322,6 +324,7 @@ private fun AdminConsoleScreen(
                 }
             }
             item {
+                AdminSectionLabel("Business directory")
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
@@ -366,6 +369,17 @@ private fun AdminMetric(label: String, value: String) {
         Text(value, fontSize = 21.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
+}
+
+@Composable
+private fun AdminSectionLabel(label: String) {
+    Text(
+        text = label.uppercase(),
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(top = 8.dp)
+    )
 }
 
 @Composable
