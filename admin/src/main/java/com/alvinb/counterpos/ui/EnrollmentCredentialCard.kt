@@ -15,10 +15,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -33,6 +38,8 @@ fun EnrollmentCredentialCard(
     onDismiss: () -> Unit
 ) {
     val bitmap = remember(credential.qrPayload) { qrBitmap(credential.qrPayload) }
+    val clipboard = LocalClipboardManager.current
+    var copied by remember(credential.passkey) { mutableStateOf(false) }
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
@@ -47,6 +54,13 @@ fun EnrollmentCredentialCard(
             SelectionContainer {
                 Text(credential.passkey, fontSize = 22.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, textAlign = TextAlign.Center)
             }
+            Button(
+                onClick = {
+                    clipboard.setText(AnnotatedString(credential.passkey))
+                    copied = true
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text(if (copied) "Passkey copied" else "Copy passkey") }
             Text("Show or send this passkey only to the intended person. It is displayed once in this session.", fontSize = 11.sp, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSecondaryContainer)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Hide") }
