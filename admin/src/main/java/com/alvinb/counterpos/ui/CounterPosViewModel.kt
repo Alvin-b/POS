@@ -66,6 +66,8 @@ data class CounterPosUiState(
     val actionError: String? = null,
     val notice: String? = null,
     val isReady: Boolean = false,
+    val isAdminLoading: Boolean = false,
+    val isAdminMutating: Boolean = false,
     val startupError: String? = null
 )
 
@@ -89,6 +91,7 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
     private val _uiState = MutableStateFlow(CounterPosUiState())
     val uiState = _uiState.asStateFlow()
     private var mutationInProgress = false
+    private var adminRequestInProgress = false
 
     init {
         viewModelScope.launch {
@@ -130,22 +133,51 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
 
     fun clearStartupError() = _uiState.update { it.copy(startupError = null) }
 
-    fun loadAdminBusinesses() = viewModelScope.launch {
-        runCatching { repository.adminBusinesses() }
-            .onSuccess { _adminBusinesses.value = it }
-            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not load businesses") } }
+    fun loadAdminBusinesses(force: Boolean = false) {
+        if (adminRequestInProgress) return
+        if (!force && _adminBusinesses.value.isNotEmpty()) return
+        adminRequestInProgress = true
+        _uiState.update { it.copy(isAdminLoading = true, startupError = null) }
+        viewModelScope.launch {
+            try {
+                _adminBusinesses.value = repository.adminBusinesses()
+            } catch (error: Exception) {
+                _uiState.update { it.copy(startupError = error.message ?: "Could not load businesses") }
+            } finally {
+                adminRequestInProgress = false
+                _uiState.update { it.copy(isAdminLoading = false) }
+            }
+        }
     }
 
     fun setBusinessStatus(shopId: String, status: String, reason: String?) = viewModelScope.launch {
-        runCatching { repository.adminSetBusinessStatus(shopId, status, reason) }
-            .onSuccess { _adminBusinesses.value = it }
-            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not change business status") } }
+        if (adminRequestInProgress) return@launch
+        adminRequestInProgress = true
+        _uiState.update { it.copy(isAdminMutating = true, startupError = null) }
+        try {
+            _adminBusinesses.value = repository.adminSetBusinessStatus(shopId, status, reason)
+            _uiState.update { it.copy(notice = if (status == "active") "Business reopened" else "Business marked $status") }
+        } catch (error: Exception) {
+            _uiState.update { it.copy(startupError = error.message ?: "Could not change business status") }
+        } finally {
+            adminRequestInProgress = false
+            _uiState.update { it.copy(isAdminMutating = false) }
+        }
     }
 
     fun createBusinessForOwner(name: String, ownerEmail: String) = viewModelScope.launch {
-        runCatching { repository.adminCreateBusiness(name, ownerEmail) }
-            .onSuccess { _adminBusinesses.value = it }
-            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not create business") } }
+        if (adminRequestInProgress) return@launch
+        adminRequestInProgress = true
+        _uiState.update { it.copy(isAdminMutating = true, startupError = null, notice = "Registering business…") }
+        try {
+            _adminBusinesses.value = repository.adminCreateBusiness(name, ownerEmail)
+            _uiState.update { it.copy(notice = "Business registered. Select it below to issue owner access.") }
+        } catch (error: Exception) {
+            _uiState.update { it.copy(startupError = error.message ?: "Could not create business", notice = null) }
+        } finally {
+            adminRequestInProgress = false
+            _uiState.update { it.copy(isAdminMutating = false) }
+        }
     }
 
     fun selectAdminBusiness(shopId: String) = _uiState.update {
@@ -153,9 +185,11 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
     }
 
     fun generateEnrollmentCredential(business: AdminBusiness, role: String) = viewModelScope.launch {
-        _uiState.update { it.copy(startupError = null, notice = "Creating a one-time access pass…") }
-        runCatching { repository.adminCreateAccessPass(business.shopId, role) }
-            .onSuccess { pass ->
+        if (adminRequestInProgress || business.status != "active") return@launch
+        adminRequestInProgress = true
+        _uiState.update { it.copy(isAdminMutating = true, startupError = null, notice = "Creating a one-time access pass…") }
+        try {
+            val pass = repository.adminCreateAccessPass(business.shopId, role)
                 _uiState.update {
                     it.copy(
                         enrollmentCredential = EnrollmentCredential(
@@ -168,8 +202,12 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                         notice = "One-time ${role.replace('_', ' ')} pass created. Share it privately; it expires in 24 hours."
                     )
                 }
-            }
-            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not create access pass") } }
+        } catch (error: Exception) {
+            _uiState.update { it.copy(startupError = error.message ?: "Could not create access pass") }
+        } finally {
+            adminRequestInProgress = false
+            _uiState.update { it.copy(isAdminMutating = false) }
+        }
     }
 
     fun clearEnrollmentCredential() = _uiState.update { it.copy(enrollmentCredential = null) }
@@ -197,14 +235,21 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                 val role = parts.getOrNull(3).orEmpty().trim().ifBlank { "cashier" }
                 if (shopId.isNullOrBlank()) {
                     _uiState.update { it.copy(isScannerOpen = false, startupError = "Open a business profile before scanning a staff QR.") }
+                } else if (adminRequestInProgress) {
+                    _uiState.update { it.copy(isScannerOpen = false, startupError = "Another business operation is still running. Try again in a moment.") }
                 } else {
+                    adminRequestInProgress = true
+                    _uiState.update { it.copy(isScannerOpen = false, isAdminMutating = true, startupError = null, notice = "Attaching staff member…") }
                     viewModelScope.launch {
-                        runCatching { repository.addMemberByEmail(shopId, email, role) }
-                            .onSuccess {
-                                _adminBusinesses.value = it
-                                _uiState.update { state -> state.copy(isScannerOpen = false, notice = "$email attached as $role") }
-                            }
-                            .onFailure { error -> _uiState.update { state -> state.copy(isScannerOpen = false, startupError = error.message ?: "Could not attach user") } }
+                        try {
+                            _adminBusinesses.value = repository.addMemberByEmail(shopId, email, role)
+                            _uiState.update { state -> state.copy(notice = "$email attached as $role") }
+                        } catch (error: Exception) {
+                            _uiState.update { state -> state.copy(startupError = error.message ?: "Could not attach user", notice = null) }
+                        } finally {
+                            adminRequestInProgress = false
+                            _uiState.update { state -> state.copy(isAdminMutating = false) }
+                        }
                     }
                 }
             }

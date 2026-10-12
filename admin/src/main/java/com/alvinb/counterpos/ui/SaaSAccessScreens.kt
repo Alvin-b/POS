@@ -244,6 +244,10 @@ private fun AdminConsoleScreen(
 
     LaunchedEffect(Unit) { viewModel.loadAdminBusinesses() }
 
+    val canCreateBusiness = businessName.trim().length in 2..120 &&
+        (ownerEmail.isBlank() || ownerEmail.trim().contains("@")) &&
+        !state.isAdminMutating
+
     if (state.isScannerOpen) {
         BarcodeScannerScreen(
             mode = ScannerMode.ADMIN_QR,
@@ -279,7 +283,27 @@ private fun AdminConsoleScreen(
                             Text("Platform administration", fontSize = 13.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f))
                             Text(email, fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f), modifier = Modifier.padding(top = 8.dp))
                         }
-                        TextButton(onClick = onSignOut) { Text("Sign out") }
+                        Column(horizontalAlignment = Alignment.End) {
+                            TextButton(onClick = { viewModel.loadAdminBusinesses(force = true) }, enabled = !state.isAdminLoading) { Text("Refresh") }
+                            TextButton(onClick = onSignOut) { Text("Sign out") }
+                        }
+                    }
+                }
+            }
+            if (state.isAdminLoading) {
+                item { Text("Loading business directory…", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 4.dp)) }
+            }
+            if (!error.isNullOrBlank()) {
+                item {
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                        Text(error, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.padding(14.dp))
+                    }
+                }
+            }
+            if (!state.notice.isNullOrBlank()) {
+                item {
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                        Text(state.notice.orEmpty(), color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.padding(14.dp))
                     }
                 }
             }
@@ -301,25 +325,18 @@ private fun AdminConsoleScreen(
                 AdminSectionLabel("Business onboarding")
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("Register business", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                                Text("Create the profile now; enroll the owner later.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            OutlinedButton(onClick = { viewModel.openScanner(ScannerMode.ADMIN_QR) }) { Text("Scan QR") }
-                        }
-                        OutlinedTextField(value = businessName, onValueChange = { businessName = it; onClearError() }, label = { Text("Business name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(value = ownerEmail, onValueChange = { ownerEmail = it; onClearError() }, label = { Text("Owner email (optional)") }, supportingText = { Text("Leave blank for pending enrollment.") }, singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
-                        if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                        Text("Register business", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Create the profile first. Then select it below and issue a one-time owner pass.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedTextField(value = businessName, onValueChange = { businessName = it; onClearError() }, label = { Text("Business name") }, supportingText = { Text("2–120 characters") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = ownerEmail, onValueChange = { ownerEmail = it; onClearError() }, label = { Text("Owner email (optional)") }, supportingText = { Text("Leave blank to enroll with a passkey.") }, singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+                        Text("Workflow: create profile → select business → issue owner pass → owner signs in.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Button(
                             onClick = {
                                 viewModel.createBusinessForOwner(businessName, ownerEmail)
-                                businessName = ""
-                                ownerEmail = ""
                             },
-                            enabled = businessName.trim().isNotBlank(),
+                            enabled = canCreateBusiness,
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text("Create business profile") }
+                        ) { if (state.isAdminMutating) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.height(18.dp)) else Text("Register business") }
                     }
                 }
             }
@@ -355,7 +372,8 @@ private fun AdminConsoleScreen(
                     onSelect = { viewModel.selectAdminBusiness(business.shopId) },
                     onScanUser = { viewModel.openScanner(ScannerMode.ADMIN_QR) },
                     onGeneratePass = { role -> viewModel.generateEnrollmentCredential(business, role) },
-                    onStatusChange = viewModel::setBusinessStatus
+                    onStatusChange = viewModel::setBusinessStatus,
+                    actionsEnabled = !state.isAdminMutating
                 )
             }
             if (businesses.isEmpty()) item { Text("No businesses returned yet.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -390,7 +408,8 @@ private fun AdminBusinessCard(
     onSelect: () -> Unit,
     onScanUser: () -> Unit,
     onGeneratePass: (String) -> Unit,
-    onStatusChange: (String, String, String?) -> Unit
+    onStatusChange: (String, String, String?) -> Unit,
+    actionsEnabled: Boolean
 ) {
     val statusColor = when (business.status) {
         "active" -> MaterialTheme.colorScheme.primary
@@ -418,26 +437,26 @@ private fun AdminBusinessCard(
                 AdminMetric("Stock units", business.stockUnits.toString())
             }
             if (!business.lifecycleReason.isNullOrBlank()) Text(business.lifecycleReason, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedButton(onClick = onSelect, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = onSelect, enabled = actionsEnabled, modifier = Modifier.fillMaxWidth()) {
                 Text(if (selected) "Business profile selected" else "Open business profile")
             }
             if (selected) {
                 Text("Enrollment actions", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { onGeneratePass("owner") }, modifier = Modifier.weight(1f)) { Text("Owner pass") }
-                    OutlinedButton(onClick = { onGeneratePass("cashier") }, modifier = Modifier.weight(1f)) { Text("Staff pass") }
+                    Button(onClick = { onGeneratePass("owner") }, enabled = actionsEnabled && business.status == "active", modifier = Modifier.weight(1f)) { Text("Owner pass") }
+                    OutlinedButton(onClick = { onGeneratePass("cashier") }, enabled = actionsEnabled && business.status == "active", modifier = Modifier.weight(1f)) { Text("Staff pass") }
                 }
-                OutlinedButton(onClick = onScanUser, modifier = Modifier.fillMaxWidth()) { Text("Scan existing user QR") }
+                OutlinedButton(onClick = onScanUser, enabled = actionsEnabled, modifier = Modifier.fillMaxWidth()) { Text("Scan existing user QR") }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (business.status != "active") {
-                    Button(onClick = { onStatusChange(business.shopId, "active", reason.ifBlank { "Reopened by platform administrator" }) }, modifier = Modifier.weight(1f)) { Text("Reopen") }
+                    Button(onClick = { onStatusChange(business.shopId, "active", reason.ifBlank { "Reopened by platform administrator" }) }, enabled = actionsEnabled, modifier = Modifier.weight(1f)) { Text("Reopen") }
                 }
                 if (business.status == "active") {
-                    OutlinedButton(onClick = { onStatusChange(business.shopId, "suspended", reason.ifBlank { "Suspended by platform administrator" }) }, modifier = Modifier.weight(1f)) { Text("Suspend") }
+                    OutlinedButton(onClick = { onStatusChange(business.shopId, "suspended", reason.ifBlank { "Suspended by platform administrator" }) }, enabled = actionsEnabled, modifier = Modifier.weight(1f)) { Text("Suspend") }
                 }
                 if (business.status != "closed") {
-                    OutlinedButton(onClick = { onStatusChange(business.shopId, "closed", reason.ifBlank { "Closed by platform administrator" }) }, modifier = Modifier.weight(1f)) { Text("Close") }
+                    OutlinedButton(onClick = { onStatusChange(business.shopId, "closed", reason.ifBlank { "Closed by platform administrator" }) }, enabled = actionsEnabled, modifier = Modifier.weight(1f)) { Text("Close") }
                 }
             }
         }
