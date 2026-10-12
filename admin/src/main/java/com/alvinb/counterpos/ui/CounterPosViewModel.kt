@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
+import java.security.SecureRandom
 
 enum class PosTab { SCAN, STOCK, SALES, TABLES }
 enum class StockMode { MY_STOCK, LIBRARY }
@@ -33,6 +34,7 @@ data class CounterPosUiState(
     val selectedTableId: String? = null,
     val isCreatingTable: Boolean = false,
     val adminSelectedBusinessId: String? = null,
+    val enrollmentCredential: EnrollmentCredential? = null,
 
     // Sale sheet
     val selectedSaleCode: String? = null,
@@ -65,6 +67,14 @@ data class CounterPosUiState(
     val notice: String? = null,
     val isReady: Boolean = false,
     val startupError: String? = null
+)
+
+data class EnrollmentCredential(
+    val businessId: String,
+    val businessName: String,
+    val role: String,
+    val passkey: String,
+    val qrPayload: String
 )
 
 class CounterPosViewModel(private val repository: CounterPosRepository) : ViewModel() {
@@ -139,8 +149,32 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
     }
 
     fun selectAdminBusiness(shopId: String) = _uiState.update {
-        it.copy(adminSelectedBusinessId = shopId, notice = "Business selected. Scan a staff QR code to attach a user.")
+        it.copy(adminSelectedBusinessId = shopId, enrollmentCredential = null, notice = "Business selected. Generate an access pass for its owner or staff.")
     }
+
+    fun generateEnrollmentCredential(business: AdminBusiness, role: String) {
+        val alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        val random = SecureRandom()
+        val passkey = buildString {
+            repeat(16) { append(alphabet[random.nextInt(alphabet.length)]) }
+        }.chunked(4).joinToString("-")
+        val opaqueToken = ByteArray(32).also(random::nextBytes)
+            .joinToString("") { byte -> "%02x".format(byte) }
+        _uiState.update {
+            it.copy(
+                enrollmentCredential = EnrollmentCredential(
+                    businessId = business.shopId,
+                    businessName = business.shopName,
+                    role = role,
+                    passkey = passkey,
+                    qrPayload = "CPX1.$opaqueToken"
+                ),
+                notice = "Access pass generated for ${business.shopName}. Share it once with the recipient."
+            )
+        }
+    }
+
+    fun clearEnrollmentCredential() = _uiState.update { it.copy(enrollmentCredential = null) }
 
     fun handleAdminQrCode(payload: String) {
         val parts = payload.trim().split('|', limit = 4)

@@ -336,6 +336,14 @@ private fun AdminConsoleScreen(
                     Text("${visibleBusinesses.size} shown", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+            state.enrollmentCredential?.let { credential ->
+                item {
+                    EnrollmentCredentialCard(
+                        credential = credential,
+                        onDismiss = viewModel::clearEnrollmentCredential
+                    )
+                }
+            }
             items(visibleBusinesses, key = { it.shopId }) { business ->
                 AdminBusinessCard(
                     business = business,
@@ -343,6 +351,7 @@ private fun AdminConsoleScreen(
                     selected = state.adminSelectedBusinessId == business.shopId,
                     onSelect = { viewModel.selectAdminBusiness(business.shopId) },
                     onScanUser = { viewModel.openScanner(ScannerMode.ADMIN_QR) },
+                    onGeneratePass = { role -> viewModel.generateEnrollmentCredential(business, role) },
                     onStatusChange = viewModel::setBusinessStatus
                 )
             }
@@ -366,6 +375,7 @@ private fun AdminBusinessCard(
     selected: Boolean,
     onSelect: () -> Unit,
     onScanUser: () -> Unit,
+    onGeneratePass: (String) -> Unit,
     onStatusChange: (String, String, String?) -> Unit
 ) {
     val statusColor = when (business.status) {
@@ -398,7 +408,12 @@ private fun AdminBusinessCard(
                 Text(if (selected) "Business profile selected" else "Open business profile")
             }
             if (selected) {
-                Button(onClick = onScanUser, modifier = Modifier.fillMaxWidth()) { Text("Scan owner or staff QR") }
+                Text("Enrollment actions", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { onGeneratePass("owner") }, modifier = Modifier.weight(1f)) { Text("Owner pass") }
+                    OutlinedButton(onClick = { onGeneratePass("cashier") }, modifier = Modifier.weight(1f)) { Text("Staff pass") }
+                }
+                OutlinedButton(onClick = onScanUser, modifier = Modifier.fillMaxWidth()) { Text("Scan existing user QR") }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (business.status != "active") {
