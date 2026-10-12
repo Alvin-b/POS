@@ -39,6 +39,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alvinb.counterpos.data.remote.AdminBusiness
 import com.alvinb.counterpos.ui.scanner.BarcodeScannerScreen
 import com.alvinb.counterpos.ui.scanner.ScannerMode
+import java.util.UUID
 
 @Composable
 fun CounterPosApp(viewModel: CounterPosViewModel) {
@@ -103,6 +104,7 @@ private fun AuthScreen(
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var passkey by remember { mutableStateOf("") }
+    val loginQrPayload = remember { "CPR1.${UUID.randomUUID()}-${UUID.randomUUID()}" }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -112,6 +114,10 @@ private fun AuthScreen(
         Text("Counter POS", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         Text("Secure business point of sale", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
+        if (!showSuperadminLogin) {
+            LoginQrCard(payload = loginQrPayload)
+            Spacer(Modifier.height(12.dp))
+        }
         Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (!showSuperadminLogin) {
