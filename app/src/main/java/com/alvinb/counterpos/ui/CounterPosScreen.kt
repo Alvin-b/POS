@@ -1,6 +1,10 @@
 package com.alvinb.counterpos.ui
 
+import android.app.DatePickerDialog
 import android.content.Intent
+import android.graphics.pdf.PdfDocument
+import android.graphics.Paint
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -117,6 +121,7 @@ import com.alvinb.counterpos.ui.scanner.BarcodeScannerScreen
 import com.alvinb.counterpos.ui.scanner.ScannerMode
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
+import java.io.ByteArrayOutputStream
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
@@ -136,6 +141,7 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
     val keyboardController = LocalSoftwareKeyboardController.current
     val snackbarHostState = remember { SnackbarHostState() }
     var photoTargetCode by remember { mutableStateOf<String?>(null) }
+    var pendingSalesPdf by remember { mutableStateOf<ByteArray?>(null) }
 
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val code = photoTargetCode
@@ -150,6 +156,14 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
             products.firstOrNull { it.catalogCode == code }?.let { product ->
                 viewModel.updatePhoto(product, uri.toString())
             }
+        }
+    }
+
+    val salesPdfPicker = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
+        val pdf = pendingSalesPdf
+        pendingSalesPdf = null
+        if (uri != null && pdf != null) {
+            context.contentResolver.openOutputStream(uri)?.use { it.write(pdf) }
         }
     }
 
@@ -208,38 +222,49 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
             )
         },
         bottomBar = {
-            NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface,
-                tonalElevation = 3.dp
+            Surface(
+                modifier = Modifier
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .clip(RoundedCornerShape(22.dp)),
+                shape = RoundedCornerShape(22.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 5.dp,
+                shadowElevation = 4.dp
             ) {
-                NavigationBarItem(
-                    selected = state.tab == PosTab.SCAN,
-                    onClick = { viewModel.selectTab(PosTab.SCAN) },
-                    icon = { Icon(Icons.Default.ShoppingCart, contentDescription = "POS") },
-                    label = { Text("POS / Sell", fontSize = 11.sp, fontWeight = if (state.tab == PosTab.SCAN) FontWeight.Bold else FontWeight.Normal) },
-                    modifier = Modifier.testTag("nav_pos")
-                )
-                NavigationBarItem(
-                    selected = state.tab == PosTab.STOCK,
-                    onClick = { viewModel.selectTab(PosTab.STOCK) },
-                    icon = { Icon(Icons.Default.Inventory2, contentDescription = "Stock") },
-                    label = { Text("Stock (${products.count { it.inMyStock }})", fontSize = 11.sp, fontWeight = if (state.tab == PosTab.STOCK) FontWeight.Bold else FontWeight.Normal) },
-                    modifier = Modifier.testTag("nav_stock")
-                )
-                NavigationBarItem(
-                    selected = state.tab == PosTab.SALES,
-                    onClick = { viewModel.selectTab(PosTab.SALES) },
-                    icon = { Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = "Sales") },
-                    label = { Text("Sales", fontSize = 11.sp, fontWeight = if (state.tab == PosTab.SALES) FontWeight.Bold else FontWeight.Normal) },
-                    modifier = Modifier.testTag("nav_sales")
-                )
-                NavigationBarItem(
-                    selected = state.tab == PosTab.TABLES,
-                    onClick = { viewModel.selectTab(PosTab.TABLES) },
-                    icon = { Icon(Icons.Default.TableRestaurant, contentDescription = "Tables") },
-                    label = { Text("Tables", fontSize = 11.sp, fontWeight = if (state.tab == PosTab.TABLES) FontWeight.Bold else FontWeight.Normal) },
-                    modifier = Modifier.testTag("nav_tables")
-                )
+NavigationBar(
+                    modifier = Modifier.height(64.dp),
+                    containerColor = Color.Transparent,
+                    tonalElevation = 0.dp
+                ) {
+                    NavigationBarItem(
+                        selected = state.tab == PosTab.SCAN,
+                        onClick = { viewModel.selectTab(PosTab.SCAN) },
+                        icon = { Icon(Icons.Default.ShoppingCart, contentDescription = "POS", modifier = Modifier.size(20.dp)) },
+                        label = { Text("POS / Sell", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.SCAN) FontWeight.Bold else FontWeight.Normal) },
+                        modifier = Modifier.testTag("nav_pos")
+                    )
+                    NavigationBarItem(
+                        selected = state.tab == PosTab.STOCK,
+                        onClick = { viewModel.selectTab(PosTab.STOCK) },
+                        icon = { Icon(Icons.Default.Inventory2, contentDescription = "Stock", modifier = Modifier.size(20.dp)) },
+                        label = { Text("Stock (${products.count { it.inMyStock }})", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.STOCK) FontWeight.Bold else FontWeight.Normal) },
+                        modifier = Modifier.testTag("nav_stock")
+                    )
+                    NavigationBarItem(
+                        selected = state.tab == PosTab.SALES,
+                        onClick = { viewModel.selectTab(PosTab.SALES) },
+                        icon = { Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = "Sales", modifier = Modifier.size(20.dp)) },
+                        label = { Text("Sales", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.SALES) FontWeight.Bold else FontWeight.Normal) },
+                        modifier = Modifier.testTag("nav_sales")
+                    )
+                    NavigationBarItem(
+                        selected = state.tab == PosTab.TABLES,
+                        onClick = { viewModel.selectTab(PosTab.TABLES) },
+                        icon = { Icon(Icons.Default.TableRestaurant, contentDescription = "Tables", modifier = Modifier.size(20.dp)) },
+                        label = { Text("Tables", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.TABLES) FontWeight.Bold else FontWeight.Normal) },
+                        modifier = Modifier.testTag("nav_tables")
+                    )
+                }
             }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -257,7 +282,6 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
                         .padding(padding),
                     state = state,
                     products = products,
-                    onOpenScanner = { viewModel.openScanner(ScannerMode.SELL) },
                     onProductClick = viewModel::openSale
                 )
                 PosTab.STOCK -> FullscreenStockScreen(
@@ -268,7 +292,6 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
                     products = products,
                     onModeChange = viewModel::setStockMode,
                     onCategoryChange = viewModel::setLibraryCategory,
-                    onOpenStockScanner = { viewModel.openScanner(ScannerMode.TAKE_STOCK) },
                     onAddStockClick = viewModel::openAddStock,
                     onEditProductClick = viewModel::openEditProduct,
                     onAddNewProductClick = { viewModel.openAddNewProduct() },
@@ -286,7 +309,12 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
                         .padding(padding),
                     sales = sales,
                     todaySummary = summary,
-                    onUndo = viewModel::undoLastSale
+                    onUndo = viewModel::undoLastSale,
+                    onExportPdf = { start, end ->
+                        val filtered = sales.filter { it.createdAt in start..end }
+                        pendingSalesPdf = buildSalesPdf(filtered, start, end)
+                        salesPdfPicker.launch("sales-${formatReportDate(start)}-${formatReportDate(end)}.pdf")
+                    }
                 )
                 PosTab.TABLES -> TablesScreen(
                     tables = diningTables,
@@ -585,7 +613,6 @@ private fun FullscreenSellScreen(
     modifier: Modifier,
     state: CounterPosUiState,
     products: List<ProductEntity>,
-    onOpenScanner: () -> Unit,
     onProductClick: (ProductEntity) -> Unit
 ) {
     val stocked = remember(products) { products.filter { it.inMyStock } }
@@ -688,7 +715,6 @@ private fun FullscreenStockScreen(
     products: List<ProductEntity>,
     onModeChange: (StockMode) -> Unit,
     onCategoryChange: (String) -> Unit,
-    onOpenStockScanner: () -> Unit,
     onAddStockClick: (ProductEntity) -> Unit,
     onEditProductClick: (ProductEntity) -> Unit,
     onAddNewProductClick: () -> Unit,
@@ -716,18 +742,6 @@ private fun FullscreenStockScreen(
         contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // Stock Camera Restock Strip inside scrollable area
-        if (canReceiveStock) {
-            item {
-                QuickScanActionStrip(
-                    title = "Scan to Take Stock / Restock",
-                    subtitle = "Point camera at cartons or bottles to increase stock",
-                    actionLabel = "TAKE STOCK",
-                    backgroundColor = Color(0xFFD97706),
-                    onClick = onOpenStockScanner
-                )
-            }
-        }
 
         // Mode switch + Add Product action bar
         item {
@@ -888,8 +902,10 @@ private fun FullscreenSalesScreen(
     modifier: Modifier,
     sales: List<SaleEntity>,
     todaySummary: Pair<Int, Int>,
-    onUndo: () -> Unit
+    onUndo: () -> Unit,
+    onExportPdf: (Long, Long) -> Unit
 ) {
+    var showDateRange by remember { mutableStateOf(false) }
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
@@ -919,37 +935,143 @@ private fun FullscreenSalesScreen(
                 }
             }
         }
-
         item {
-            OutlinedButton(
-                onClick = onUndo,
-                modifier = Modifier.fillMaxWidth()
-            ) {
+            OutlinedButton(onClick = onUndo, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Undo last sale & restore shelf stock")
             }
         }
-
         item {
-            Text(
-                "Sales Receipts (${sales.size})",
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 14.sp,
-                modifier = Modifier.padding(top = 4.dp)
-            )
+            OutlinedButton(onClick = { showDateRange = true }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Export sales PDF by date")
+            }
         }
-
+        item {
+            Text("Sales Receipts (${sales.size})", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        }
         if (sales.isEmpty()) {
-            item {
-                EmptyStateMessage("No sales made today yet. Go to POS tab to sell products.")
-            }
+            item { EmptyStateMessage("No sales made today yet. Go to POS tab to sell products.") }
         } else {
-            items(sales, key = { it.id }) { sale ->
-                SaleReceiptRow(sale = sale)
-            }
+            items(sales, key = { it.id }) { sale -> SaleReceiptRow(sale = sale) }
         }
     }
+    if (showDateRange) {
+        SalesDateRangeDialog(
+            onDismiss = { showDateRange = false },
+            onExport = { start, end ->
+                showDateRange = false
+                onExportPdf(start, end)
+            }
+        )
+    }
+}
+
+
+@Composable
+private fun SalesDateRangeDialog(
+    onDismiss: () -> Unit,
+    onExport: (Long, Long) -> Unit
+) {
+    val context = LocalContext.current
+    var start by remember { mutableStateOf(startOfReportDay(System.currentTimeMillis())) }
+    var end by remember { mutableStateOf(endOfReportDay(System.currentTimeMillis())) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Export sales PDF") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Choose one day or any date range.", fontSize = 13.sp)
+                OutlinedButton(onClick = {
+                    val cal = Calendar.getInstance().apply { timeInMillis = start }
+                    DatePickerDialog(context, { _, year, month, day ->
+                        start = startOfReportDay(year, month, day)
+                    }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)).show()
+                }, modifier = Modifier.fillMaxWidth()) {
+                    Text("From: ${formatReportDate(start)}")
+                }
+                OutlinedButton(onClick = {
+                    val cal = Calendar.getInstance().apply { timeInMillis = end }
+                    DatePickerDialog(context, { _, year, month, day ->
+                        end = endOfReportDay(year, month, day)
+                    }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)).show()
+                }, modifier = Modifier.fillMaxWidth()) {
+                    Text("To: ${formatReportDate(end)}")
+                }
+                if (end < start) {
+                    Text("The end date must be on or after the start date.", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = end >= start, onClick = { onExport(start, end) }) { Text("Create PDF") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+private fun startOfReportDay(time: Long): Long = Calendar.getInstance().apply {
+    timeInMillis = time
+    set(Calendar.HOUR_OF_DAY, 0)
+    set(Calendar.MINUTE, 0)
+    set(Calendar.SECOND, 0)
+    set(Calendar.MILLISECOND, 0)
+}.timeInMillis
+
+private fun endOfReportDay(time: Long): Long = Calendar.getInstance().apply {
+    timeInMillis = time
+    set(Calendar.HOUR_OF_DAY, 23)
+    set(Calendar.MINUTE, 59)
+    set(Calendar.SECOND, 59)
+    set(Calendar.MILLISECOND, 999)
+}.timeInMillis
+
+private fun startOfReportDay(year: Int, month: Int, day: Int): Long = Calendar.getInstance().apply {
+    set(year, month, day, 0, 0, 0)
+    set(Calendar.MILLISECOND, 0)
+}.timeInMillis
+
+private fun endOfReportDay(year: Int, month: Int, day: Int): Long = Calendar.getInstance().apply {
+    set(year, month, day, 23, 59, 59)
+    set(Calendar.MILLISECOND, 999)
+}.timeInMillis
+
+private fun formatReportDate(time: Long): String = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(time))
+
+private fun buildSalesPdf(sales: List<SaleEntity>, start: Long, end: Long): ByteArray {
+    val document = PdfDocument()
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.BLACK }
+    var pageNumber = 1
+    var page = document.startPage(PdfDocument.PageInfo.Builder(595, 842, pageNumber).create())
+    var y = 42f
+    fun line(text: String, size: Float = 11f) {
+        paint.textSize = size
+        page.canvas.drawText(text, 32f, y, paint)
+        y += size + 9f
+    }
+    line("Counter POS Sales Report", 18f)
+    line("${formatReportDate(start)} to ${formatReportDate(end)}", 12f)
+    y += 8f
+    sales.forEach { sale ->
+        if (y > 790f) {
+            document.finishPage(page)
+            pageNumber++
+            page = document.startPage(PdfDocument.PageInfo.Builder(595, 842, pageNumber).create())
+            y = 42f
+        }
+        line("${formatReportDate(sale.createdAt)}  ${sale.productName.take(34)}")
+        line("  ${sale.quantity} x ${sale.unitName} @ KSh ${sale.unitPriceKsh} = KSh ${sale.totalKsh}", 10f)
+    }
+    y += 8f
+    line("Total units: ${sales.sumOf { it.quantity }}", 12f)
+    line("Total revenue: KSh ${sales.sumOf { it.totalKsh }}", 12f)
+    document.finishPage(page)
+    val output = ByteArrayOutputStream()
+    document.writeTo(output)
+    document.close()
+    return output.toByteArray()
 }
 
 /**
