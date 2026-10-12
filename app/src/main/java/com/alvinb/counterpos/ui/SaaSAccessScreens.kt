@@ -53,6 +53,8 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                 error = state.startupError,
                 notice = state.notice,
                 onSignIn = viewModel::signIn,
+                onPasskeySignIn = viewModel::signInWithPasskey,
+                onQrSignIn = viewModel::signInWithQrRequested,
                 onSignUp = viewModel::signUp,
                 onClearError = viewModel::clearStartupError
             )
@@ -96,6 +98,8 @@ private fun AuthScreen(
     error: String?,
     notice: String?,
     onSignIn: (String, String) -> Unit,
+    onPasskeySignIn: (String) -> Unit,
+    onQrSignIn: () -> Unit,
     onSignUp: (String, String) -> Unit,
     onClearError: () -> Unit
 ) {
@@ -123,7 +127,7 @@ private fun AuthScreen(
                 if (!showSuperadminLogin) {
                     Text("Business sign in", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                     Text("Have someone scan your secure QR code, or enter the passkey sent to you.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Button(onClick = { onClearError() }, modifier = Modifier.fillMaxWidth()) {
+                    Button(onClick = onQrSignIn, modifier = Modifier.fillMaxWidth()) {
                         Text("Sign in with QR code")
                     }
                     OutlinedTextField(
@@ -135,7 +139,7 @@ private fun AuthScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedButton(
-                        onClick = { onClearError() },
+                        onClick = { onPasskeySignIn(passkey) },
                         enabled = passkey.isNotBlank(),
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Sign in with passkey") }

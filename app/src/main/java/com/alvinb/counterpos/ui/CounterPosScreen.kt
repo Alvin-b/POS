@@ -218,6 +218,8 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
                 onOpenScanner = { viewModel.openScanner(if (state.tab == PosTab.STOCK) ScannerMode.TAKE_STOCK else ScannerMode.SELL) },
                 onAddNewProduct = { viewModel.openAddNewProduct() },
                 canAddNewProduct = canReceiveStock,
+                canManageTeam = role == "owner",
+                onManageTeam = viewModel::openTeamPanel,
                 modifier = Modifier.statusBarsPadding()
             )
         },
@@ -413,6 +415,27 @@ NavigationBar(
             )
         }
     }
+
+    if (state.isTeamPanelOpen && role == "owner") {
+        AlertDialog(
+            onDismissRequest = viewModel::closeTeamPanel,
+            title = { Text("Manage business team") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Only the business owner can enroll employees.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Ask the employee to display their QR code in the staff app, then scan it here to attach them to ${session.activeBusiness?.shopName ?: "this business"}.", fontSize = 13.sp)
+                    Text("Staff passkeys will be issued from this owner dashboard after server-side enrollment is enabled.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    viewModel.closeTeamPanel()
+                    viewModel.openScanner(ScannerMode.ADMIN_QR)
+                }) { Text("Scan employee QR") }
+            },
+            dismissButton = { TextButton(onClick = viewModel::closeTeamPanel) { Text("Close") } }
+        )
+    }
 }
 
 /**
@@ -432,6 +455,8 @@ private fun LeanTopBar(
     onOpenScanner: () -> Unit,
     onAddNewProduct: () -> Unit,
     canAddNewProduct: Boolean = true,
+    canManageTeam: Boolean = false,
+    onManageTeam: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val focusManager = LocalFocusManager.current
@@ -570,6 +595,12 @@ private fun LeanTopBar(
                                 contentDescription = "Add new product",
                                 tint = MaterialTheme.colorScheme.primary
                             )
+                        }
+                    }
+
+                    if (canManageTeam) {
+                        OutlinedButton(onClick = onManageTeam, modifier = Modifier.height(38.dp)) {
+                            Text("Team", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 

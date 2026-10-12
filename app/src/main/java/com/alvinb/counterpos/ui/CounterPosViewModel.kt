@@ -33,6 +33,7 @@ data class CounterPosUiState(
     val selectedTableId: String? = null,
     val isCreatingTable: Boolean = false,
     val adminSelectedBusinessId: String? = null,
+    val isTeamPanelOpen: Boolean = false,
 
     // Sale sheet
     val selectedSaleCode: String? = null,
@@ -97,6 +98,24 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
             .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Sign in failed") } }
     }
 
+    fun signInWithPasskey(passkey: String) = _uiState.update {
+        it.copy(
+            startupError = if (passkey.isBlank()) {
+                "Enter the passkey sent by the business owner."
+            } else {
+                "Passkey sign-in is not connected to the server yet. Ask the business owner to authorize this device."
+            },
+            notice = null
+        )
+    }
+
+    fun signInWithQrRequested() = _uiState.update {
+        it.copy(
+            startupError = "QR sign-in is waiting for owner approval. Ask the business owner to scan this code.",
+            notice = null
+        )
+    }
+
     fun signUp(email: String, password: String) = viewModelScope.launch {
         _uiState.update { it.copy(startupError = null, notice = null) }
         runCatching { repository.signUp(email, password) }
@@ -119,6 +138,10 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
     fun signOut() = viewModelScope.launch { repository.signOut() }
 
     fun clearStartupError() = _uiState.update { it.copy(startupError = null) }
+
+    fun openTeamPanel() = _uiState.update { it.copy(isTeamPanelOpen = true, actionError = null) }
+
+    fun closeTeamPanel() = _uiState.update { it.copy(isTeamPanelOpen = false, actionError = null) }
 
     fun loadAdminBusinesses() = viewModelScope.launch {
         runCatching { repository.adminBusinesses() }
