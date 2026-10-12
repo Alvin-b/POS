@@ -99,14 +99,12 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
     }
 
     fun signInWithPasskey(passkey: String) = _uiState.update {
-        it.copy(
-            startupError = if (passkey.isBlank()) {
-                "Enter the passkey sent by the business owner."
-            } else {
-                "Passkey sign-in is not connected to the server yet. Ask the business owner to authorize this device."
-            },
-            notice = null
-        )
+        it.copy(startupError = null, notice = null)
+    }.also {
+        viewModelScope.launch {
+            runCatching { repository.signInWithPasskey(passkey) }
+                .onFailure { error -> _uiState.update { state -> state.copy(startupError = error.message ?: "Passkey sign-in failed") } }
+        }
     }
 
     fun signInWithQrRequested() = _uiState.update {

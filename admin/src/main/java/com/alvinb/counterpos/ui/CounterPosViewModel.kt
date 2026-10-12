@@ -152,26 +152,24 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
         it.copy(adminSelectedBusinessId = shopId, enrollmentCredential = null, notice = "Business selected. Generate an access pass for its owner or staff.")
     }
 
-    fun generateEnrollmentCredential(business: AdminBusiness, role: String) {
-        val alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-        val random = SecureRandom()
-        val passkey = buildString {
-            repeat(16) { append(alphabet[random.nextInt(alphabet.length)]) }
-        }.chunked(4).joinToString("-")
-        val opaqueToken = ByteArray(32).also(random::nextBytes)
-            .joinToString("") { byte -> "%02x".format(byte) }
-        _uiState.update {
-            it.copy(
-                enrollmentCredential = EnrollmentCredential(
-                    businessId = business.shopId,
-                    businessName = business.shopName,
-                    role = role,
-                    passkey = passkey,
-                    qrPayload = "CPX1.$opaqueToken"
-                ),
-                notice = "Access pass generated for ${business.shopName}. Share it once with the recipient."
-            )
-        }
+    fun generateEnrollmentCredential(business: AdminBusiness, role: String) = viewModelScope.launch {
+        _uiState.update { it.copy(startupError = null, notice = "Creating a one-time access pass…") }
+        runCatching { repository.adminCreateAccessPass(business.shopId, role) }
+            .onSuccess { pass ->
+                _uiState.update {
+                    it.copy(
+                        enrollmentCredential = EnrollmentCredential(
+                            businessId = business.shopId,
+                            businessName = business.shopName,
+                            role = role,
+                            passkey = pass.optString("passkey"),
+                            qrPayload = "CPX1.${pass.optString("passkey")}"
+                        ),
+                        notice = "One-time ${role.replace('_', ' ')} pass created. Share it privately; it expires in 24 hours."
+                    )
+                }
+            }
+            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not create access pass") } }
     }
 
     fun clearEnrollmentCredential() = _uiState.update { it.copy(enrollmentCredential = null) }

@@ -52,10 +52,8 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
             !session.isAuthenticated -> AuthScreen(
                 error = state.startupError,
                 notice = state.notice,
-                onSignIn = viewModel::signIn,
                 onPasskeySignIn = viewModel::signInWithPasskey,
                 onQrSignIn = viewModel::signInWithQrRequested,
-                onSignUp = viewModel::signUp,
                 onClearError = viewModel::clearStartupError
             )
             session.isPlatformAdmin -> AdminConsoleScreen(
@@ -97,16 +95,10 @@ private fun LoadingScreen() {
 private fun AuthScreen(
     error: String?,
     notice: String?,
-    onSignIn: (String, String) -> Unit,
     onPasskeySignIn: (String) -> Unit,
     onQrSignIn: () -> Unit,
-    onSignUp: (String, String) -> Unit,
     onClearError: () -> Unit
 ) {
-    var isSignUp by remember { mutableStateOf(false) }
-    var showSuperadminLogin by remember { mutableStateOf(false) }
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
     var passkey by remember { mutableStateOf("") }
     val loginQrPayload = remember { "CPR1.${UUID.randomUUID()}-${UUID.randomUUID()}" }
 
@@ -118,61 +110,17 @@ private fun AuthScreen(
         Text("Counter POS", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         Text("Secure business point of sale", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
-        if (!showSuperadminLogin) {
-            LoginQrCard(payload = loginQrPayload)
-            Spacer(Modifier.height(12.dp))
-        }
+        LoginQrCard(payload = loginQrPayload)
+        Spacer(Modifier.height(12.dp))
         Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (!showSuperadminLogin) {
-                    Text("Business sign in", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                    Text("Have someone scan your secure QR code, or enter the passkey sent to you.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Button(onClick = onQrSignIn, modifier = Modifier.fillMaxWidth()) {
-                        Text("Sign in with QR code")
-                    }
-                    OutlinedTextField(
-                        value = passkey,
-                        onValueChange = { passkey = it; onClearError() },
-                        label = { Text("Passkey") },
-                        placeholder = { Text("Paste your secure passkey") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedButton(
-                        onClick = { onPasskeySignIn(passkey) },
-                        enabled = passkey.isNotBlank(),
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("Sign in with passkey") }
-                } else {
-                    Text("Superadmin sign in", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                    OutlinedTextField(
-                        value = email,
-                        onValueChange = { email = it; onClearError() },
-                        label = { Text("Email") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it; onClearError() },
-                        label = { Text("Password") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-                    if (!notice.isNullOrBlank()) Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
-                    Button(
-                        onClick = { onSignIn(email, password) },
-                        enabled = email.contains("@") && password.length >= 6,
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("Sign in") }
-                    TextButton(onClick = { showSuperadminLogin = false; onClearError() }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Back to QR/passkey sign in")
-                    }
-                }
+                Text("Business sign in", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                Text("Have someone scan this secure QR code, or paste the one-time passkey sent by the business owner.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Button(onClick = onQrSignIn, modifier = Modifier.fillMaxWidth()) { Text("Sign in with QR code") }
+                OutlinedTextField(value = passkey, onValueChange = { passkey = it; onClearError() }, label = { Text("Passkey") }, placeholder = { Text("Paste your one-time passkey") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedButton(onClick = { onPasskeySignIn(passkey) }, enabled = passkey.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("Sign in with passkey") }
+                if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                if (!notice.isNullOrBlank()) Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
             }
         }
     }

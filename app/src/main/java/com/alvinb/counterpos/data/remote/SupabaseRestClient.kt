@@ -58,6 +58,16 @@ class SupabaseRestClient(context: Context) {
     suspend fun signIn(email: String, password: String): AuthSession =
         authenticate("password", email, password)
 
+    suspend fun redeemAccessPass(passkey: String): AuthSession = withContext(Dispatchers.IO) {
+        val json = parseObject(request("/functions/v1/redeem-access-pass", "POST", JSONObject().put("passkey", passkey.trim()).toString(), false))
+        val email = json.optString("email").takeIf(String::isNotBlank)
+            ?: throw IOException(json.optString("error", "Invalid passkey"))
+        authenticate("password", email, json.optString("password"))
+    }
+
+    suspend fun createAccessPass(shopId: String, role: String): JSONObject =
+        parseObject(request("/functions/v1/create-access-pass", "POST", JSONObject().put("shop_id", shopId).put("role", role).toString(), true))
+
     suspend fun signUp(email: String, password: String): AuthSession? = withContext(Dispatchers.IO) {
         val payload = JSONObject().put("email", email.trim()).put("password", password)
         val response = requestRaw(

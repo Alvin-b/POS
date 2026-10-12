@@ -66,6 +66,19 @@ class CounterPosRepository(
         loadAccount(autoSelectFirstBusiness = true)
     }
 
+    suspend fun signInWithPasskey(passkey: String): SessionSnapshot = withContext(Dispatchers.IO) {
+        require(passkey.trim().isNotBlank()) { "Enter the passkey sent by the business owner." }
+        remote.redeemAccessPass(passkey.trim())
+        loadAccount(autoSelectFirstBusiness = true)
+    }
+
+    suspend fun createAccessPass(role: String): JSONObject = withContext(Dispatchers.IO) {
+        val shop = activeBusiness ?: throw IllegalStateException("Open a business before creating an access pass.")
+        require(shop.role == "owner" || shop.role == "manager") { "Only a business owner or manager can add staff." }
+        require(role in setOf("manager", "inventory_clerk", "cashier")) { "Invalid staff role." }
+        remote.createAccessPass(shop.shopId, role)
+    }
+
     suspend fun signUp(email: String, password: String): SessionSnapshot = withContext(Dispatchers.IO) {
         val created = remote.signUp(email.trim(), password)
         if (created == null) {
