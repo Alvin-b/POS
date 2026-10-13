@@ -171,6 +171,11 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
 
     val summary = remember(sales) { salesTodaySummary(sales) }
     val role = session.activeBusiness?.role.orEmpty()
+    val enabledFeatures = session.activeBusiness?.featureFlags.orEmpty()
+    val supportsTables = "tables" in enabledFeatures
+    LaunchedEffect(supportsTables, state.tab) {
+        if (!supportsTables && state.tab == PosTab.TABLES) viewModel.selectTab(PosTab.SCAN)
+    }
     val canReceiveStock = role in setOf("owner", "manager", "inventory_clerk")
     val canEditProducts = role in setOf("owner", "manager")
 
@@ -220,7 +225,7 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
                 onOpenScanner = { viewModel.openScanner(if (state.tab == PosTab.STOCK) ScannerMode.TAKE_STOCK else ScannerMode.SELL) },
                 onAddNewProduct = { viewModel.openAddNewProduct() },
                 canAddNewProduct = canReceiveStock,
-                canManageTeam = role in setOf("owner", "manager"),
+                canManageTeam = role in setOf("owner", "manager") && "employee_management" in enabledFeatures,
                 onManageTeam = viewModel::openTeamPanel,
                 modifier = Modifier.statusBarsPadding()
             )
@@ -261,13 +266,15 @@ NavigationBar(
                         label = { Text("Sales", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.SALES) FontWeight.Bold else FontWeight.Normal) },
                         modifier = Modifier.testTag("nav_sales")
                     )
-                    NavigationBarItem(
-                        selected = state.tab == PosTab.TABLES,
-                        onClick = { viewModel.selectTab(PosTab.TABLES) },
-                        icon = { Icon(Icons.Default.TableRestaurant, contentDescription = "Tables", modifier = Modifier.size(20.dp)) },
-                        label = { Text("Tables", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.TABLES) FontWeight.Bold else FontWeight.Normal) },
-                        modifier = Modifier.testTag("nav_tables")
-                    )
+                    if (supportsTables) {
+                        NavigationBarItem(
+                            selected = state.tab == PosTab.TABLES,
+                            onClick = { viewModel.selectTab(PosTab.TABLES) },
+                            icon = { Icon(Icons.Default.TableRestaurant, contentDescription = "Tables", modifier = Modifier.size(20.dp)) },
+                            label = { Text("Tables", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.TABLES) FontWeight.Bold else FontWeight.Normal) },
+                            modifier = Modifier.testTag("nav_tables")
+                        )
+                    }
                 }
             }
         },
@@ -418,7 +425,7 @@ NavigationBar(
         }
     }
 
-    if (state.isTeamPanelOpen && role in setOf("owner", "manager")) {
+    if (state.isTeamPanelOpen && role in setOf("owner", "manager") && "employee_management" in enabledFeatures) {
         var selectedEmployeeId by remember { mutableStateOf<String?>(null) }
         var startTime by remember { mutableStateOf("09:00") }
         var endTime by remember { mutableStateOf("17:00") }
@@ -429,7 +436,7 @@ NavigationBar(
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Employee access", fontWeight = FontWeight.SemiBold)
-                    Text("Scan an employee's secure QR to approve their device, then control whether they can sell and when.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if ("working_hours" in enabledFeatures) "Scan an employee's secure QR to approve their device, then control whether they can sell and when." else "Scan an employee's secure QR to approve their device and control whether they can sell.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("Issue employee access", fontWeight = FontWeight.SemiBold)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { viewModel.issueEmployeePass("cashier") }, modifier = Modifier.weight(1f)) { Text("Cashier pass") }
@@ -459,7 +466,7 @@ NavigationBar(
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     if (employeeStatus == "active") OutlinedButton(onClick = { viewModel.setEmployeeStatus(userId, "suspended") }) { Text("Lock sales") }
                                     else Button(onClick = { viewModel.setEmployeeStatus(userId, "active") }) { Text("Reactivate") }
-                                    OutlinedButton(onClick = { selectedEmployeeId = userId }) { Text("Hours") }
+                                    if ("working_hours" in enabledFeatures) OutlinedButton(onClick = { selectedEmployeeId = userId }) { Text("Hours") }
                                 }
                                 if (selectedEmployeeId == userId) {
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -648,7 +655,7 @@ private fun LeanTopBar(
 
                     if (canManageTeam) {
                         OutlinedButton(onClick = onManageTeam, modifier = Modifier.height(38.dp)) {
-                            Text("Team", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("Settings", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 

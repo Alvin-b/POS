@@ -38,6 +38,9 @@ data class AdminBusiness(
     val shopId: String,
     val shopName: String,
     val status: String,
+    val businessType: String,
+    val businessSize: String,
+    val featureFlags: Set<String>,
     val ownerEmail: String,
     val memberCount: Long,
     val productCount: Long,
@@ -239,6 +242,9 @@ class SupabaseRestClient(context: Context) {
                             shopId = row.optString("shop_id"),
                             shopName = row.optString("shop_name"),
                             status = row.optString("status"),
+                            businessType = row.optString("business_type", "big_club"),
+                            businessSize = row.optString("business_size", "medium"),
+                            featureFlags = row.optJSONObject("feature_flags")?.keys()?.asSequence()?.filter { key -> row.optJSONObject("feature_flags")?.optBoolean(key, false) == true }?.toSet() ?: emptySet(),
                             ownerEmail = row.optString("owner_email"),
                             memberCount = row.optLong("member_count"),
                             productCount = row.optLong("product_count"),
@@ -265,10 +271,11 @@ class SupabaseRestClient(context: Context) {
         return adminBusinesses().firstOrNull { it.shopId == shopId }
     }
 
-    suspend fun adminCreateBusiness(name: String, ownerEmail: String?): JSONObject =
+    suspend fun adminCreateBusiness(name: String, ownerEmail: String?, businessType: String, businessSize: String): JSONObject =
         rpcObject(
             "admin_create_business",
             JSONObject().put("_name", name.trim()).putNullable("_owner_email", ownerEmail?.trim()?.takeIf(String::isNotBlank))
+                .put("_business_type", businessType).put("_business_size", businessSize)
         )
 
     suspend fun addMemberByEmail(shopId: String, email: String, role: String): JSONObject =

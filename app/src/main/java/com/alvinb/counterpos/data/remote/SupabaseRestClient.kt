@@ -24,6 +24,9 @@ data class BusinessMembership(
     val role: String,
     val status: String,
     val employmentStatus: String = "active",
+    val businessType: String = "big_club",
+    val businessSize: String = "medium",
+    val featureFlags: Set<String> = setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics"),
     val currency: String,
     val lowStockThreshold: Int
 )
@@ -39,6 +42,9 @@ data class AdminBusiness(
     val shopId: String,
     val shopName: String,
     val status: String,
+    val businessType: String,
+    val businessSize: String,
+    val featureFlags: Set<String>,
     val ownerEmail: String,
     val memberCount: Long,
     val productCount: Long,
@@ -146,6 +152,10 @@ class SupabaseRestClient(context: Context) {
                             role = row.optString("role"),
                             status = row.optString("status", "active"),
                             employmentStatus = row.optString("employment_status", "active"),
+                            businessType = row.optString("business_type", "big_club"),
+                            businessSize = row.optString("business_size", "medium"),
+                            featureFlags = row.optJSONObject("feature_flags")?.keys()?.asSequence()?.filter { key -> row.optJSONObject("feature_flags")?.optBoolean(key, false) == true }?.toSet()
+                                ?: setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics"),
                             currency = row.optString("currency", "KES"),
                             lowStockThreshold = row.optInt("low_stock_threshold", 5)
                         )
@@ -269,6 +279,9 @@ class SupabaseRestClient(context: Context) {
                             shopId = row.optString("shop_id"),
                             shopName = row.optString("shop_name"),
                             status = row.optString("status"),
+                            businessType = row.optString("business_type", "big_club"),
+                            businessSize = row.optString("business_size", "medium"),
+                            featureFlags = row.optJSONObject("feature_flags")?.keys()?.asSequence()?.filter { key -> row.optJSONObject("feature_flags")?.optBoolean(key, false) == true }?.toSet() ?: emptySet(),
                             ownerEmail = row.optString("owner_email"),
                             memberCount = row.optLong("member_count"),
                             productCount = row.optLong("product_count"),

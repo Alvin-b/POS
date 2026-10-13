@@ -185,6 +185,8 @@ private fun AdminConsoleScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var businessName by remember { mutableStateOf("") }
     var ownerEmail by remember { mutableStateOf("") }
+    var businessType by remember { mutableStateOf("big_club") }
+    var businessSize by remember { mutableStateOf("medium") }
     var reason by remember { mutableStateOf("") }
     var searchQuery by remember { mutableStateOf("") }
 
@@ -275,10 +277,21 @@ private fun AdminConsoleScreen(
                         Text("Create the profile first. Then select it below and issue a one-time owner pass.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedTextField(value = businessName, onValueChange = { businessName = it; onClearError() }, label = { Text("Business name") }, supportingText = { Text("2–120 characters") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                         OutlinedTextField(value = ownerEmail, onValueChange = { ownerEmail = it; onClearError() }, label = { Text("Owner email (optional)") }, supportingText = { Text("Leave blank to enroll with a passkey.") }, singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+                        Text("Business setup profile", fontWeight = FontWeight.SemiBold)
+                        Text("This profile determines the dashboard and features delivered to the owner app.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { businessType = "big_club" }, modifier = Modifier.weight(1f), colors = if (businessType == "big_club") androidx.compose.material3.ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer) else androidx.compose.material3.ButtonDefaults.outlinedButtonColors()) { Text("Big Club") }
+                            OutlinedButton(onClick = { businessType = "counter_seller" }, modifier = Modifier.weight(1f), colors = if (businessType == "counter_seller") androidx.compose.material3.ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer) else androidx.compose.material3.ButtonDefaults.outlinedButtonColors()) { Text("Counter Seller") }
+                        }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("small", "medium", "large").forEach { size ->
+                                OutlinedButton(onClick = { businessSize = size }, modifier = Modifier.weight(1f), colors = if (businessSize == size) androidx.compose.material3.ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer) else androidx.compose.material3.ButtonDefaults.outlinedButtonColors()) { Text(size.replaceFirstChar { it.uppercase() }) }
+                            }
+                        }
                         Text("Workflow: create profile → select business → issue owner pass → owner signs in.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Button(
                             onClick = {
-                                viewModel.createBusinessForOwner(businessName, ownerEmail)
+                                viewModel.createBusinessForOwner(businessName, ownerEmail, businessType, businessSize)
                             },
                             enabled = canCreateBusiness,
                             modifier = Modifier.fillMaxWidth()
@@ -382,6 +395,7 @@ private fun AdminBusinessCard(
                 AdminMetric("Products", business.productCount.toString())
                 AdminMetric("Stock units", business.stockUnits.toString())
             }
+            Text("Setup: ${business.businessType.replace('_', ' ')} · ${business.businessSize}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
             if (!business.lifecycleReason.isNullOrBlank()) Text(business.lifecycleReason, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedButton(onClick = onSelect, enabled = actionsEnabled, modifier = Modifier.fillMaxWidth()) {
                 Text(if (selected) "Business profile selected" else "Open business profile")

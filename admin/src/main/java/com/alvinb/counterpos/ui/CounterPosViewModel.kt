@@ -165,13 +165,13 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
         }
     }
 
-    fun createBusinessForOwner(name: String, ownerEmail: String) = viewModelScope.launch {
+    fun createBusinessForOwner(name: String, ownerEmail: String, businessType: String = "big_club", businessSize: String = "medium") = viewModelScope.launch {
         if (adminRequestInProgress) return@launch
         adminRequestInProgress = true
         _uiState.update { it.copy(isAdminMutating = true, startupError = null, notice = "Registering business…") }
         try {
-            _adminBusinesses.value = repository.adminCreateBusiness(name, ownerEmail)
-            _uiState.update { it.copy(notice = "Business registered. Select it below to issue owner access.") }
+            _adminBusinesses.value = repository.adminCreateBusiness(name, ownerEmail, businessType, businessSize)
+            _uiState.update { it.copy(notice = "${businessType.replace('_', ' ')} business registered. Select it below to issue owner access.") }
         } catch (error: Exception) {
             _uiState.update { it.copy(startupError = error.message ?: "Could not create business", notice = null) }
         } finally {
