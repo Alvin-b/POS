@@ -79,6 +79,41 @@ class CounterPosRepository(
         remote.createAccessPass(shop.shopId, role)
     }
 
+    suspend fun createAccessChallenge(): String = withContext(Dispatchers.IO) {
+        remote.createAccessChallenge().optString("token").takeIf(String::isNotBlank)
+            ?: throw IllegalStateException("Could not create QR sign-in request.")
+    }
+
+    suspend fun pollAccessChallenge(token: String): SessionSnapshot? = withContext(Dispatchers.IO) {
+        val result = remote.pollAccessChallenge(token)
+        if (result.optString("status") != "approved") return@withContext null
+        remote.signIn(result.optString("email"), result.optString("password"))
+        loadAccount(autoSelectFirstBusiness = true)
+    }
+
+    suspend fun approveAccessChallenge(token: String, role: String = "cashier") = withContext(Dispatchers.IO) {
+        val shop = activeBusiness ?: throw IllegalStateException("Open a business first.")
+        require(shop.role == "owner" || shop.role == "manager") { "Only an owner or manager can approve staff QR requests." }
+        remote.approveAccessChallenge(token, shop.shopId, role)
+    }
+
+    suspend fun shopMembers(): JSONArray = withContext(Dispatchers.IO) {
+        val shop = activeBusiness ?: throw IllegalStateException("Open a business first.")
+        remote.listShopMembers(shop.shopId)
+    }
+
+    suspend fun setEmployeeStatus(userId: String, status: String, reason: String?): JSONArray = withContext(Dispatchers.IO) {
+        val shop = activeBusiness ?: throw IllegalStateException("Open a business first.")
+        remote.setEmployeeStatus(shop.shopId, userId, status, reason)
+        remote.listShopMembers(shop.shopId)
+    }
+
+    suspend fun setEmployeeHours(userId: String, weekday: Int, start: String, end: String, enabled: Boolean): JSONArray = withContext(Dispatchers.IO) {
+        val shop = activeBusiness ?: throw IllegalStateException("Open a business first.")
+        remote.setEmployeeWorkingHours(shop.shopId, userId, weekday, start, end, enabled)
+        remote.listShopMembers(shop.shopId)
+    }
+
     suspend fun signUp(email: String, password: String): SessionSnapshot = withContext(Dispatchers.IO) {
         val created = remote.signUp(email.trim(), password)
         if (created == null) {

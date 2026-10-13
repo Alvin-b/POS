@@ -39,7 +39,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alvinb.counterpos.data.remote.AdminBusiness
 import com.alvinb.counterpos.ui.scanner.BarcodeScannerScreen
 import com.alvinb.counterpos.ui.scanner.ScannerMode
-import java.util.UUID
 
 @Composable
 fun CounterPosApp(viewModel: CounterPosViewModel) {
@@ -54,6 +53,7 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                 notice = state.notice,
                 onPasskeySignIn = viewModel::signInWithPasskey,
                 onQrSignIn = viewModel::signInWithQrRequested,
+                qrPayload = state.loginQrPayload,
                 onClearError = viewModel::clearStartupError
             )
             session.isPlatformAdmin -> AdminConsoleScreen(
@@ -63,8 +63,9 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                 onSignOut = viewModel::signOut,
                 onClearError = viewModel::clearStartupError
             )
+            session.activeBusiness?.employmentStatus != "active" -> EmployeeAccessBlockedScreen(session.activeBusiness, viewModel::signOut)
             session.activeBusiness != null -> CounterPosWorkspace(viewModel)
-            session.memberships.any { it.status == "active" } -> BusinessPickerScreen(
+            session.memberships.any { it.status == "active" && it.employmentStatus == "active" } -> BusinessPickerScreen(
                 session = session,
                 onSelect = viewModel::selectBusiness,
                 onSignOut = viewModel::signOut
@@ -97,10 +98,10 @@ private fun AuthScreen(
     notice: String?,
     onPasskeySignIn: (String) -> Unit,
     onQrSignIn: () -> Unit,
+    qrPayload: String?,
     onClearError: () -> Unit
 ) {
     var passkey by remember { mutableStateOf("") }
-    val loginQrPayload = remember { "CPR1.${UUID.randomUUID()}-${UUID.randomUUID()}" }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -110,7 +111,8 @@ private fun AuthScreen(
         Text("Counter POS", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         Text("Secure business point of sale", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
-        LoginQrCard(payload = loginQrPayload)
+        if (qrPayload != null) LoginQrCard(payload = qrPayload)
+        else Card(modifier = Modifier.fillMaxWidth()) { Text("Preparing secure QR sign-in…", modifier = Modifier.padding(18.dp)) }
         Spacer(Modifier.height(12.dp))
         Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -123,6 +125,19 @@ private fun AuthScreen(
                 if (!notice.isNullOrBlank()) Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
             }
         }
+    }
+}
+
+@Composable
+private fun EmployeeAccessBlockedScreen(
+    membership: com.alvinb.counterpos.data.remote.BusinessMembership?,
+    onSignOut: () -> Unit
+) {
+    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
+        Text("Employee access locked", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        Text("${membership?.shopName.orEmpty()} has disabled this employee account. Selling, stock, and table actions are blocked by the server.", modifier = Modifier.padding(top = 10.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(20.dp))
+        Button(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
     }
 }
 

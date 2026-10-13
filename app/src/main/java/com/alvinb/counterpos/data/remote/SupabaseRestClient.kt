@@ -23,6 +23,7 @@ data class BusinessMembership(
     val shopName: String,
     val role: String,
     val status: String,
+    val employmentStatus: String = "active",
     val currency: String,
     val lowStockThreshold: Int
 )
@@ -67,6 +68,27 @@ class SupabaseRestClient(context: Context) {
 
     suspend fun createAccessPass(shopId: String, role: String): JSONObject =
         parseObject(request("/functions/v1/create-access-pass", "POST", JSONObject().put("shop_id", shopId).put("role", role).toString(), true))
+
+    suspend fun createAccessChallenge(): JSONObject =
+        parseObject(request("/functions/v1/create-access-challenge", "POST", "{}", false))
+
+    suspend fun pollAccessChallenge(token: String): JSONObject =
+        parseObject(request("/functions/v1/poll-access-challenge", "POST", JSONObject().put("token", token).toString(), false))
+
+    suspend fun approveAccessChallenge(token: String, shopId: String, role: String): JSONObject =
+        parseObject(request("/functions/v1/approve-access-challenge", "POST", JSONObject().put("token", token).put("shop_id", shopId).put("role", role).toString(), true))
+
+    suspend fun listShopMembers(shopId: String): JSONArray =
+        rpcArray("admin_list_shop_members", JSONObject().put("_shop", shopId))
+
+    suspend fun setEmployeeStatus(shopId: String, userId: String, status: String, reason: String?): JSONObject =
+        rpcVoid("set_employee_status", JSONObject().put("_shop", shopId).put("_user", userId).put("_status", status).putNullable("_reason", reason))
+
+    suspend fun setEmployeeWorkingHours(shopId: String, userId: String, weekday: Int, start: String, end: String, enabled: Boolean): JSONObject =
+        rpcVoid("set_employee_working_hours", JSONObject().put("_shop", shopId).put("_user", userId).put("_weekday", weekday).put("_start", start).put("_end", end).put("_enabled", enabled))
+
+    suspend fun clearEmployeeSchedule(shopId: String, userId: String): JSONObject =
+        rpcVoid("clear_employee_schedule", JSONObject().put("_shop", shopId).put("_user", userId))
 
     suspend fun signUp(email: String, password: String): AuthSession? = withContext(Dispatchers.IO) {
         val payload = JSONObject().put("email", email.trim()).put("password", password)
@@ -120,6 +142,7 @@ class SupabaseRestClient(context: Context) {
                             shopName = row.optString("shop_name"),
                             role = row.optString("role"),
                             status = row.optString("status", "active"),
+                            employmentStatus = row.optString("employment_status", "active"),
                             currency = row.optString("currency", "KES"),
                             lowStockThreshold = row.optInt("low_stock_threshold", 5)
                         )
@@ -324,6 +347,11 @@ class SupabaseRestClient(context: Context) {
                 ?: throw IOException("RPC $name returned no row")
             else -> parseObject(body)
         }
+    }
+
+    private suspend fun rpcVoid(name: String, args: JSONObject): JSONObject {
+        request("/rest/v1/rpc/$name", "POST", args.toString(), true)
+        return JSONObject()
     }
 
     private suspend fun rpcArray(name: String, args: JSONObject): JSONArray {

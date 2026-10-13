@@ -213,7 +213,21 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
     fun clearEnrollmentCredential() = _uiState.update { it.copy(enrollmentCredential = null) }
 
     fun handleAdminQrCode(payload: String) {
-        val parts = payload.trim().split('|', limit = 4)
+        val qr = payload.trim()
+        if (qr.startsWith("CPR1|")) {
+            val shopId = _uiState.value.adminSelectedBusinessId
+            if (shopId.isNullOrBlank()) {
+                _uiState.update { it.copy(isScannerOpen = false, startupError = "Open a business profile before approving an employee QR.") }
+            } else {
+                viewModelScope.launch {
+                    runCatching { repository.adminApproveAccessChallenge(qr, shopId) }
+                        .onSuccess { _uiState.update { it.copy(isScannerOpen = false, notice = "Employee QR approved. The device will sign in automatically.") } }
+                        .onFailure { error -> _uiState.update { it.copy(isScannerOpen = false, startupError = error.message ?: "Could not approve employee QR") } }
+                }
+            }
+            return
+        }
+        val parts = qr.split('|', limit = 4)
         if (parts.size < 3 || !parts[0].equals("COUNTERPOS", ignoreCase = true)) {
             _uiState.update { it.copy(isScannerOpen = false, startupError = "Unrecognized CounterPOS QR. Use a business or user enrollment QR.") }
             return

@@ -218,7 +218,7 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
                 onOpenScanner = { viewModel.openScanner(if (state.tab == PosTab.STOCK) ScannerMode.TAKE_STOCK else ScannerMode.SELL) },
                 onAddNewProduct = { viewModel.openAddNewProduct() },
                 canAddNewProduct = canReceiveStock,
-                canManageTeam = role == "owner",
+                canManageTeam = role in setOf("owner", "manager"),
                 onManageTeam = viewModel::openTeamPanel,
                 modifier = Modifier.statusBarsPadding()
             )
@@ -416,15 +416,42 @@ NavigationBar(
         }
     }
 
-    if (state.isTeamPanelOpen && role == "owner") {
+    if (state.isTeamPanelOpen && role in setOf("owner", "manager")) {
+        var selectedEmployeeId by remember { mutableStateOf<String?>(null) }
+        var startTime by remember { mutableStateOf("09:00") }
+        var endTime by remember { mutableStateOf("17:00") }
+        LaunchedEffect(Unit) { viewModel.loadEmployeeMembers() }
         AlertDialog(
             onDismissRequest = viewModel::closeTeamPanel,
             title = { Text("Manage business team") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Only the business owner can enroll employees.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Ask the employee to display their QR code in the staff app, then scan it here to attach them to ${session.activeBusiness?.shopName ?: "this business"}.", fontSize = 13.sp)
-                    Text("Staff passkeys will be issued from this owner dashboard after server-side enrollment is enabled.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Employee access", fontWeight = FontWeight.SemiBold)
+                    Text("Scan an employee's secure QR to approve their device, then control whether they can sell and when.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    state.employeeMembers.forEach { employee ->
+                        val userId = employee.optString("member_user_id")
+                        val employeeStatus = employee.optString("employment_status", "active")
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(employee.optString("email", "Employee"), fontWeight = FontWeight.SemiBold)
+                                Text("${employee.optString("role")} · ${employeeStatus.uppercase()}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    if (employeeStatus == "active") OutlinedButton(onClick = { viewModel.setEmployeeStatus(userId, "suspended") }) { Text("Lock sales") }
+                                    else Button(onClick = { viewModel.setEmployeeStatus(userId, "active") }) { Text("Reactivate") }
+                                    OutlinedButton(onClick = { selectedEmployeeId = userId }) { Text("Hours") }
+                                }
+                                if (selectedEmployeeId == userId) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        OutlinedTextField(value = startTime, onValueChange = { startTime = it }, label = { Text("Start") }, singleLine = true, modifier = Modifier.weight(1f))
+                                        OutlinedTextField(value = endTime, onValueChange = { endTime = it }, label = { Text("End") }, singleLine = true, modifier = Modifier.weight(1f))
+                                    }
+                                    Text("Applies Monday–Friday. The server blocks sales outside these hours.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Button(onClick = { (1..5).forEach { day -> viewModel.setEmployeeHours(userId, day, startTime, endTime, true) }; selectedEmployeeId = null }, modifier = Modifier.fillMaxWidth()) { Text("Save weekday hours") }
+                                }
+                            }
+                        }
+                    }
+                    if (state.employeeMembers.isEmpty()) Text("No employees enrolled yet. Use Scan employee QR below.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             },
             confirmButton = {

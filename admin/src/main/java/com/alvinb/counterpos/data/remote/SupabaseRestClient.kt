@@ -61,6 +61,9 @@ class SupabaseRestClient(context: Context) {
     suspend fun createAccessPass(shopId: String, role: String): JSONObject =
         parseObject(request("/functions/v1/create-access-pass", "POST", JSONObject().put("shop_id", shopId).put("role", role).toString(), true))
 
+    suspend fun approveAccessChallenge(token: String, shopId: String, role: String): JSONObject =
+        parseObject(request("/functions/v1/approve-access-challenge", "POST", JSONObject().put("token", token).put("shop_id", shopId).put("role", role).toString(), true))
+
     suspend fun signUp(email: String, password: String): AuthSession? = withContext(Dispatchers.IO) {
         val payload = JSONObject().put("email", email.trim()).put("password", password)
         val response = requestRaw(

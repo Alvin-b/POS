@@ -118,6 +118,9 @@ class CounterPosRepository(
     suspend fun adminCreateAccessPass(shopId: String, role: String): JSONObject =
         remote.createAccessPass(shopId, role)
 
+    suspend fun adminApproveAccessChallenge(token: String, shopId: String, role: String = "cashier"): JSONObject =
+        remote.approveAccessChallenge(token, shopId, role)
+
     suspend fun addMemberByEmail(shopId: String, email: String, role: String): List<AdminBusiness> {
         require(role in setOf("manager", "inventory_clerk", "cashier")) { "Choose a valid staff role." }
         remote.addMemberByEmail(shopId, email, role)

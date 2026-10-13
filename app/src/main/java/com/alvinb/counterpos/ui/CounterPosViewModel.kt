@@ -18,7 +18,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 import java.util.UUID
 
 enum class PosTab { SCAN, STOCK, SALES, TABLES }
@@ -34,6 +36,9 @@ data class CounterPosUiState(
     val isCreatingTable: Boolean = false,
     val adminSelectedBusinessId: String? = null,
     val isTeamPanelOpen: Boolean = false,
+    val loginQrPayload: String? = null,
+    val isQrPolling: Boolean = false,
+    val employeeMembers: List<JSONObject> = emptyList(),
 
     // Sale sheet
     val selectedSaleCode: String? = null,
@@ -86,8 +91,10 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
             try {
                 repository.restoreSession()
                 _uiState.update { it.copy(isReady = true) }
+                prepareQrChallenge()
             } catch (e: Exception) {
                 _uiState.update { it.copy(isReady = true, startupError = e.message) }
+                prepareQrChallenge()
             }
         }
     }
@@ -107,11 +114,34 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
         }
     }
 
-    fun signInWithQrRequested() = _uiState.update {
-        it.copy(
-            startupError = "QR sign-in is waiting for owner approval. Ask the business owner to scan this code.",
-            notice = null
-        )
+    fun prepareQrChallenge() = viewModelScope.launch {
+        runCatching { repository.createAccessChallenge() }
+            .onSuccess { token -> _uiState.update { it.copy(loginQrPayload = token, startupError = null) } }
+            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not prepare QR sign-in") } }
+    }
+
+    fun signInWithQrRequested() = viewModelScope.launch {
+        val token = _uiState.value.loginQrPayload
+        if (token.isNullOrBlank()) {
+            prepareQrChallenge()
+            return@launch
+        }
+        _uiState.update { it.copy(isQrPolling = true, startupError = null, notice = "Waiting for the business owner to approve this QR…") }
+        repeat(150) {
+            try {
+                val result = repository.pollAccessChallenge(token)
+                if (result != null) {
+                    _uiState.update { it.copy(isQrPolling = false, notice = "Signed in successfully") }
+                    return@launch
+                }
+            } catch (error: Exception) {
+                _uiState.update { it.copy(isQrPolling = false, startupError = error.message ?: "QR sign-in failed") }
+                return@launch
+            }
+            delay(2_000)
+        }
+        _uiState.update { it.copy(isQrPolling = false, startupError = "QR request expired. Generate a new QR code and try again.") }
+        prepareQrChallenge()
     }
 
     fun signUp(email: String, password: String) = viewModelScope.launch {
@@ -141,6 +171,24 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
 
     fun closeTeamPanel() = _uiState.update { it.copy(isTeamPanelOpen = false, actionError = null) }
 
+    fun loadEmployeeMembers() = viewModelScope.launch {
+        runCatching { repository.shopMembers() }
+            .onSuccess { rows -> _uiState.update { it.copy(employeeMembers = (0 until rows.length()).mapNotNull(rows::optJSONObject)) } }
+            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not load employees") } }
+    }
+
+    fun setEmployeeStatus(userId: String, status: String) = viewModelScope.launch {
+        runCatching { repository.setEmployeeStatus(userId, status, if (status == "active") "Reactivated by business admin" else "Disabled by business admin") }
+            .onSuccess { rows -> _uiState.update { it.copy(employeeMembers = (0 until rows.length()).mapNotNull(rows::optJSONObject), notice = "Employee status updated") } }
+            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not update employee") } }
+    }
+
+    fun setEmployeeHours(userId: String, weekday: Int, start: String, end: String, enabled: Boolean) = viewModelScope.launch {
+        runCatching { repository.setEmployeeHours(userId, weekday, start, end, enabled) }
+            .onSuccess { rows -> _uiState.update { it.copy(employeeMembers = (0 until rows.length()).mapNotNull(rows::optJSONObject), notice = "Working hours saved") } }
+            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not save working hours") } }
+    }
+
     fun loadAdminBusinesses() = viewModelScope.launch {
         runCatching { repository.adminBusinesses() }
             .onSuccess { _adminBusinesses.value = it }
@@ -164,7 +212,21 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
     }
 
     fun handleAdminQrCode(payload: String) {
-        val parts = payload.trim().split('|', limit = 4)
+        val qr = payload.trim()
+        if (qr.startsWith("CPR1|")) {
+            val shop = session.value.activeBusiness
+            if (shop == null || shop.role !in setOf("owner", "manager")) {
+                _uiState.update { it.copy(isScannerOpen = false, actionError = "Only a business owner or manager can approve employee QR requests.") }
+            } else {
+                viewModelScope.launch {
+                    runCatching { repository.approveAccessChallenge(qr) }
+                        .onSuccess { _uiState.update { it.copy(isScannerOpen = false, notice = "Employee QR approved. Their app will sign in automatically.") } }
+                        .onFailure { error -> _uiState.update { it.copy(isScannerOpen = false, actionError = error.message ?: "Could not approve employee QR") } }
+                }
+            }
+            return
+        }
+        val parts = qr.split('|', limit = 4)
         if (parts.size < 3 || !parts[0].equals("COUNTERPOS", ignoreCase = true)) {
             _uiState.update { it.copy(isScannerOpen = false, startupError = "Unrecognized CounterPOS QR. Use a business or user enrollment QR.") }
             return
