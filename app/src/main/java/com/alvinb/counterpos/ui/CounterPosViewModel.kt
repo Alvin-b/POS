@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.util.UUID
@@ -39,6 +40,9 @@ data class CounterPosUiState(
     val loginQrPayload: String? = null,
     val isQrPolling: Boolean = false,
     val employeeMembers: List<JSONObject> = emptyList(),
+    val isAccessLocked: Boolean = false,
+    val accessLockMessage: String? = null,
+    val employeePasskey: String? = null,
 
     // Sale sheet
     val selectedSaleCode: String? = null,
@@ -92,9 +96,11 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                 repository.restoreSession()
                 _uiState.update { it.copy(isReady = true) }
                 prepareQrChallenge()
+                monitorActiveHours()
             } catch (e: Exception) {
                 _uiState.update { it.copy(isReady = true, startupError = e.message) }
                 prepareQrChallenge()
+                monitorActiveHours()
             }
         }
     }
@@ -170,6 +176,35 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
     fun openTeamPanel() = _uiState.update { it.copy(isTeamPanelOpen = true, actionError = null) }
 
     fun closeTeamPanel() = _uiState.update { it.copy(isTeamPanelOpen = false, actionError = null) }
+
+    private fun monitorActiveHours() = viewModelScope.launch {
+        while (isActive) {
+            runCatching { repository.canOperateNow() }
+                .onSuccess { allowed ->
+                    _uiState.update { state ->
+                        state.copy(
+                            isAccessLocked = !allowed,
+                            accessLockMessage = if (allowed) null else "This employee account is outside its configured working hours. The workspace will reopen automatically when the next active period begins."
+                        )
+                    }
+                }
+            delay(30_000)
+        }
+    }
+
+    fun refreshAccessNow() = viewModelScope.launch {
+        runCatching { repository.canOperateNow() }
+            .onSuccess { allowed -> _uiState.update { it.copy(isAccessLocked = !allowed, accessLockMessage = if (allowed) null else "You are outside your configured working hours.") } }
+            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not verify working hours") } }
+    }
+
+    fun issueEmployeePass(role: String) = viewModelScope.launch {
+        runCatching { repository.createEmployeeAccessPass(role) }
+            .onSuccess { pass -> _uiState.update { it.copy(employeePasskey = pass.optString("passkey"), notice = "One-time ${role.replace('_', ' ')} pass created. Share it privately.") } }
+            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not create employee pass") } }
+    }
+
+    fun clearEmployeePass() = _uiState.update { it.copy(employeePasskey = null) }
 
     fun loadEmployeeMembers() = viewModelScope.launch {
         runCatching { repository.shopMembers() }

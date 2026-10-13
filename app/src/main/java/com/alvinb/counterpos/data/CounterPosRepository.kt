@@ -114,6 +114,12 @@ class CounterPosRepository(
         remote.listShopMembers(shop.shopId)
     }
 
+    suspend fun createEmployeeAccessPass(role: String): JSONObject = withContext(Dispatchers.IO) {
+        val shop = activeBusiness ?: throw IllegalStateException("Open a business first.")
+        require(shop.role == "owner" || shop.role == "manager") { "Only an owner or manager can issue staff passes." }
+        remote.createAccessPass(shop.shopId, role)
+    }
+
     suspend fun signUp(email: String, password: String): SessionSnapshot = withContext(Dispatchers.IO) {
         val created = remote.signUp(email.trim(), password)
         if (created == null) {
@@ -138,6 +144,9 @@ class CounterPosRepository(
         if (membership.status != "active") {
             throw IllegalStateException("This business is ${membership.status}. Contact the platform administrator.")
         }
+        if (membership.employmentStatus != "active") {
+            throw IllegalStateException("Your employee access is ${membership.employmentStatus}. Contact the business administrator.")
+        }
         activeBusiness = membership
         syncBusiness(membership)
         publishAccount()
@@ -145,6 +154,11 @@ class CounterPosRepository(
 
     suspend fun refreshAccount(): SessionSnapshot = withContext(Dispatchers.IO) {
         loadAccount(autoSelectFirstBusiness = false)
+    }
+
+    suspend fun canOperateNow(): Boolean = withContext(Dispatchers.IO) {
+        val shop = activeBusiness ?: return@withContext true
+        remote.canSellForShop(shop.shopId)
     }
 
     suspend fun signOut() = withContext(Dispatchers.IO) {

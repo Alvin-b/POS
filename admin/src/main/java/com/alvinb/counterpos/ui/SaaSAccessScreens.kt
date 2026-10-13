@@ -52,7 +52,6 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                 error = state.startupError,
                 notice = state.notice,
                 onSignIn = viewModel::signIn,
-                onSignUp = viewModel::signUp,
                 onClearError = viewModel::clearStartupError
             )
             session.isPlatformAdmin -> AdminConsoleScreen(
@@ -62,21 +61,7 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                 onSignOut = viewModel::signOut,
                 onClearError = viewModel::clearStartupError
             )
-            session.activeBusiness != null -> CounterPosWorkspace(viewModel)
-            session.memberships.any { it.status == "active" } -> BusinessPickerScreen(
-                session = session,
-                onSelect = viewModel::selectBusiness,
-                onSignOut = viewModel::signOut
-            )
-            session.memberships.isNotEmpty() -> BusinessAccessBlockedScreen(
-                session = session,
-                onSignOut = viewModel::signOut
-            )
-            else -> BusinessSetupScreen(
-                email = session.email,
-                onSignOut = viewModel::signOut,
-                error = state.startupError
-            )
+            else -> NonSuperadminBlockedScreen(onSignOut = viewModel::signOut)
         }
     }
 }
@@ -95,14 +80,10 @@ private fun AuthScreen(
     error: String?,
     notice: String?,
     onSignIn: (String, String) -> Unit,
-    onSignUp: (String, String) -> Unit,
     onClearError: () -> Unit
 ) {
-    var isSignUp by remember { mutableStateOf(false) }
-    var showSuperadminLogin by remember { mutableStateOf(true) }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var passkey by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -114,60 +95,25 @@ private fun AuthScreen(
         Spacer(Modifier.height(24.dp))
         Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (!showSuperadminLogin) {
-                    Text("Business sign in", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                    Text("Have someone scan your secure QR code, or enter the passkey sent to you.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Button(onClick = { onClearError() }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Sign in with QR code")
-                    }
-                    OutlinedTextField(
-                        value = passkey,
-                        onValueChange = { passkey = it; onClearError() },
-                        label = { Text("Passkey") },
-                        placeholder = { Text("Paste your secure passkey") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedButton(
-                        onClick = { onClearError() },
-                        enabled = passkey.isNotBlank(),
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("Sign in with passkey") }
-                    TextButton(onClick = { showSuperadminLogin = true; isSignUp = false; onClearError() }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Superadmin sign in")
-                    }
-                } else {
-                    Text("Superadmin sign in", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                    OutlinedTextField(
-                        value = email,
-                        onValueChange = { email = it; onClearError() },
-                        label = { Text("Email") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it; onClearError() },
-                        label = { Text("Password") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-                    if (!notice.isNullOrBlank()) Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
-                    Button(
-                        onClick = { onSignIn(email, password) },
-                        enabled = email.contains("@") && password.length >= 6,
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("Sign in") }
-                    TextButton(onClick = { showSuperadminLogin = false; onClearError() }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Back to QR/passkey sign in")
-                    }
-                }
+                Text("Superadmin sign in", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                Text("This application is restricted to the platform administrator. Business owners and employees use the separate Counter POS app.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(value = email, onValueChange = { email = it; onClearError() }, label = { Text("Superadmin email") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = password, onValueChange = { password = it; onClearError() }, label = { Text("Password") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth())
+                if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                if (!notice.isNullOrBlank()) Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                Button(onClick = { onSignIn(email, password) }, enabled = email.contains("@") && password.length >= 6, modifier = Modifier.fillMaxWidth()) { Text("Sign in to Control Center") }
             }
         }
+    }
+}
+
+@Composable
+private fun NonSuperadminBlockedScreen(onSignOut: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
+        Text("Superadmin access required", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        Text("This APK is only for the platform administrator. Install the separate Counter POS APK for business-owner and employee access.", modifier = Modifier.padding(top = 10.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(20.dp))
+        Button(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
     }
 }
 

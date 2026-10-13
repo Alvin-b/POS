@@ -100,6 +100,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -109,6 +110,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -428,6 +430,25 @@ NavigationBar(
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Employee access", fontWeight = FontWeight.SemiBold)
                     Text("Scan an employee's secure QR to approve their device, then control whether they can sell and when.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Issue employee access", fontWeight = FontWeight.SemiBold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { viewModel.issueEmployeePass("cashier") }, modifier = Modifier.weight(1f)) { Text("Cashier pass") }
+                        OutlinedButton(onClick = { viewModel.issueEmployeePass("inventory_clerk") }, modifier = Modifier.weight(1f)) { Text("Stock pass") }
+                    }
+                    state.employeePasskey?.let { passkey ->
+                        val clipboard = LocalClipboardManager.current
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("One-time passkey", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                Text(passkey, fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(onClick = { clipboard.setText(AnnotatedString(passkey)) }, modifier = Modifier.weight(1f)) { Text("Copy") }
+                                    TextButton(onClick = viewModel::clearEmployeePass, modifier = Modifier.weight(1f)) { Text("Hide") }
+                                }
+                                Text("Send it privately. It can be redeemed once and expires automatically.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
                     state.employeeMembers.forEach { employee ->
                         val userId = employee.optString("member_user_id")
                         val employeeStatus = employee.optString("employment_status", "active")

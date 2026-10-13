@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
@@ -64,6 +65,7 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                 onClearError = viewModel::clearStartupError
             )
             session.activeBusiness?.employmentStatus != "active" -> EmployeeAccessBlockedScreen(session.activeBusiness, viewModel::signOut)
+            session.activeBusiness != null && state.isAccessLocked -> WorkingHoursLockedScreen(state.accessLockMessage.orEmpty(), viewModel::refreshAccessNow, viewModel::signOut)
             session.activeBusiness != null -> CounterPosWorkspace(viewModel)
             session.memberships.any { it.status == "active" && it.employmentStatus == "active" } -> BusinessPickerScreen(
                 session = session,
@@ -142,6 +144,17 @@ private fun EmployeeAccessBlockedScreen(
 }
 
 @Composable
+private fun WorkingHoursLockedScreen(message: String, onCheckAgain: () -> Unit, onSignOut: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("Workspace locked", fontSize = 28.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        Text(message, modifier = Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(20.dp))
+        Button(onClick = onCheckAgain, modifier = Modifier.fillMaxWidth()) { Text("Check active hours") }
+        TextButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
+    }
+}
+
+@Composable
 private fun BusinessSetupScreen(
     email: String,
     error: String?,
@@ -167,7 +180,7 @@ private fun BusinessPickerScreen(
     Column(Modifier.fillMaxSize().padding(24.dp)) {
         Text("Choose a business", fontSize = 26.sp, fontWeight = FontWeight.Bold)
         Text("Select the active business for this device.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp, bottom = 16.dp))
-        session.memberships.filter { it.status == "active" }.forEach { membership ->
+        session.memberships.filter { it.status == "active" && it.employmentStatus == "active" }.forEach { membership ->
             Card(onClick = { onSelect(membership.shopId) }, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
                 Column(Modifier.padding(16.dp)) {
                     Text(membership.shopName, fontWeight = FontWeight.SemiBold)

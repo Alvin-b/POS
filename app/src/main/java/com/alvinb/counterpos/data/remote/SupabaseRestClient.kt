@@ -90,6 +90,9 @@ class SupabaseRestClient(context: Context) {
     suspend fun clearEmployeeSchedule(shopId: String, userId: String): JSONObject =
         rpcVoid("clear_employee_schedule", JSONObject().put("_shop", shopId).put("_user", userId))
 
+    suspend fun canSellForShop(shopId: String): Boolean =
+        rpcBoolean("can_sell_for_shop", JSONObject().put("_shop", shopId))
+
     suspend fun signUp(email: String, password: String): AuthSession? = withContext(Dispatchers.IO) {
         val payload = JSONObject().put("email", email.trim()).put("password", password)
         val response = requestRaw(
@@ -353,6 +356,9 @@ class SupabaseRestClient(context: Context) {
         request("/rest/v1/rpc/$name", "POST", args.toString(), true)
         return JSONObject()
     }
+
+    private suspend fun rpcBoolean(name: String, args: JSONObject): Boolean =
+        request("/rest/v1/rpc/$name", "POST", args.toString(), true).trim().equals("true", ignoreCase = true)
 
     private suspend fun rpcArray(name: String, args: JSONObject): JSONArray {
         val body = request("/rest/v1/rpc/$name", "POST", args.toString(), true)
