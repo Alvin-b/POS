@@ -121,9 +121,16 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
     }
 
     fun prepareQrChallenge() = viewModelScope.launch {
+        _uiState.update { it.copy(loginQrPayload = null, startupError = null, notice = "Connecting to secure QR sign-in…") }
         runCatching { repository.createAccessChallenge() }
-            .onSuccess { token -> _uiState.update { it.copy(loginQrPayload = token, startupError = null) } }
-            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not prepare QR sign-in") } }
+            .onSuccess { token -> _uiState.update { it.copy(loginQrPayload = token, startupError = null, notice = null) } }
+            .onFailure { error ->
+                val message = error.message.orEmpty()
+                val friendly = if (message.contains("function was not found", ignoreCase = true) || message.contains("404")) {
+                    "Secure QR sign-in is not deployed on this Supabase project. Deploy create-access-challenge, then tap Retry."
+                } else message.ifBlank { "Could not prepare QR sign-in" }
+                _uiState.update { it.copy(loginQrPayload = null, startupError = friendly, notice = null) }
+            }
     }
 
     fun signInWithQrRequested() = viewModelScope.launch {
