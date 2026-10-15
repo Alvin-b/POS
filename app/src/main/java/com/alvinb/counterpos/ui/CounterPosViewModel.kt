@@ -120,6 +120,16 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
         }
     }
 
+    fun signInWithSuperadminToken(token: String) = _uiState.update {
+        it.copy(startupError = null, notice = "Verifying Superadmin token…")
+    }.also {
+        viewModelScope.launch {
+            runCatching { repository.signInWithSuperadminToken(token) }
+                .onSuccess { _uiState.update { state -> state.copy(notice = "Superadmin access granted") } }
+                .onFailure { error -> _uiState.update { state -> state.copy(notice = null, startupError = error.message ?: "Superadmin token sign-in failed") } }
+        }
+    }
+
     fun prepareQrChallenge() = viewModelScope.launch {
         _uiState.update { it.copy(loginQrPayload = null, startupError = null, notice = "Connecting to secure QR sign-in…") }
         runCatching { repository.createAccessChallenge() }

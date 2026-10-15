@@ -53,6 +53,7 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                 error = state.startupError,
                 notice = state.notice,
                 onPasskeySignIn = viewModel::signInWithPasskey,
+                onSuperadminTokenSignIn = viewModel::signInWithSuperadminToken,
                 onQrSignIn = viewModel::signInWithQrRequested,
                 qrPayload = state.loginQrPayload,
                 onClearError = viewModel::clearStartupError
@@ -99,11 +100,13 @@ private fun AuthScreen(
     error: String?,
     notice: String?,
     onPasskeySignIn: (String) -> Unit,
+    onSuperadminTokenSignIn: (String) -> Unit,
     onQrSignIn: () -> Unit,
     qrPayload: String?,
     onClearError: () -> Unit
 ) {
     var passkey by remember { mutableStateOf("") }
+    var superadminToken by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -129,6 +132,10 @@ private fun AuthScreen(
                 Button(onClick = onQrSignIn, modifier = Modifier.fillMaxWidth()) { Text("Sign in with QR code") }
                 OutlinedTextField(value = passkey, onValueChange = { passkey = it; onClearError() }, label = { Text("Passkey") }, placeholder = { Text("Paste your one-time passkey") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedButton(onClick = { onPasskeySignIn(passkey) }, enabled = passkey.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("Sign in with passkey") }
+                Text("Platform administrator", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
+                Text("Use the current 10-minute token from the protected Lovable admin dashboard. This token opens platform controls only.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(value = superadminToken, onValueChange = { superadminToken = it; onClearError() }, label = { Text("Superadmin token") }, placeholder = { Text("CPSA1|…") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedButton(onClick = { onSuperadminTokenSignIn(superadminToken) }, enabled = superadminToken.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("Open Superadmin interface") }
                 if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 if (!notice.isNullOrBlank()) Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
             }

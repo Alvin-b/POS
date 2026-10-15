@@ -65,6 +65,19 @@ class SupabaseRestClient(context: Context) {
     suspend fun signIn(email: String, password: String): AuthSession =
         authenticate("password", email, password)
 
+    suspend fun redeemSuperadminToken(token: String): AuthSession = withContext(Dispatchers.IO) {
+        require(token.trim().isNotBlank()) { "Enter the current Superadmin token." }
+        val json = parseObject(request("/functions/v1/redeem-superadmin-token", "POST", JSONObject().put("token", token.trim()).toString(), false))
+        val accessToken = json.optString("access_token").takeIf(String::isNotBlank)
+            ?: throw IOException(json.optString("error", "Invalid or expired Superadmin token"))
+        val refreshToken = json.optString("refresh_token").takeIf(String::isNotBlank)
+            ?: throw IOException("Superadmin token response did not include a refresh session")
+        val user = json.optJSONObject("user")
+        val created = AuthSession(accessToken, refreshToken, user?.optString("id").orEmpty(), user?.optString("email").takeIf { !it.isNullOrBlank() })
+        saveSession(created)
+        created
+    }
+
     suspend fun redeemAccessPass(passkey: String): AuthSession = withContext(Dispatchers.IO) {
         val json = parseObject(request("/functions/v1/redeem-access-pass", "POST", JSONObject().put("passkey", passkey.trim()).toString(), false))
         val email = json.optString("email").takeIf(String::isNotBlank)

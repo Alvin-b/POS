@@ -72,6 +72,12 @@ class CounterPosRepository(
         loadAccount(autoSelectFirstBusiness = true)
     }
 
+    suspend fun signInWithSuperadminToken(token: String): SessionSnapshot = withContext(Dispatchers.IO) {
+        require(token.trim().isNotBlank()) { "Enter the current Superadmin token." }
+        remote.redeemSuperadminToken(token.trim())
+        loadAccount(autoSelectFirstBusiness = false)
+    }
+
     suspend fun createAccessPass(role: String): JSONObject = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: throw IllegalStateException("Open a business before creating an access pass.")
         require(shop.role == "owner" || shop.role == "manager") { "Only a business owner or manager can add staff." }
