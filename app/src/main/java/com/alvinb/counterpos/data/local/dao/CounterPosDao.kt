@@ -22,6 +22,8 @@ interface CounterPosDao {
     suspend fun getDiningTableByName(name: String): DiningTableEntity?
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertDiningTable(table: DiningTableEntity)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertDiningTables(tables: List<DiningTableEntity>)
     @Query("DELETE FROM dining_tables WHERE id = :id")
     suspend fun deleteDiningTable(id: String): Int
     @Insert

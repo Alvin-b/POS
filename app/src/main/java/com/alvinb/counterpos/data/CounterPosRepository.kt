@@ -320,6 +320,44 @@ class CounterPosRepository(
         }
         dao.clearSales()
         dao.insertSales(sales)
+        val tables = buildList {
+            val rows = remote.diningTables(membership.shopId)
+            for (index in 0 until rows.length()) {
+                rows.optJSONObject(index)?.let { row ->
+                    add(
+                        DiningTableEntity(
+                            id = row.optString("id"),
+                            name = row.optString("name"),
+                            createdAt = parseTimestamp(row.optString("created_at"))
+                        )
+                    )
+                }
+            }
+        }
+        val orders = buildList {
+            val rows = remote.tableOrders(membership.shopId)
+            for (index in 0 until rows.length()) {
+                rows.optJSONObject(index)?.let { row ->
+                    add(
+                        TableOrderEntity(
+                            tableId = row.optString("table_id"),
+                            saleId = stableLocalId(row.optString("sale_id")),
+                            catalogCode = row.optString("product_id"),
+                            productName = row.optString("product_name"),
+                            unitName = row.optString("unit_name", "Bottle"),
+                            quantity = row.optInt("qty", 1),
+                            unitPriceKsh = row.optInt("unit_price", 0),
+                            totalKsh = row.optInt("total", 0),
+                            servedAt = parseTimestamp(row.optString("served_at"))
+                        )
+                    )
+                }
+            }
+        }
+        dao.clearTableOrders()
+        dao.clearDiningTables()
+        dao.insertDiningTables(tables)
+        orders.forEach { dao.insertTableOrder(it) }
     }
 
     suspend fun seedCatalogIfEmpty() = withContext(Dispatchers.IO) {
@@ -360,12 +398,17 @@ class CounterPosRepository(
         val cleanName = name.trim()
         require(cleanName.isNotBlank()) { "Enter a name for the table." }
         require(cleanName.length <= 40) { "Table names must be 40 characters or fewer." }
-        require(dao.getDiningTableByName(cleanName) == null) { "A table with this name already exists." }
-        return DiningTableEntity(
-            id = UUID.randomUUID().toString(),
-            name = cleanName,
-            createdAt = System.currentTimeMillis()
-        ).also { dao.insertDiningTable(it) }
+        return withActiveBusiness {
+            require(dao.getDiningTableByName(cleanName) == null) { "A table with this name already exists." }
+            val row = remote.createDiningTable(activeBusiness!!.shopId, cleanName)
+            val table = DiningTableEntity(
+                id = row.optString("id"),
+                name = row.optString("name", cleanName),
+                createdAt = parseTimestamp(row.optString("created_at"))
+            )
+            dao.insertDiningTable(table)
+            table
+        }
     }
 
     suspend fun sellToTable(
@@ -374,14 +417,18 @@ class CounterPosRepository(
         quantity: Int,
         unitName: String,
         unitPriceKsh: Int
-    ): Boolean = dao.completeTableSaleWithUnit(
-        tableId = tableId,
-        code = code,
-        quantity = quantity,
-        unitName = unitName,
-        unitPriceKsh = unitPriceKsh,
-        createdAt = System.currentTimeMillis()
-    )
+    ): Boolean = withActiveProduct(code) { product ->
+        remote.recordTableSale(
+            shopId = activeBusiness!!.shopId,
+            tableId = tableId,
+            productId = product.remoteId!!,
+            quantity = quantity,
+            unitName = unitName,
+            unitPrice = unitPriceKsh
+        )
+        syncBusiness(activeBusiness!!)
+        true
+    }
 
     suspend fun sellWithUnit(code: String, quantity: Int, unitName: String, unitPriceKsh: Int): Boolean =
         withActiveProduct(code) { product ->

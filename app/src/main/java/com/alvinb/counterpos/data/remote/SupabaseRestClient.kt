@@ -184,6 +184,35 @@ class SupabaseRestClient(context: Context) {
         "sales?select=*&shop_id=eq.$shopId&order=created_at.desc&limit=200"
     )
 
+    suspend fun diningTables(shopId: String): JSONArray = query(
+        "dining_tables?select=*&shop_id=eq.$shopId&order=created_at.asc,name.asc"
+    )
+
+    suspend fun tableOrders(shopId: String): JSONArray = query(
+        "table_orders?select=*&shop_id=eq.$shopId&order=served_at.asc"
+    )
+
+    suspend fun createDiningTable(shopId: String, name: String): JSONObject =
+        rpcObject("create_dining_table", JSONObject().put("_shop", shopId).put("_name", name.trim()))
+
+    suspend fun recordTableSale(
+        shopId: String,
+        tableId: String,
+        productId: String,
+        quantity: Int,
+        unitName: String,
+        unitPrice: Int
+    ): JSONObject = rpcObject(
+        "record_table_sale",
+        JSONObject()
+            .put("_shop", shopId)
+            .put("_table", tableId)
+            .put("_product", productId)
+            .put("_qty", quantity)
+            .put("_unit_name", unitName)
+            .put("_unit_price", unitPrice)
+    )
+
     suspend fun recordSaleUnit(productId: String, quantity: Int, unitName: String, unitPrice: Int): JSONObject =
         rpcObject(
             "record_sale_unit",
