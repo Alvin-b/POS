@@ -52,8 +52,7 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
             !session.isAuthenticated -> AuthScreen(
                 error = state.startupError,
                 notice = state.notice,
-                onPasskeySignIn = viewModel::signInWithPasskey,
-                onSuperadminTokenSignIn = viewModel::signInWithSuperadminToken,
+                onCredentialSignIn = viewModel::signInWithCredential,
                 onQrSignIn = viewModel::signInWithQrRequested,
                 qrPayload = state.loginQrPayload,
                 onClearError = viewModel::clearStartupError
@@ -99,14 +98,12 @@ private fun LoadingScreen() {
 private fun AuthScreen(
     error: String?,
     notice: String?,
-    onPasskeySignIn: (String) -> Unit,
-    onSuperadminTokenSignIn: (String) -> Unit,
+    onCredentialSignIn: (String) -> Unit,
     onQrSignIn: () -> Unit,
     qrPayload: String?,
     onClearError: () -> Unit
 ) {
-    var passkey by remember { mutableStateOf("") }
-    var superadminToken by remember { mutableStateOf("") }
+    var credential by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -127,15 +124,22 @@ private fun AuthScreen(
         Spacer(Modifier.height(12.dp))
         Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Business sign in", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                Text("Have someone scan this secure QR code, or paste the one-time passkey sent by the business owner.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Button(onClick = onQrSignIn, modifier = Modifier.fillMaxWidth()) { Text("Sign in with QR code") }
-                OutlinedTextField(value = passkey, onValueChange = { passkey = it; onClearError() }, label = { Text("Passkey") }, placeholder = { Text("Paste your one-time passkey") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedButton(onClick = { onPasskeySignIn(passkey) }, enabled = passkey.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("Sign in with passkey") }
-                Text("Platform administrator", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
-                Text("Use the current 10-minute token from the protected Lovable admin dashboard. This token opens platform controls only.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedTextField(value = superadminToken, onValueChange = { superadminToken = it; onClearError() }, label = { Text("Superadmin token") }, placeholder = { Text("CPSA1|…") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedButton(onClick = { onSuperadminTokenSignIn(superadminToken) }, enabled = superadminToken.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("Open Superadmin interface") }
+                Text("Sign in", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                Text("Enter your business or employee passkey, or the current Superadmin token. Access opens automatically for your account.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(
+                    value = credential,
+                    onValueChange = { credential = it; onClearError() },
+                    label = { Text("Passkey") },
+                    placeholder = { Text("Enter passkey or access token") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Button(
+                    onClick = { onCredentialSignIn(credential.trim()) },
+                    enabled = credential.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Continue") }
+                OutlinedButton(onClick = onQrSignIn, modifier = Modifier.fillMaxWidth()) { Text("Sign in with QR code") }
                 if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 if (!notice.isNullOrBlank()) Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
             }

@@ -130,6 +130,15 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
         }
     }
 
+    fun signInWithCredential(credential: String) {
+        val value = credential.trim()
+        if (value.startsWith("CPSA1|", ignoreCase = true)) {
+            signInWithSuperadminToken(value)
+        } else {
+            signInWithPasskey(value)
+        }
+    }
+
     fun prepareQrChallenge() = viewModelScope.launch {
         _uiState.update { it.copy(loginQrPayload = null, startupError = null, notice = "Connecting to secure QR sign-in…") }
         runCatching { repository.createAccessChallenge() }
