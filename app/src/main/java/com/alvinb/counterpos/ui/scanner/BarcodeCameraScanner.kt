@@ -165,21 +165,7 @@ fun BarcodeScannerScreen(
             onGrantPermission = { permissionLauncher.launch(Manifest.permission.CAMERA) },
             onClose = onClose,
             products = products,
-            mode = mode,
-            onSimulateBarcode = { code ->
-                handleBarcodeResult(
-                    barcode = code,
-                    mode = mode,
-                    products = products,
-                    context = context,
-                    onProductScannedForSale = onProductScannedForSale,
-                    onProductScannedForStock = onProductScannedForStock,
-                    onProductScannedForTable = onProductScannedForTable,
-                    onAdminQrCodeScanned = onAdminQrCodeScanned,
-                    onBarcodeAssigned = onBarcodeAssigned,
-                    onBarcodeNotRecognized = onBarcodeNotRecognized
-                )
-            }
+            mode = mode
         )
     }
 }
@@ -598,55 +584,6 @@ private fun CameraScannerView(
                     }
                 }
             }
-
-            // Quick barcode chips for testing / common items
-            Text(
-                "Quick Barcode Simulator (tap to scan instantly):",
-                color = Color(0xFFD1D5DB),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(bottom = 4.dp, start = 4.dp)
-            )
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                val sampleProducts = remember(products) {
-                    val available = if (mode == ScannerMode.TAKE_STOCK) products else products.filter { it.inMyStock }
-                    available.take(7)
-                }
-
-                sampleProducts.forEach { sample ->
-                    val code = sample.verifiedBarcode ?: sample.catalogCode
-                    Surface(
-                        onClick = { onBarcodeDetected(code) },
-                        color = Color(0xCC1F2937),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.QrCodeScanner,
-                                contentDescription = null,
-                                tint = Color(0xFF10B981),
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                text = "${sample.name} (${sample.size})",
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
-                }
-            }
         }
     }
 }
@@ -656,8 +593,7 @@ private fun PermissionRequiredScreen(
     onGrantPermission: () -> Unit,
     onClose: () -> Unit,
     products: List<ProductEntity>,
-    mode: ScannerMode,
-    onSimulateBarcode: (String) -> Unit
+    mode: ScannerMode
 ) {
     Column(
         modifier = Modifier
@@ -718,29 +654,6 @@ private fun PermissionRequiredScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Cancel / Enter Barcode Manually")
-        }
-
-        Spacer(Modifier.height(28.dp))
-
-        Text(
-            "Or test scanning without camera:",
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Spacer(Modifier.height(8.dp))
-
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            products.take(3).forEach { product ->
-                val code = product.verifiedBarcode ?: product.catalogCode
-                OutlinedButton(
-                    onClick = { onSimulateBarcode(code) },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Test Scan: ${product.name} ($code)", fontSize = 12.sp)
-                }
-            }
         }
     }
 }
