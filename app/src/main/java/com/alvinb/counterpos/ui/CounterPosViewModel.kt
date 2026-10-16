@@ -40,6 +40,7 @@ data class CounterPosUiState(
     val loginQrPayload: String? = null,
     val isQrPolling: Boolean = false,
     val employeeMembers: List<JSONObject> = emptyList(),
+    val isSavingBusinessName: Boolean = false,
     val isAccessLocked: Boolean = false,
     val accessLockMessage: String? = null,
     val employeePasskey: String? = null,
@@ -250,10 +251,22 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
             .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not update employee role") } }
     }
 
-    fun removeEmployee(userId: String) = viewModelScope.launch {
-        runCatching { repository.removeEmployee(userId) }
-            .onSuccess { rows -> _uiState.update { it.copy(employeeMembers = (0 until rows.length()).mapNotNull(rows::optJSONObject), notice = "Employee removed") } }
-            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not remove employee") } }
+    fun removeEmployeeAccess(userId: String) = viewModelScope.launch {
+        runCatching { repository.removeEmployeeAccess(userId, "Access removed by business administrator") }
+            .onSuccess { rows -> _uiState.update { it.copy(employeeMembers = (0 until rows.length()).mapNotNull(rows::optJSONObject), actionError = null, notice = "Employee access removed; their history is retained") } }
+            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not remove employee access") } }
+    }
+
+    fun updateBusinessName(name: String) = viewModelScope.launch {
+        _uiState.update { it.copy(isSavingBusinessName = true, actionError = null) }
+        try {
+            repository.updateBusinessName(name)
+            _uiState.update { it.copy(notice = "Business name updated", actionError = null) }
+        } catch (error: Exception) {
+            _uiState.update { it.copy(actionError = error.message ?: "Could not update business name") }
+        } finally {
+            _uiState.update { it.copy(isSavingBusinessName = false) }
+        }
     }
 
     fun setEmployeeHours(userId: String, weekday: Int, start: String, end: String, enabled: Boolean) = viewModelScope.launch {

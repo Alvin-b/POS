@@ -121,10 +121,19 @@ class CounterPosRepository(
         remote.listShopMembers(shop.shopId)
     }
 
-    suspend fun removeEmployee(userId: String): JSONArray = withContext(Dispatchers.IO) {
-        val shop = activeBusiness ?: throw IllegalStateException("Open a business first.")
-        remote.removeEmployee(shop.shopId, userId)
+    suspend fun removeEmployeeAccess(userId: String, reason: String?): JSONArray = withContext(Dispatchers.IO) {
+        val shop = activeBusiness ?: throw IllegalStateException("Open a business before managing employees.")
+        require(shop.role in setOf("owner", "manager")) { "Only an owner or manager can manage employees." }
+        remote.removeEmployeeAccess(shop.shopId, userId, reason)
         remote.listShopMembers(shop.shopId)
+    }
+
+    suspend fun updateBusinessName(name: String): SessionSnapshot = withContext(Dispatchers.IO) {
+        val shop = activeBusiness ?: throw IllegalStateException("Open a business before editing its profile.")
+        require(shop.role == "owner") { "Only the business owner can edit the business name." }
+        require(name.trim().isNotBlank()) { "Enter a business name." }
+        remote.updateShopName(shop.shopId, name.trim())
+        loadAccount(autoSelectFirstBusiness = false)
     }
 
     suspend fun setEmployeeHours(userId: String, weekday: Int, start: String, end: String, enabled: Boolean): JSONArray = withContext(Dispatchers.IO) {

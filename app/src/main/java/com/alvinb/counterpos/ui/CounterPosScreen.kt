@@ -431,13 +431,16 @@ NavigationBar(
         var endTime by remember { mutableStateOf("17:00") }
         var selectedEmployeeRole by remember { mutableStateOf("cashier") }
         var removeEmployeeId by remember { mutableStateOf<String?>(null) }
+        var businessNameDraft by remember(session.activeBusiness?.shopId, session.activeBusiness?.shopName) {
+            mutableStateOf(session.activeBusiness?.shopName.orEmpty())
+        }
         LaunchedEffect(Unit) { viewModel.loadEmployeeMembers() }
         removeEmployeeId?.let { userId ->
             AlertDialog(
                 onDismissRequest = { removeEmployeeId = null },
                 title = { Text("Remove employee access?") },
-                text = { Text("This removes the employee from this business and revokes their access. Their sales history is retained.") },
-                confirmButton = { Button(onClick = { viewModel.removeEmployee(userId); removeEmployeeId = null; selectedEmployeeId = null }) { Text("Remove") } },
+                text = { Text("This disables the employee's access to this business. Their membership record and sales history are retained for audit purposes.") },
+                confirmButton = { Button(onClick = { viewModel.removeEmployeeAccess(userId); removeEmployeeId = null; selectedEmployeeId = null }) { Text("Remove access") } },
                 dismissButton = { TextButton(onClick = { removeEmployeeId = null }) { Text("Cancel") } }
             )
         }
@@ -446,6 +449,23 @@ NavigationBar(
             title = { Text("Manage business team") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (role == "owner") {
+                        Text("Business profile", fontWeight = FontWeight.SemiBold)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = businessNameDraft,
+                                onValueChange = { businessNameDraft = it.take(120) },
+                                label = { Text("Business name") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Button(
+                                onClick = { viewModel.updateBusinessName(businessNameDraft) },
+                                enabled = !state.isSavingBusinessName && businessNameDraft.isNotBlank()
+                            ) { Text(if (state.isSavingBusinessName) "Saving" else "Save") }
+                        }
+                    }
+                    state.actionError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
                     Text("Employee access", fontWeight = FontWeight.SemiBold)
                     Text(if ("working_hours" in enabledFeatures) "Scan an employee's secure QR to approve their device, then control whether they can sell and when." else "Scan an employee's secure QR to approve their device and control whether they can sell.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("Issue employee access", fontWeight = FontWeight.SemiBold)
@@ -497,7 +517,7 @@ NavigationBar(
                                     }
                                     Text("Applies Monday–Friday. The server blocks sales outside these hours.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Button(onClick = { (1..5).forEach { day -> viewModel.setEmployeeHours(userId, day, startTime, endTime, true) }; selectedEmployeeId = null }, modifier = Modifier.fillMaxWidth()) { Text("Save weekday hours") }
-                                    OutlinedButton(onClick = { removeEmployeeId = userId }, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error), modifier = Modifier.fillMaxWidth()) { Text("Remove employee") }
+                                    if (employeeStatus != "terminated") OutlinedButton(onClick = { removeEmployeeId = userId }, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error), modifier = Modifier.fillMaxWidth()) { Text("Remove employee access") }
                                 }
                             }
                         }
