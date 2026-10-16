@@ -332,7 +332,7 @@ class CounterPosRepository(
 
     suspend fun sellWithUnit(code: String, quantity: Int, unitName: String, unitPriceKsh: Int): Boolean =
         withActiveProduct(code) { product ->
-            remote.recordSaleUnit(product.remoteId!!, quantity, unitName, unitPriceKsh)
+            remote.recordSaleUnit(product.remoteId!!, quantity, unitName, unitPriceKsh, UUID.randomUUID().toString())
             syncBusiness(activeBusiness!!)
             true
         }
@@ -378,7 +378,9 @@ class CounterPosRepository(
         }
 
     suspend fun undoLatestSale(): Boolean = withActiveBusiness {
-        remote.undoSale(activeBusiness!!.shopId)
+        val sale = dao.getLatestActiveSale() ?: return@withActiveBusiness false
+        val saleId = sale.remoteId ?: return@withActiveBusiness false
+        remote.undoSale(activeBusiness!!.shopId, saleId, UUID.randomUUID().toString())
         syncBusiness(activeBusiness!!)
         true
     }

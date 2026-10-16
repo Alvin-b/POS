@@ -467,19 +467,20 @@ class CounterPosRepository(
         quantity: Int,
         unitName: String,
         unitPriceKsh: Int,
-        selectedCounterId: String? = null
+        selectedCounterId: String? = null,
+        operationId: String = UUID.randomUUID().toString()
     ): Boolean = withActiveProduct(code) { product ->
         selectedCounterId?.let { counterId ->
-            remote.recordTableSaleFromCounter(activeBusiness!!.shopId, tableId, product.remoteId!!, counterId, quantity, unitName, unitPriceKsh)
-        } ?: remote.recordTableSale(activeBusiness!!.shopId, tableId, product.remoteId!!, quantity, unitName, unitPriceKsh)
+            remote.recordTableSaleFromCounter(activeBusiness!!.shopId, tableId, product.remoteId!!, counterId, quantity, unitName, unitPriceKsh, operationId)
+        } ?: remote.recordTableSale(activeBusiness!!.shopId, tableId, product.remoteId!!, quantity, unitName, unitPriceKsh, operationId)
         syncBusiness(activeBusiness!!)
         true
     }
 
-    suspend fun sellWithUnit(code: String, quantity: Int, unitName: String, unitPriceKsh: Int, selectedCounterId: String? = null): Boolean =
+    suspend fun sellWithUnit(code: String, quantity: Int, unitName: String, unitPriceKsh: Int, selectedCounterId: String? = null, operationId: String = UUID.randomUUID().toString()): Boolean =
         withActiveProduct(code) { product ->
-            selectedCounterId?.let { remote.recordSaleUnitFromCounter(product.remoteId!!, it, quantity, unitName, unitPriceKsh) }
-                ?: remote.recordSaleUnit(product.remoteId!!, quantity, unitName, unitPriceKsh)
+            selectedCounterId?.let { remote.recordSaleUnitFromCounter(product.remoteId!!, it, quantity, unitName, unitPriceKsh, operationId) }
+                ?: remote.recordSaleUnit(product.remoteId!!, quantity, unitName, unitPriceKsh, operationId)
             syncBusiness(activeBusiness!!)
             true
         }
@@ -525,7 +526,9 @@ class CounterPosRepository(
         }
 
     suspend fun undoLatestSale(): Boolean = withActiveBusiness {
-        remote.undoSale(activeBusiness!!.shopId)
+        val sale = dao.getLatestActiveSale() ?: return@withActiveBusiness false
+        val saleId = sale.remoteId ?: return@withActiveBusiness false
+        remote.undoSale(activeBusiness!!.shopId, saleId, UUID.randomUUID().toString())
         syncBusiness(activeBusiness!!)
         true
     }

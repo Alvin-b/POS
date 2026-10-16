@@ -9,6 +9,7 @@ import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.TableOrderEntity
+import com.alvinb.counterpos.data.local.entity.parseSaleUnits
 import kotlinx.coroutines.flow.Flow
 @Dao
 interface CounterPosDao {
@@ -124,18 +125,13 @@ interface CounterPosDao {
         val product = getProductByCode(code) ?: return false
         if (!product.inMyStock) return false
 
-        // For bottle or primary unit, decrement shelf stock by quantity (if stock available).
-        // If selling smaller units like cup or glass, decrement 1 bottle if quantity exceeds,
-        // or decrement 1 bottle per cup/glass sold if tracking per serving, or decrement minimum 1 if bottle unit.
-        val shouldDecrement = if (unitName.equals("Bottle", ignoreCase = true) || unitName.equals("Can", ignoreCase = true)) {
-            quantity
-        } else {
-            // For cup/glass, decrement 1 unit from stock if available, or allow sales if stocked
-            if (product.stockQuantity >= 1) 1 else 0
-        }
-        if (shouldDecrement > 0 && product.stockQuantity >= shouldDecrement) {
-            decrementStock(code, shouldDecrement)
-        }
+        val unit = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+            .firstOrNull { it.name.equals(unitName, ignoreCase = true) }
+        val stockUnitsPerSale = unit?.stockUnitsPerSale?.coerceAtLeast(1) ?: 1
+        val stockToDeduct = stockUnitsPerSale * quantity
+        // Never record a sale without reserving all required stock. Legacy units default to one
+        // stock unit per sale, preventing glass/cup sales from silently overselling inventory.
+        if (product.stockQuantity < stockToDeduct || decrementStock(code, stockToDeduct) != 1) return false
 
         insertSale(
             SaleEntity(
@@ -165,7 +161,9 @@ interface CounterPosDao {
         if (getDiningTable(tableId) == null || quantity < 1 || unitPriceKsh < 1) return false
         val product = getProductByCode(code) ?: return false
         if (!product.inMyStock || product.stockQuantity < 1) return false
-        val stockToDeduct = if (unitName.equals("Bottle", true) || unitName.equals("Can", true)) quantity else 1
+        val unit = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+            .firstOrNull { it.name.equals(unitName, ignoreCase = true) }
+        val stockToDeduct = (unit?.stockUnitsPerSale?.coerceAtLeast(1) ?: 1) * quantity
         if (product.stockQuantity < stockToDeduct || decrementStock(code, stockToDeduct) != 1) return false
         val total = unitPriceKsh * quantity
         val saleId = insertSale(
@@ -237,7 +235,10 @@ interface CounterPosDao {
     @Transaction
     suspend fun undoLatestSale(): Boolean {
         val sale = getLatestActiveSale() ?: return false
-        val stockToRestore = if (sale.unitName.equals("Bottle", true) || sale.unitName.equals("Can", true)) sale.quantity else 1
+        val product = getProductByCode(sale.catalogCode) ?: return false
+        val unit = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+            .firstOrNull { it.name.equals(sale.unitName, ignoreCase = true) }
+        val stockToRestore = (unit?.stockUnitsPerSale?.coerceAtLeast(1) ?: 1) * sale.quantity
         if (restoreStock(sale.catalogCode, stockToRestore) != 1) return false
         deleteTableOrderBySaleId(sale.id)
         return markSaleUndone(sale.id) == 1

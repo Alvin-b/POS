@@ -262,7 +262,8 @@ class SupabaseRestClient(context: Context) {
         productId: String,
         quantity: Int,
         unitName: String,
-        unitPrice: Int
+        unitPrice: Int,
+        operationId: String = java.util.UUID.randomUUID().toString()
     ): JSONObject = rpcObject(
         "record_table_sale",
         JSONObject()
@@ -272,18 +273,20 @@ class SupabaseRestClient(context: Context) {
             .put("_qty", quantity)
             .put("_unit_name", unitName)
             .put("_unit_price", unitPrice)
+            .put("_operation_id", operationId)
     )
 
     suspend fun recordTableSaleFromCounter(
         shopId: String, tableId: String, productId: String, counterId: String,
-        quantity: Int, unitName: String, unitPrice: Int
+        quantity: Int, unitName: String, unitPrice: Int, operationId: String = java.util.UUID.randomUUID().toString()
     ): JSONObject = rpcObject(
         "record_table_sale_from_counter",
         JSONObject().put("_shop", shopId).put("_table", tableId).put("_product", productId)
-            .put("_counter", counterId).put("_qty", quantity).put("_unit_name", unitName).put("_unit_price", unitPrice)
+             .put("_counter", counterId).put("_qty", quantity).put("_unit_name", unitName).put("_unit_price", unitPrice)
+            .put("_operation_id", operationId)
     )
 
-    suspend fun recordSaleUnit(productId: String, quantity: Int, unitName: String, unitPrice: Int): JSONObject =
+    suspend fun recordSaleUnit(productId: String, quantity: Int, unitName: String, unitPrice: Int, operationId: String = java.util.UUID.randomUUID().toString()): JSONObject =
         rpcObject(
             "record_sale_unit",
             JSONObject()
@@ -291,17 +294,18 @@ class SupabaseRestClient(context: Context) {
                 .put("_qty", quantity)
                 .put("_unit_name", unitName)
                 .put("_unit_price", unitPrice)
+                .put("_operation_id", operationId)
         )
 
-    suspend fun recordSaleUnitFromCounter(productId: String, counterId: String, quantity: Int, unitName: String, unitPrice: Int): JSONObject =
+    suspend fun recordSaleUnitFromCounter(productId: String, counterId: String, quantity: Int, unitName: String, unitPrice: Int, operationId: String = java.util.UUID.randomUUID().toString()): JSONObject =
         rpcObject(
             "record_sale_unit_from_counter",
             JSONObject().put("_product", productId).put("_counter", counterId).put("_qty", quantity)
-                .put("_unit_name", unitName).put("_unit_price", unitPrice)
+                 .put("_unit_name", unitName).put("_unit_price", unitPrice).put("_operation_id", operationId)
         )
 
-    suspend fun undoSale(shopId: String): JSONObject =
-        rpcObject("undo_sale", JSONObject().put("_shop", shopId))
+    suspend fun undoSale(shopId: String, saleId: String, operationId: String): JSONObject =
+        rpcObject("undo_sale", JSONObject().put("_shop", shopId).put("_sale_id", saleId).put("_operation_id", operationId))
 
     suspend fun receiveStock(
         productId: String,

@@ -60,7 +60,7 @@ class TableOrdersDaoTest {
         val added = dao.completeTableSaleWithUnit("table-1", "KE-001", 2, "Glass", 80, 200L)
 
         assertTrue(added)
-        assertEquals(5, dao.getProductByCode("KE-001")?.stockQuantity)
+        assertEquals(4, dao.getProductByCode("KE-001")?.stockQuantity)
         val orders = dao.observeTableOrders().first()
         assertEquals(1, orders.size)
         assertEquals("Patio A", dao.getDiningTable(orders.single().tableId)?.name)
