@@ -23,6 +23,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -35,7 +36,7 @@ fun EnrollmentCredentialCard(
     var copied by remember(credential.passkey) { mutableStateOf(false) }
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
@@ -47,10 +48,10 @@ fun EnrollmentCredentialCard(
             Text(
                 if (credential.role == "owner") "Business owner" else "Cashier / staff member",
                 fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSecondaryContainer
+                color = MaterialTheme.colorScheme.onPrimaryContainer
             )
             Text("Send this passkey to the owner or employee. Their app displays the QR code for administrator approval.", fontSize = 12.sp, textAlign = TextAlign.Center)
-            Text("One-time passkey", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
+            Text("One-time passkey", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
             SelectionContainer {
                 Text(credential.passkey, fontSize = 22.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, textAlign = TextAlign.Center)
             }
@@ -59,9 +60,9 @@ fun EnrollmentCredentialCard(
                     clipboard.setText(AnnotatedString(credential.passkey))
                     copied = true
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().testTag("copy_passkey")
             ) { Text(if (copied) "Passkey copied" else "Copy passkey") }
-            Text("Send this passkey only to the intended person. The recipient uses it in the owner/staff app.", fontSize = 11.sp, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSecondaryContainer)
+            Text("Send this passkey only to the intended person. The recipient uses it in the owner/staff app.", fontSize = 11.sp, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onPrimaryContainer)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Hide") }
                 Button(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Done") }

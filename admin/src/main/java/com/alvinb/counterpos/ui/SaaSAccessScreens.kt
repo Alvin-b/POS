@@ -230,8 +230,8 @@ private fun AdminConsoleScreen(
                 ) {
                     Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column {
-                            Text("Control Center", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                            Text("Platform administration", fontSize = 13.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f))
+                            Text("Platform admin", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Text("${businesses.size} businesses", fontSize = 13.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f))
                             Text(email, fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f), modifier = Modifier.padding(top = 8.dp))
                         }
                         Column(horizontalAlignment = Alignment.End) {
@@ -260,15 +260,24 @@ private fun AdminConsoleScreen(
             }
             item {
                 AdminSectionLabel("Overview")
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    AdminSummaryCard(
+                        label = "Live",
+                        value = businesses.count { it.status == "active" && it.ownerEmail != "Pending owner enrollment" }.toString(),
+                        modifier = Modifier.weight(1f)
+                    )
+                    AdminSummaryCard(
+                        label = "Awaiting owner",
+                        value = businesses.count { it.status == "active" && it.ownerEmail == "Pending owner enrollment" }.toString(),
+                        muted = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
                 Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("Portfolio overview", fontWeight = FontWeight.SemiBold)
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            AdminMetric("Businesses", businesses.size.toString())
-                            AdminMetric("Active", businesses.count { it.status == "active" }.toString())
-                            AdminMetric("Pending owners", businesses.count { it.ownerEmail == "Pending owner enrollment" }.toString())
-                            AdminMetric("Suspended", businesses.count { it.status == "suspended" }.toString())
-                        }
+                    Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        AdminMetric("Businesses", businesses.size.toString())
+                        AdminMetric("Suspended", businesses.count { it.status == "suspended" }.toString())
+                        AdminMetric("Closed", businesses.count { it.status == "closed" }.toString())
                     }
                 }
             }
@@ -354,6 +363,35 @@ private fun AdminMetric(label: String, value: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(value, fontSize = 21.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun AdminSummaryCard(
+    label: String,
+    value: String,
+    muted: Boolean = false,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(
+            containerColor = if (muted) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Text(
+                label,
+                fontSize = 11.sp,
+                color = if (muted) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            Text(
+                value,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (muted) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onPrimaryContainer
+            )
+        }
     }
 }
 
