@@ -1,5 +1,6 @@
 package com.alvinb.counterpos.ui
 
+import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,12 +9,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -21,6 +29,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -104,6 +115,24 @@ private fun AuthScreen(
     onClearError: () -> Unit
 ) {
     var credential by remember { mutableStateOf("") }
+    val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
+
+    fun pasteFromClipboard() {
+        val clipText = clipboardManager.getText()?.text
+        val textToPaste = if (!clipText.isNullOrBlank()) {
+            clipText
+        } else {
+            runCatching {
+                val sysClip = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                sysClip?.primaryClip?.getItemAt(0)?.text?.toString()
+            }.getOrNull()
+        }
+        if (!textToPaste.isNullOrBlank()) {
+            credential = textToPaste.trim()
+            onClearError()
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -132,13 +161,47 @@ private fun AuthScreen(
                     label = { Text("Passkey") },
                     placeholder = { Text("Enter passkey or access token") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                    trailingIcon = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (credential.isNotEmpty()) {
+                                IconButton(onClick = { credential = ""; onClearError() }) {
+                                    Icon(Icons.Default.Clear, contentDescription = "Clear input", modifier = Modifier.size(20.dp))
+                                }
+                            }
+                            IconButton(
+                                onClick = { pasteFromClipboard() },
+                                modifier = Modifier.testTag("paste_passkey_icon")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ContentPaste,
+                                    contentDescription = "Paste passkey from clipboard",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().testTag("passkey_input_field")
                 )
-                Button(
-                    onClick = { onCredentialSignIn(credential.trim()) },
-                    enabled = credential.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Continue") }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { pasteFromClipboard() },
+                        modifier = Modifier.weight(1f).testTag("paste_passkey_button")
+                    ) {
+                        Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Paste")
+                    }
+                    Button(
+                        onClick = { onCredentialSignIn(credential.trim()) },
+                        enabled = credential.isNotBlank(),
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Continue") }
+                }
                 OutlinedButton(onClick = onQrSignIn, modifier = Modifier.fillMaxWidth()) { Text("Sign in with QR code") }
                 if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 if (!notice.isNullOrBlank()) Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)

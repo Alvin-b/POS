@@ -334,6 +334,7 @@ NavigationBar(
                     onAddStockClick = viewModel::openAddStock,
                     onEditProductClick = viewModel::openEditProduct,
                     onAddNewProductClick = { viewModel.openAddNewProduct() },
+                    onScanStockClick = { viewModel.openScanner(ScannerMode.TAKE_STOCK) },
                     onAddCatalogClick = viewModel::openCatalogItem,
                     canReceiveStock = canReceiveStock,
                     canEditProducts = canEditProducts,
@@ -418,8 +419,8 @@ NavigationBar(
                 product = product,
                 error = state.actionError,
                 onDismiss = viewModel::dismissEditProduct,
-                onConfirm = { name, stock, price, units ->
-                    viewModel.confirmEditProduct(product, name, stock, price, units)
+                onConfirm = { name, stock, price, units, barcode ->
+                    viewModel.confirmEditProduct(product, name, stock, price, units, barcode)
                 },
                 onScanBarcode = {
                     viewModel.dismissEditProduct()
@@ -928,6 +929,7 @@ private fun FullscreenStockScreen(
     onAddStockClick: (ProductEntity) -> Unit,
     onEditProductClick: (ProductEntity) -> Unit,
     onAddNewProductClick: () -> Unit,
+    onScanStockClick: () -> Unit,
     onAddCatalogClick: (ProductEntity) -> Unit,
     canReceiveStock: Boolean,
     canEditProducts: Boolean,
@@ -953,11 +955,11 @@ private fun FullscreenStockScreen(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
 
-        // Mode switch + Add Product action bar
+        // Mode switch + Add Product + Scan stock action bar
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // My Stock Tab Button
@@ -998,7 +1000,7 @@ private fun FullscreenStockScreen(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 10.dp)
+                            modifier = Modifier.padding(horizontal = 8.dp)
                         ) {
                             Icon(
                                 Icons.Default.Add,
@@ -1006,12 +1008,39 @@ private fun FullscreenStockScreen(
                                 modifier = Modifier.size(16.dp),
                                 tint = MaterialTheme.colorScheme.onPrimaryContainer
                             )
-                            Spacer(Modifier.width(4.dp))
+                            Spacer(Modifier.width(3.dp))
                             Text(
                                 "New",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+
+                    // Compact "Scan" button for stock
+                    Surface(
+                        onClick = onScanStockClick,
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        modifier = Modifier.height(40.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.QrCodeScanner,
+                                contentDescription = "Scan to take stock",
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            Spacer(Modifier.width(3.dp))
+                            Text(
+                                "Scan",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
                             )
                         }
                     }
@@ -1889,10 +1918,11 @@ private fun EditProductDialog(
     product: ProductEntity,
     error: String?,
     onDismiss: () -> Unit,
-    onConfirm: (name: String, stock: Int, price: Int, units: List<SaleUnit>) -> Unit,
+    onConfirm: (name: String, stock: Int, price: Int, units: List<SaleUnit>, barcode: String?) -> Unit,
     onScanBarcode: () -> Unit
 ) {
     var name by remember(product.catalogCode) { mutableStateOf(product.name) }
+    var barcodeText by remember(product.catalogCode) { mutableStateOf(product.verifiedBarcode ?: "") }
     var stockText by remember(product.catalogCode) { mutableStateOf(product.stockQuantity.toString()) }
     var priceText by remember(product.catalogCode) { mutableStateOf(product.sellingPriceKsh.toString()) }
 
@@ -1923,6 +1953,26 @@ private fun EditProductDialog(
                     label = { Text("Product Name") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
+                )
+
+                // Barcode / Product Identity field with scan button
+                OutlinedTextField(
+                    value = barcodeText,
+                    onValueChange = { barcodeText = it.trim() },
+                    label = { Text("Product Barcode / Identity") },
+                    placeholder = { Text("Scan or enter barcode") },
+                    singleLine = true,
+                    trailingIcon = {
+                        IconButton(onClick = onScanBarcode) {
+                            Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan barcode with camera")
+                        }
+                    },
+                    supportingText = {
+                        Text(if (barcodeText.isNotBlank()) "Linked: $barcodeText" else "Add barcode to identify product via scanner", fontSize = 11.sp)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp)
                 )
 
                 Row(
@@ -1964,11 +2014,13 @@ private fun EditProductDialog(
 
                 OutlinedButton(
                     onClick = onScanBarcode,
-                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
                 ) {
                     Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text(if (product.verifiedBarcode.isNullOrBlank()) "Scan barcode for this product" else "Replace barcode")
+                    Text(if (barcodeText.isBlank()) "Scan Barcode with Camera" else "Rescan Barcode")
                 }
                 // List of units
                 unitsList.forEachIndexed { index, unit ->
@@ -2045,7 +2097,7 @@ private fun EditProductDialog(
                     if (unitsList.isEmpty()) {
                         unitsList.add(SaleUnit("Bottle", p))
                     }
-                    onConfirm(name.trim(), s, p, unitsList.toList())
+                    onConfirm(name.trim(), s, p, unitsList.toList(), barcodeText.trim().ifBlank { null })
                 },
                 enabled = name.isNotBlank() && (priceText.toIntOrNull() ?: 0) > 0
             ) {
@@ -2370,68 +2422,6 @@ private fun AddCatalogItemDialog(
     )
 }
 
-/**
- * Quick scan banner component (used inside scrollable content, not statically stuck)
- */
-@Composable
-private fun QuickScanActionStrip(
-    title: String,
-    subtitle: String,
-    actionLabel: String,
-    backgroundColor: Color,
-    onClick: () -> Unit
-) {
-    Card(
-        onClick = onClick,
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = backgroundColor),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Surface(
-                    shape = CircleShape,
-                    color = Color.White.copy(alpha = 0.2f),
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.QrCodeScanner,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-                Column {
-                    Text(title, fontWeight = FontWeight.Bold, color = Color.White, fontSize = 14.sp)
-                    Text(subtitle, color = Color.White.copy(alpha = 0.85f), fontSize = 11.sp)
-                }
-            }
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = Color.White
-            ) {
-                Text(
-                    actionLabel,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = backgroundColor,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                )
-            }
-        }
-    }
-}
 
 @Composable
 private fun QuantityStepperControl(quantity: Int, onChange: (Int) -> Unit) {

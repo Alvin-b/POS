@@ -508,15 +508,17 @@ class CounterPosRepository(
 
     suspend fun updateProduct(product: ProductEntity): Boolean =
         withActiveProduct(product.catalogCode) { current ->
-            remote.updateProduct(
-                current.remoteId!!,
-                JSONObject()
-                    .put("name", product.name)
-                    .put("price", product.sellingPriceKsh)
-                    .put("brand", product.brand)
-                    .put("size", product.size)
-                    .put("category", product.category)
-            )
+            dao.updateProduct(product)
+            val payload = JSONObject()
+                .put("name", product.name)
+                .put("price", product.sellingPriceKsh)
+                .put("brand", product.brand)
+                .put("size", product.size)
+                .put("category", product.category)
+            if (!product.verifiedBarcode.isNullOrBlank()) {
+                payload.put("barcode", product.verifiedBarcode)
+            }
+            remote.updateProduct(current.remoteId!!, payload)
             if (product.stockQuantity != current.stockQuantity) {
                 remote.adjustStock(current.remoteId, product.stockQuantity, "Product edit stock count")
             }

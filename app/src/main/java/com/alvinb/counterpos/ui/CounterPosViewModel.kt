@@ -453,47 +453,17 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
     }
 
     fun handleScannedSale(product: ProductEntity) {
-        if (!product.inMyStock) {
+        if (!product.inMyStock || product.stockQuantity < 1) {
             _uiState.update {
                 it.copy(
                     isScannerOpen = false,
-                    tab = PosTab.STOCK,
-                    stockMode = StockMode.LIBRARY,
-                    selectedCatalogCode = product.catalogCode,
-                    catalogInitialStock = 12,
-                    catalogSellingPrice = product.suggestedPriceKsh.toString(),
-                    notice = "Scanned ${product.name} is in catalog. Set your shop stock to sell it."
+                    notice = "${product.name} is not available on the stock screen"
                 )
             }
             return
         }
-        if (product.stockQuantity < 1) {
-            _uiState.update { it.copy(isScannerOpen = false, notice = "⚠️ ${product.name} is OUT OF STOCK!") }
-            return
-        }
-        val units = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
-        val defaultUnit = units.firstOrNull() ?: SaleUnit("Bottle", product.sellingPriceKsh)
-        // Every successful scan releases one unit immediately; there is no continuous-mode switch.
-        viewModelScope.launch {
-            val success = repository.sellWithUnit(
-                code = product.catalogCode,
-                quantity = 1,
-                unitName = defaultUnit.name,
-                unitPriceKsh = defaultUnit.priceKsh,
-                selectedCounterId = _uiState.value.selectedCounterId
-            )
-            val remaining = (product.stockQuantity - 1).coerceAtLeast(0)
-            _uiState.update {
-                it.copy(
-                    isScannerOpen = false,
-                    notice = if (success) {
-                        "✓ Sold 1x ${product.name} (${defaultUnit.name}) · KSh ${defaultUnit.priceKsh} (Rem: $remaining)"
-                    } else {
-                        "⚠️ Could not sell ${product.name}: check stock."
-                    }
-                )
-            }
-        }
+        _uiState.update { it.copy(isScannerOpen = false) }
+        openSale(product)
     }
 
     fun handleScannedTableProduct(product: ProductEntity) {
@@ -506,7 +476,7 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
             _uiState.update {
                 it.copy(
                     isScannerOpen = false,
-                    notice = "${product.name} is out of stock and cannot be added to this bill."
+                    notice = "${product.name} is not available on the stock screen"
                 )
             }
             return
@@ -545,9 +515,7 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
         _uiState.update {
             it.copy(
                 isScannerOpen = false,
-                isAddingNewProduct = true,
-                prefilledBarcode = barcode,
-                notice = "New barcode $barcode scanned. Enter product details."
+                notice = "Product is not available on the stock screen ($barcode)"
             )
         }
     }
@@ -679,7 +647,8 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
         name: String,
         newStock: Int,
         newPrice: Int,
-        units: List<SaleUnit>
+        units: List<SaleUnit>,
+        barcode: String? = null
     ) {
         if (newStock < 0 || newPrice < 1) {
             _uiState.update { it.copy(actionError = "Enter valid stock count and selling price.") }
@@ -690,7 +659,8 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                 name = name.ifBlank { product.name },
                 stockQuantity = newStock,
                 sellingPriceKsh = newPrice,
-                salesUnitsJson = serializeSaleUnits(units)
+                salesUnitsJson = serializeSaleUnits(units),
+                verifiedBarcode = barcode?.trim()?.ifBlank { null } ?: product.verifiedBarcode
             )
             val success = repository.updateProduct(updated)
             if (success) {
