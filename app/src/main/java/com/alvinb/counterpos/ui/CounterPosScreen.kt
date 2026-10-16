@@ -429,7 +429,18 @@ NavigationBar(
         var selectedEmployeeId by remember { mutableStateOf<String?>(null) }
         var startTime by remember { mutableStateOf("09:00") }
         var endTime by remember { mutableStateOf("17:00") }
+        var selectedEmployeeRole by remember { mutableStateOf("cashier") }
+        var removeEmployeeId by remember { mutableStateOf<String?>(null) }
         LaunchedEffect(Unit) { viewModel.loadEmployeeMembers() }
+        removeEmployeeId?.let { userId ->
+            AlertDialog(
+                onDismissRequest = { removeEmployeeId = null },
+                title = { Text("Remove employee access?") },
+                text = { Text("This removes the employee from this business and revokes their access. Their sales history is retained.") },
+                confirmButton = { Button(onClick = { viewModel.removeEmployee(userId); removeEmployeeId = null; selectedEmployeeId = null }) { Text("Remove") } },
+                dismissButton = { TextButton(onClick = { removeEmployeeId = null }) { Text("Cancel") } }
+            )
+        }
         AlertDialog(
             onDismissRequest = viewModel::closeTeamPanel,
             title = { Text("Manage business team") },
@@ -459,8 +470,11 @@ NavigationBar(
                     state.employeeMembers.forEach { employee ->
                         val userId = employee.optString("member_user_id")
                         val employeeStatus = employee.optString("employment_status", "active")
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Card(onClick = {
+                                selectedEmployeeId = userId
+                                selectedEmployeeRole = employee.optString("role", "cashier")
+                            }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                                Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(employee.optString("email", "Employee"), fontWeight = FontWeight.SemiBold)
                                 Text("${employee.optString("role")} · ${employeeStatus.uppercase()}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -469,12 +483,21 @@ NavigationBar(
                                     if ("working_hours" in enabledFeatures) OutlinedButton(onClick = { selectedEmployeeId = userId }) { Text("Hours") }
                                 }
                                 if (selectedEmployeeId == userId) {
+                                    Text("Employee details", fontWeight = FontWeight.SemiBold)
+                                    Text("Role", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        listOf("cashier", "inventory_clerk", "manager").forEach { option ->
+                                            FilterChip(selected = selectedEmployeeRole == option, onClick = { selectedEmployeeRole = option }, label = { Text(option.replace('_', ' ')) })
+                                        }
+                                    }
+                                    Button(onClick = { viewModel.setEmployeeRole(userId, selectedEmployeeRole) }, modifier = Modifier.fillMaxWidth()) { Text("Save role") }
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         OutlinedTextField(value = startTime, onValueChange = { startTime = it }, label = { Text("Start") }, singleLine = true, modifier = Modifier.weight(1f))
                                         OutlinedTextField(value = endTime, onValueChange = { endTime = it }, label = { Text("End") }, singleLine = true, modifier = Modifier.weight(1f))
                                     }
                                     Text("Applies Monday–Friday. The server blocks sales outside these hours.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Button(onClick = { (1..5).forEach { day -> viewModel.setEmployeeHours(userId, day, startTime, endTime, true) }; selectedEmployeeId = null }, modifier = Modifier.fillMaxWidth()) { Text("Save weekday hours") }
+                                    OutlinedButton(onClick = { removeEmployeeId = userId }, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error), modifier = Modifier.fillMaxWidth()) { Text("Remove employee") }
                                 }
                             }
                         }

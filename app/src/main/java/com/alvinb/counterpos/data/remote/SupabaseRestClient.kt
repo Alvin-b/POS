@@ -103,6 +103,12 @@ class SupabaseRestClient(context: Context) {
     suspend fun setEmployeeStatus(shopId: String, userId: String, status: String, reason: String?): JSONObject =
         rpcVoid("set_employee_status", JSONObject().put("_shop", shopId).put("_user", userId).put("_status", status).putNullable("_reason", reason))
 
+    suspend fun setEmployeeRole(shopId: String, userId: String, role: String): JSONObject =
+        rpcVoid("set_employee_role", JSONObject().put("_shop", shopId).put("_user", userId).put("_role", role))
+
+    suspend fun removeEmployee(shopId: String, userId: String): JSONObject =
+        rpcVoid("remove_employee", JSONObject().put("_shop", shopId).put("_user", userId))
+
     suspend fun setEmployeeWorkingHours(shopId: String, userId: String, weekday: Int, start: String, end: String, enabled: Boolean): JSONObject =
         rpcVoid("set_employee_working_hours", JSONObject().put("_shop", shopId).put("_user", userId).put("_weekday", weekday).put("_start", start).put("_end", end).put("_enabled", enabled))
 

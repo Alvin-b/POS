@@ -51,6 +51,14 @@ data class AdminBusiness(
     val lifecycleReason: String?
 )
 
+data class AdminAuditEvent(
+    val action: String,
+    val entityType: String,
+    val actorUserId: String?,
+    val metadata: String,
+    val createdAt: String
+)
+
 class SupabaseRestClient(context: Context) {
     private val sessionStore = EncryptedSessionStore(context)
     private var session: AuthSession? = loadSession()
@@ -66,6 +74,15 @@ class SupabaseRestClient(context: Context) {
 
     suspend fun approveAccessChallenge(token: String, shopId: String, role: String): JSONObject =
         parseObject(request("/functions/v1/approve-access-challenge", "POST", JSONObject().put("token", token).put("shop_id", shopId).put("role", role).toString(), true))
+
+    suspend fun auditEvents(shopId: String): List<AdminAuditEvent> {
+        val rows = query("audit_events?shop_id=eq.$shopId&select=action,entity_type,actor_user_id,metadata,created_at&order=created_at.desc&limit=30")
+        return buildList {
+            for (index in 0 until rows.length()) rows.optJSONObject(index)?.let { row ->
+                add(AdminAuditEvent(row.optString("action"), row.optString("entity_type"), row.optString("actor_user_id").takeIf(String::isNotBlank), row.optJSONObject("metadata")?.toString() ?: "{}", row.optString("created_at")))
+            }
+        }
+    }
 
     suspend fun signUp(email: String, password: String): AuthSession? = withContext(Dispatchers.IO) {
         val payload = JSONObject().put("email", email.trim()).put("password", password)

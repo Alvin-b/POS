@@ -244,6 +244,18 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
             .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not update employee") } }
     }
 
+    fun setEmployeeRole(userId: String, role: String) = viewModelScope.launch {
+        runCatching { repository.setEmployeeRole(userId, role) }
+            .onSuccess { rows -> _uiState.update { it.copy(employeeMembers = (0 until rows.length()).mapNotNull(rows::optJSONObject), notice = "Employee role updated") } }
+            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not update employee role") } }
+    }
+
+    fun removeEmployee(userId: String) = viewModelScope.launch {
+        runCatching { repository.removeEmployee(userId) }
+            .onSuccess { rows -> _uiState.update { it.copy(employeeMembers = (0 until rows.length()).mapNotNull(rows::optJSONObject), notice = "Employee removed") } }
+            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not remove employee") } }
+    }
+
     fun setEmployeeHours(userId: String, weekday: Int, start: String, end: String, enabled: Boolean) = viewModelScope.launch {
         runCatching { repository.setEmployeeHours(userId, weekday, start, end, enabled) }
             .onSuccess { rows -> _uiState.update { it.copy(employeeMembers = (0 until rows.length()).mapNotNull(rows::optJSONObject), notice = "Working hours saved") } }

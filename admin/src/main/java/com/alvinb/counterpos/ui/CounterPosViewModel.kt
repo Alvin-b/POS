@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.alvinb.counterpos.data.CounterPosRepository
 import com.alvinb.counterpos.data.remote.AdminBusiness
+import com.alvinb.counterpos.data.remote.AdminAuditEvent
 import com.alvinb.counterpos.data.SessionSnapshot
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
@@ -34,6 +35,7 @@ data class CounterPosUiState(
     val selectedTableId: String? = null,
     val isCreatingTable: Boolean = false,
     val adminSelectedBusinessId: String? = null,
+    val adminAuditEvents: List<AdminAuditEvent> = emptyList(),
     val enrollmentCredential: EnrollmentCredential? = null,
 
     // Sale sheet
@@ -180,8 +182,13 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
         }
     }
 
-    fun selectAdminBusiness(shopId: String) = _uiState.update {
-        it.copy(adminSelectedBusinessId = shopId, enrollmentCredential = null, notice = "Business selected. Generate an access pass for its owner or staff.")
+    fun selectAdminBusiness(shopId: String) {
+        _uiState.update { it.copy(adminSelectedBusinessId = shopId, adminAuditEvents = emptyList(), enrollmentCredential = null, notice = "Business selected. Generate an access pass for its owner or staff.") }
+        viewModelScope.launch {
+            runCatching { repository.adminAuditEvents(shopId) }
+                .onSuccess { events -> _uiState.update { state -> state.copy(adminAuditEvents = events) } }
+                .onFailure { error -> _uiState.update { state -> state.copy(startupError = error.message ?: "Could not load audit history") } }
+        }
     }
 
     fun generateEnrollmentCredential(business: AdminBusiness, role: String) = viewModelScope.launch {

@@ -10,6 +10,7 @@ import com.alvinb.counterpos.data.local.entity.TableOrderEntity
 import com.alvinb.counterpos.data.local.entity.serializeSaleUnits
 import com.alvinb.counterpos.data.remote.AccountSnapshot
 import com.alvinb.counterpos.data.remote.AdminBusiness
+import com.alvinb.counterpos.data.remote.AdminAuditEvent
 import com.alvinb.counterpos.data.remote.AuthSession
 import com.alvinb.counterpos.data.remote.BusinessMembership
 import com.alvinb.counterpos.data.remote.SupabaseRestClient
@@ -104,6 +105,8 @@ class CounterPosRepository(
     }
 
     suspend fun adminBusinesses(): List<AdminBusiness> = remote.adminBusinesses()
+
+    suspend fun adminAuditEvents(shopId: String): List<AdminAuditEvent> = remote.auditEvents(shopId)
 
     suspend fun adminSetBusinessStatus(shopId: String, status: String, reason: String?): List<AdminBusiness> {
         remote.adminSetBusinessStatus(shopId, status, reason)

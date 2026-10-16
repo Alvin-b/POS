@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alvinb.counterpos.data.remote.AdminBusiness
+import com.alvinb.counterpos.data.remote.AdminAuditEvent
 import com.alvinb.counterpos.ui.scanner.BarcodeScannerScreen
 import com.alvinb.counterpos.ui.scanner.ScannerMode
 
@@ -189,6 +190,7 @@ private fun AdminConsoleScreen(
     var businessSize by remember { mutableStateOf("medium") }
     var reason by remember { mutableStateOf("") }
     var searchQuery by remember { mutableStateOf("") }
+    var statusFilter by remember { mutableStateOf("all") }
 
     LaunchedEffect(Unit) { viewModel.loadAdminBusinesses() }
 
@@ -212,7 +214,8 @@ private fun AdminConsoleScreen(
     }
 
     val visibleBusinesses = businesses.filter { business ->
-        searchQuery.isBlank() || business.shopName.contains(searchQuery, ignoreCase = true) || business.ownerEmail.contains(searchQuery, ignoreCase = true)
+        (statusFilter == "all" || business.status == statusFilter) &&
+            (searchQuery.isBlank() || business.shopName.contains(searchQuery, ignoreCase = true) || business.ownerEmail.contains(searchQuery, ignoreCase = true))
     }
 
     Scaffold { padding ->
@@ -308,6 +311,11 @@ private fun AdminConsoleScreen(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
                 )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("all" to "All", "active" to "Active", "suspended" to "Suspended", "closed" to "Closed").forEach { (value, label) ->
+                        OutlinedButton(onClick = { statusFilter = value }, colors = if (statusFilter == value) androidx.compose.material3.ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer) else androidx.compose.material3.ButtonDefaults.outlinedButtonColors(), modifier = Modifier.weight(1f)) { Text(label, fontSize = 11.sp) }
+                    }
+                }
             }
             item {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -332,6 +340,7 @@ private fun AdminConsoleScreen(
                     onScanUser = { viewModel.openScanner(ScannerMode.ADMIN_QR) },
                     onGeneratePass = { role -> viewModel.generateEnrollmentCredential(business, role) },
                     onStatusChange = viewModel::setBusinessStatus,
+                    auditEvents = if (state.adminSelectedBusinessId == business.shopId) state.adminAuditEvents else emptyList(),
                     actionsEnabled = !state.isAdminMutating
                 )
             }
@@ -368,6 +377,7 @@ private fun AdminBusinessCard(
     onScanUser: () -> Unit,
     onGeneratePass: (String) -> Unit,
     onStatusChange: (String, String, String?) -> Unit,
+    auditEvents: List<AdminAuditEvent>,
     actionsEnabled: Boolean
 ) {
     val statusColor = when (business.status) {
@@ -401,6 +411,14 @@ private fun AdminBusinessCard(
                 Text(if (selected) "Business profile selected" else "Open business profile")
             }
             if (selected) {
+                Text("Audit history", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                if (auditEvents.isEmpty()) {
+                    Text("No audit events recorded for this tenant yet.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    auditEvents.take(6).forEach { event ->
+                        Text("${event.createdAt.replace('T', ' ').take(16)} · ${event.action.replace('_', ' ')}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
                 Text("Enrollment actions", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = { onGeneratePass("owner") }, enabled = actionsEnabled && business.status == "active", modifier = Modifier.weight(1f)) { Text("Owner pass") }
