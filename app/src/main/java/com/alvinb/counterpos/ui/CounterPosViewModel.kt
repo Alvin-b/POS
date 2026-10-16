@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.alvinb.counterpos.data.CounterPosRepository
 import com.alvinb.counterpos.data.remote.AdminBusiness
+import com.alvinb.counterpos.data.remote.CounterReportRow
+import com.alvinb.counterpos.data.remote.ServiceCounter
 import com.alvinb.counterpos.data.SessionSnapshot
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
@@ -24,7 +26,7 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.util.UUID
 
-enum class PosTab { SCAN, STOCK, SALES, TABLES }
+enum class PosTab { SCAN, STOCK, SALES, REPORTS, TABLES }
 enum class StockMode { MY_STOCK, LIBRARY }
 
 data class CounterPosUiState(
@@ -34,6 +36,9 @@ data class CounterPosUiState(
     val isSearchActive: Boolean = false,
     val libraryCategory: String = "All",
     val selectedTableId: String? = null,
+    val selectedCounterId: String? = null,
+    val counterReport: List<CounterReportRow> = emptyList(),
+    val isLoadingCounterReport: Boolean = false,
     val isCreatingTable: Boolean = false,
     val adminSelectedBusinessId: String? = null,
     val isTeamPanelOpen: Boolean = false,
@@ -86,6 +91,7 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
     val sales = repository.sales.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val diningTables = repository.diningTables.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val tableOrders = repository.tableOrders.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val serviceCounters = repository.serviceCounters.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _uiState = MutableStateFlow(CounterPosUiState())
     val uiState = _uiState.asStateFlow()
@@ -353,6 +359,16 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
         it.copy(tab = tab, actionError = null, isSearchActive = false, searchQuery = "")
     }
 
+    fun selectCounter(counterId: String) = _uiState.update { it.copy(selectedCounterId = counterId) }
+
+    fun loadCounterReport(fromIso: String, toIso: String) = viewModelScope.launch {
+        _uiState.update { it.copy(isLoadingCounterReport = true, actionError = null) }
+        runCatching { repository.counterSalesReport(fromIso, toIso) }
+            .onSuccess { rows -> _uiState.update { it.copy(counterReport = rows) } }
+            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not load counter report") } }
+        _uiState.update { it.copy(isLoadingCounterReport = false) }
+    }
+
     fun openTable(table: DiningTableEntity) = _uiState.update {
         it.copy(selectedTableId = table.id, actionError = null)
     }
@@ -463,7 +479,8 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                 code = product.catalogCode,
                 quantity = 1,
                 unitName = defaultUnit.name,
-                unitPriceKsh = defaultUnit.priceKsh
+                unitPriceKsh = defaultUnit.priceKsh,
+                selectedCounterId = _uiState.value.selectedCounterId
             )
             val remaining = (product.stockQuantity - 1).coerceAtLeast(0)
             _uiState.update {
@@ -581,14 +598,16 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                         code = code,
                         quantity = state.saleQuantity,
                         unitName = state.selectedUnitName,
-                        unitPriceKsh = state.selectedUnitPrice
+                        unitPriceKsh = state.selectedUnitPrice,
+                        selectedCounterId = state.selectedCounterId
                     )
                 } else {
                     repository.sellWithUnit(
                         code = code,
                         quantity = state.saleQuantity,
                         unitName = state.selectedUnitName,
-                        unitPriceKsh = state.selectedUnitPrice
+                        unitPriceKsh = state.selectedUnitPrice,
+                        selectedCounterId = state.selectedCounterId
                     )
                 }
                 if (success) {

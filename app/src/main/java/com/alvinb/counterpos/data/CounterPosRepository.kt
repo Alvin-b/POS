@@ -12,6 +12,8 @@ import com.alvinb.counterpos.data.remote.AccountSnapshot
 import com.alvinb.counterpos.data.remote.AdminBusiness
 import com.alvinb.counterpos.data.remote.AuthSession
 import com.alvinb.counterpos.data.remote.BusinessMembership
+import com.alvinb.counterpos.data.remote.CounterReportRow
+import com.alvinb.counterpos.data.remote.ServiceCounter
 import com.alvinb.counterpos.data.remote.SupabaseRestClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -47,6 +49,8 @@ class CounterPosRepository(
     val sales: Flow<List<SaleEntity>> = dao.observeSales()
     val diningTables: Flow<List<DiningTableEntity>> = dao.observeDiningTables()
     val tableOrders: Flow<List<TableOrderEntity>> = dao.observeTableOrders()
+    private val _serviceCounters = MutableStateFlow<List<ServiceCounter>>(emptyList())
+    val serviceCounters = _serviceCounters.asStateFlow()
 
     private val _session = MutableStateFlow(SessionSnapshot())
     val session = _session.asStateFlow()
@@ -195,6 +199,14 @@ class CounterPosRepository(
 
     suspend fun adminBusinesses(): List<AdminBusiness> = remote.adminBusinesses()
 
+    suspend fun counterSalesReport(fromIso: String, toIso: String): List<CounterReportRow> = withActiveBusiness {
+        remote.counterSalesReport(activeBusiness!!.shopId, fromIso, toIso)
+    }
+
+    suspend fun createServiceCounter(name: String): ServiceCounter = withActiveBusiness {
+        remote.createServiceCounter(activeBusiness!!.shopId, name).also { _serviceCounters.value = _serviceCounters.value + it }
+    }
+
     suspend fun adminSetBusinessStatus(shopId: String, status: String, reason: String?): List<AdminBusiness> {
         remote.adminSetBusinessStatus(shopId, status, reason)
         return remote.adminBusinesses()
@@ -255,6 +267,16 @@ class CounterPosRepository(
     private suspend fun syncBusiness(membership: BusinessMembership) {
         dao.clearTenantCache()
         seedCatalogIfEmpty()
+        var counters = remote.serviceCounters(membership.shopId)
+        if (counters.isEmpty() && membership.businessType == "big_club" && membership.role in setOf("owner", "manager")) {
+            // Clubs commonly start with four physical bars/counters. This is an idempotent
+            // bootstrap: the unique shop/name constraint prevents duplicates on resync.
+            listOf("Counter 1", "Counter 2", "Counter 3", "Counter 4").forEach { name ->
+                runCatching { remote.createServiceCounter(membership.shopId, name) }
+            }
+            counters = remote.serviceCounters(membership.shopId)
+        }
+        _serviceCounters.value = counters
 
         // Remote catalog rows augment the bundled image fallback. The remote
         // product snapshot then replaces matching catalog rows with tenant data.
@@ -444,23 +466,20 @@ class CounterPosRepository(
         code: String,
         quantity: Int,
         unitName: String,
-        unitPriceKsh: Int
+        unitPriceKsh: Int,
+        selectedCounterId: String? = null
     ): Boolean = withActiveProduct(code) { product ->
-        remote.recordTableSale(
-            shopId = activeBusiness!!.shopId,
-            tableId = tableId,
-            productId = product.remoteId!!,
-            quantity = quantity,
-            unitName = unitName,
-            unitPrice = unitPriceKsh
-        )
+        selectedCounterId?.let { counterId ->
+            remote.recordTableSaleFromCounter(activeBusiness!!.shopId, tableId, product.remoteId!!, counterId, quantity, unitName, unitPriceKsh)
+        } ?: remote.recordTableSale(activeBusiness!!.shopId, tableId, product.remoteId!!, quantity, unitName, unitPriceKsh)
         syncBusiness(activeBusiness!!)
         true
     }
 
-    suspend fun sellWithUnit(code: String, quantity: Int, unitName: String, unitPriceKsh: Int): Boolean =
+    suspend fun sellWithUnit(code: String, quantity: Int, unitName: String, unitPriceKsh: Int, selectedCounterId: String? = null): Boolean =
         withActiveProduct(code) { product ->
-            remote.recordSaleUnit(product.remoteId!!, quantity, unitName, unitPriceKsh)
+            selectedCounterId?.let { remote.recordSaleUnitFromCounter(product.remoteId!!, it, quantity, unitName, unitPriceKsh) }
+                ?: remote.recordSaleUnit(product.remoteId!!, quantity, unitName, unitPriceKsh)
             syncBusiness(activeBusiness!!)
             true
         }
@@ -570,6 +589,7 @@ class CounterPosRepository(
     private suspend fun clearLocalSession() {
         activeBusiness = null
         account = null
+        _serviceCounters.value = emptyList()
         dao.clearTenantCache()
         remote.clearSession()
         _session.value = SessionSnapshot()

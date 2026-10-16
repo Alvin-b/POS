@@ -55,6 +55,20 @@ data class AdminBusiness(
     val lifecycleReason: String?
 )
 
+data class ServiceCounter(
+    val id: String,
+    val name: String,
+    val active: Boolean = true
+)
+
+data class CounterReportRow(
+    val counterId: String?,
+    val counterName: String,
+    val saleCount: Long,
+    val units: Long,
+    val revenueKsh: Long
+)
+
 class SupabaseRestClient(context: Context) {
     private val sessionStore = EncryptedSessionStore(context)
     private var session: AuthSession? = loadSession()
@@ -206,6 +220,31 @@ class SupabaseRestClient(context: Context) {
         "sales?select=*&shop_id=eq.$shopId&order=created_at.desc&limit=200"
     )
 
+    suspend fun serviceCounters(shopId: String): List<ServiceCounter> = buildList {
+        val rows = query("service_counters?select=id,name,active&shop_id=eq.$shopId&active=eq.true&order=name.asc")
+        for (index in 0 until rows.length()) rows.optJSONObject(index)?.let { row ->
+            add(ServiceCounter(row.optString("id"), row.optString("name"), row.optBoolean("active", true)))
+        }
+    }
+
+    suspend fun createServiceCounter(shopId: String, name: String): ServiceCounter {
+        val row = rpcObject("create_service_counter", JSONObject().put("_shop", shopId).put("_name", name.trim()))
+        return ServiceCounter(row.optString("id"), row.optString("name", name.trim()), row.optBoolean("active", true))
+    }
+
+    suspend fun counterSalesReport(shopId: String, fromIso: String, toIso: String): List<CounterReportRow> = buildList {
+        val rows = rpcArray("counter_sales_report", JSONObject().put("_shop", shopId).put("_from", fromIso).put("_to", toIso))
+        for (index in 0 until rows.length()) rows.optJSONObject(index)?.let { row ->
+            add(CounterReportRow(
+                counterId = row.optString("counter_id").takeIf(String::isNotBlank),
+                counterName = row.optString("counter_name", "Unassigned"),
+                saleCount = row.optLong("sale_count"),
+                units = row.optLong("units"),
+                revenueKsh = row.optLong("revenue")
+            ))
+        }
+    }
+
     suspend fun diningTables(shopId: String): JSONArray = query(
         "dining_tables?select=*&shop_id=eq.$shopId&order=created_at.asc,name.asc"
     )
@@ -235,6 +274,15 @@ class SupabaseRestClient(context: Context) {
             .put("_unit_price", unitPrice)
     )
 
+    suspend fun recordTableSaleFromCounter(
+        shopId: String, tableId: String, productId: String, counterId: String,
+        quantity: Int, unitName: String, unitPrice: Int
+    ): JSONObject = rpcObject(
+        "record_table_sale_from_counter",
+        JSONObject().put("_shop", shopId).put("_table", tableId).put("_product", productId)
+            .put("_counter", counterId).put("_qty", quantity).put("_unit_name", unitName).put("_unit_price", unitPrice)
+    )
+
     suspend fun recordSaleUnit(productId: String, quantity: Int, unitName: String, unitPrice: Int): JSONObject =
         rpcObject(
             "record_sale_unit",
@@ -243,6 +291,13 @@ class SupabaseRestClient(context: Context) {
                 .put("_qty", quantity)
                 .put("_unit_name", unitName)
                 .put("_unit_price", unitPrice)
+        )
+
+    suspend fun recordSaleUnitFromCounter(productId: String, counterId: String, quantity: Int, unitName: String, unitPrice: Int): JSONObject =
+        rpcObject(
+            "record_sale_unit_from_counter",
+            JSONObject().put("_product", productId).put("_counter", counterId).put("_qty", quantity)
+                .put("_unit_name", unitName).put("_unit_price", unitPrice)
         )
 
     suspend fun undoSale(shopId: String): JSONObject =

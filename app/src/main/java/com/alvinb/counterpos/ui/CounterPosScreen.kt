@@ -46,6 +46,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -64,6 +65,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -119,6 +122,7 @@ import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.SaleUnit
 import com.alvinb.counterpos.data.local.entity.parseSaleUnits
+import com.alvinb.counterpos.data.remote.ServiceCounter
 import com.alvinb.counterpos.ui.scanner.BarcodeScannerScreen
 import com.alvinb.counterpos.ui.scanner.ScannerMode
 import java.text.NumberFormat
@@ -138,6 +142,7 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
     val sales by viewModel.sales.collectAsStateWithLifecycle()
     val diningTables by viewModel.diningTables.collectAsStateWithLifecycle()
     val tableOrders by viewModel.tableOrders.collectAsStateWithLifecycle()
+    val serviceCounters by viewModel.serviceCounters.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -179,6 +184,13 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
     val canReceiveStock = role in setOf("owner", "manager", "inventory_clerk")
     val canEditProducts = role in setOf("owner", "manager")
 
+    LaunchedEffect(serviceCounters) {
+        if (state.selectedCounterId == null) serviceCounters.firstOrNull()?.let { viewModel.selectCounter(it.id) }
+    }
+    LaunchedEffect(state.tab) {
+        if (state.tab == PosTab.REPORTS) viewModel.loadCounterReport(todayStartIso(), nowIso())
+    }
+
     LaunchedEffect(state.notice) {
         state.notice?.let {
             snackbarHostState.showSnackbar(it)
@@ -215,20 +227,29 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
                 })
             },
         topBar = {
-            LeanTopBar(
-                state = state,
-                todaySalesKsh = summary.first,
-                unitsSold = summary.second,
-                onSearchToggle = { active -> viewModel.setSearchActive(active) },
-                onSearchChange = viewModel::setSearchQuery,
-                onClearSearch = viewModel::clearSearch,
-                onOpenScanner = { viewModel.openScanner(if (state.tab == PosTab.STOCK) ScannerMode.TAKE_STOCK else ScannerMode.SELL) },
-                onAddNewProduct = { viewModel.openAddNewProduct() },
-                canAddNewProduct = canReceiveStock,
-                canManageTeam = role in setOf("owner", "manager") && "employee_management" in enabledFeatures,
-                onManageTeam = viewModel::openTeamPanel,
-                modifier = Modifier.statusBarsPadding()
-            )
+            Column(Modifier.statusBarsPadding()) {
+                LeanTopBar(
+                    state = state,
+                    todaySalesKsh = summary.first,
+                    unitsSold = summary.second,
+                    onSearchToggle = { active -> viewModel.setSearchActive(active) },
+                    onSearchChange = viewModel::setSearchQuery,
+                    onClearSearch = viewModel::clearSearch,
+                    onOpenScanner = { viewModel.openScanner(if (state.tab == PosTab.STOCK) ScannerMode.TAKE_STOCK else ScannerMode.SELL) },
+                    onAddNewProduct = { viewModel.openAddNewProduct() },
+                    canAddNewProduct = canReceiveStock,
+                    canManageTeam = role in setOf("owner", "manager") && "employee_management" in enabledFeatures,
+                    onManageTeam = viewModel::openTeamPanel
+                )
+                if (!state.isSearchActive && serviceCounters.isNotEmpty()) {
+                    CounterSelector(
+                        counters = serviceCounters,
+                        selectedCounterId = state.selectedCounterId,
+                        onSelect = viewModel::selectCounter,
+                        modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 6.dp)
+                    )
+                }
+            }
         },
         bottomBar = {
             Surface(
@@ -265,6 +286,13 @@ NavigationBar(
                         icon = { Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = "Sales", modifier = Modifier.size(20.dp)) },
                         label = { Text("Sales", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.SALES) FontWeight.Bold else FontWeight.Normal) },
                         modifier = Modifier.testTag("nav_sales")
+                    )
+                    NavigationBarItem(
+                        selected = state.tab == PosTab.REPORTS,
+                        onClick = { viewModel.selectTab(PosTab.REPORTS) },
+                        icon = { Icon(Icons.Default.Assessment, contentDescription = "Reports", modifier = Modifier.size(20.dp)) },
+                        label = { Text("Reports", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.REPORTS) FontWeight.Bold else FontWeight.Normal) },
+                        modifier = Modifier.testTag("nav_reports")
                     )
                     if (supportsTables) {
                         NavigationBarItem(
@@ -326,6 +354,12 @@ NavigationBar(
                         pendingSalesPdf = buildSalesPdf(filtered, start, end)
                         salesPdfPicker.launch("sales-${formatReportDate(start)}-${formatReportDate(end)}.pdf")
                     }
+                )
+                PosTab.REPORTS -> CounterReportScreen(
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                    rows = state.counterReport,
+                    isLoading = state.isLoadingCounterReport,
+                    onRefresh = { viewModel.loadCounterReport(todayStartIso(), nowIso()) }
                 )
                 PosTab.TABLES -> TablesScreen(
                     tables = diningTables,
@@ -535,6 +569,53 @@ NavigationBar(
         )
     }
 }
+
+@Composable
+private fun CounterSelector(
+    counters: List<ServiceCounter>,
+    selectedCounterId: String?,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selected = counters.firstOrNull { it.id == selectedCounterId } ?: counters.firstOrNull()
+    Box(modifier) {
+        Surface(
+            onClick = { expanded = true },
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(Modifier.padding(horizontal = 12.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.LocalDrink, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(7.dp))
+                Text("Taking drinks from: ${selected?.name ?: "Select counter"}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.weight(1f))
+                Text("Change", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+            }
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            counters.forEach { counter ->
+                DropdownMenuItem(
+                    text = { Text(counter.name) },
+                    onClick = { onSelect(counter.id); expanded = false }
+                )
+            }
+        }
+    }
+}
+
+private fun todayStartIso(): String {
+    val calendar = java.util.Calendar.getInstance().apply {
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }
+    return SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).format(calendar.time)
+}
+
+private fun nowIso(): String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).format(Date())
 
 /**
  * Lean top bar:
@@ -1026,6 +1107,57 @@ private fun FullscreenStockScreen(
 /**
  * Sales History Screen
  */
+@Composable
+private fun CounterReportScreen(
+    modifier: Modifier,
+    rows: List<com.alvinb.counterpos.data.remote.CounterReportRow>,
+    isLoading: Boolean,
+    onRefresh: () -> Unit
+) {
+    val totalUnits = rows.sumOf { it.units }
+    val totalRevenue = rows.sumOf { it.revenueKsh }
+    LazyColumn(
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Counter report", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Text("Today · drinks taken from each source counter", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = onRefresh, enabled = !isLoading) {
+                    if (isLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Icon(Icons.Default.Assessment, contentDescription = "Refresh report")
+                }
+            }
+        }
+        item {
+            Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column { Text("Total units", fontSize = 11.sp); Text("$totalUnits", fontSize = 23.sp, fontWeight = FontWeight.Bold) }
+                    Column(horizontalAlignment = Alignment.End) { Text("Total revenue", fontSize = 11.sp); Text(kshLong(totalRevenue), fontSize = 23.sp, fontWeight = FontWeight.Bold) }
+                }
+            }
+        }
+        if (!isLoading && rows.isEmpty()) item { Text("No counter data for today yet.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        items(rows, key = { it.counterId ?: "unassigned" }) { row ->
+            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))) {
+                Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(row.counterName, fontWeight = FontWeight.Bold)
+                        Text("${row.saleCount} sales · ${row.units} units", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text(kshLong(row.revenueKsh), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+        }
+    }
+}
+
+private fun kshLong(value: Long): String = "KSh " + NumberFormat.getIntegerInstance(Locale.US).format(value)
+
 @Composable
 private fun FullscreenSalesScreen(
     modifier: Modifier,
