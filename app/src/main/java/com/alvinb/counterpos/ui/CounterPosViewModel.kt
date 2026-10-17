@@ -214,20 +214,34 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
 
     private fun monitorActiveHours() = viewModelScope.launch {
         while (isActive) {
-            runCatching { repository.canOperateNow() }
-                .onSuccess { allowed ->
-                    _uiState.update { state ->
-                        state.copy(
-                            isAccessLocked = !allowed,
-                            accessLockMessage = if (allowed) null else "This employee account is outside its configured working hours. The workspace will reopen automatically when the next active period begins."
-                        )
+            // Refresh membership status as well as working hours. This keeps an already-open
+            // workspace from showing an hours lock when the platform has suspended the business.
+            val refreshed = runCatching { repository.refreshAccount() }.getOrNull()
+            val businessIsBlocked = refreshed != null && refreshed.activeBusiness == null &&
+                refreshed.memberships.any { it.status != "active" }
+            if (businessIsBlocked) {
+                _uiState.update { it.copy(isAccessLocked = false, accessLockMessage = null) }
+            } else {
+                runCatching { repository.canOperateNow() }
+                    .onSuccess { allowed ->
+                        _uiState.update { state ->
+                            state.copy(
+                                isAccessLocked = !allowed,
+                                accessLockMessage = if (allowed) null else "This employee account is outside its configured working hours. The workspace will reopen automatically when the next active period begins."
+                            )
+                        }
                     }
-                }
-            delay(30_000)
+            }
+            delay(15_000)
         }
     }
 
     fun refreshAccessNow() = viewModelScope.launch {
+        val refreshed = runCatching { repository.refreshAccount() }.getOrNull()
+        if (refreshed != null && refreshed.activeBusiness == null && refreshed.memberships.any { it.status != "active" }) {
+            _uiState.update { it.copy(isAccessLocked = false, accessLockMessage = null, actionError = null) }
+            return@launch
+        }
         runCatching { repository.canOperateNow() }
             .onSuccess { allowed -> _uiState.update { it.copy(isAccessLocked = !allowed, accessLockMessage = if (allowed) null else "You are outside your configured working hours.") } }
             .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not verify working hours") } }
