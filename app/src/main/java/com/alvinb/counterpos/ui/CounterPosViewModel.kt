@@ -361,6 +361,21 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
 
     fun selectCounter(counterId: String) = _uiState.update { it.copy(selectedCounterId = counterId) }
 
+    fun createServiceCounter(name: String) = viewModelScope.launch {
+        val cleanName = name.trim()
+        if (cleanName.isBlank()) {
+            _uiState.update { it.copy(actionError = "Enter a counter name.") }
+            return@launch
+        }
+        runCatching { repository.createServiceCounter(cleanName) }
+            .onSuccess { counter ->
+                _uiState.update { it.copy(actionError = null, selectedCounterId = selectedCounterIdOrFirst(counter.id), notice = "Counter added") }
+            }
+            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not add counter") } }
+    }
+
+    private fun selectedCounterIdOrFirst(newId: String): String = newId
+
     fun loadCounterReport(fromIso: String, toIso: String) = viewModelScope.launch {
         _uiState.update { it.copy(isLoadingCounterReport = true, actionError = null) }
         runCatching { repository.counterSalesReport(fromIso, toIso) }

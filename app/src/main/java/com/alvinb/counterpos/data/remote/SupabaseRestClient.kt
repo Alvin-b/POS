@@ -190,8 +190,9 @@ class SupabaseRestClient(context: Context) {
                             employmentStatus = row.optString("employment_status", "active"),
                             businessType = row.optString("business_type", "big_club"),
                             businessSize = row.optString("business_size", "medium"),
-                            featureFlags = row.optJSONObject("feature_flags")?.keys()?.asSequence()?.filter { key -> row.optJSONObject("feature_flags")?.optBoolean(key, false) == true }?.toSet()
-                                ?: setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics"),
+                            featureFlags = (row.optJSONObject("feature_flags")?.keys()?.asSequence()?.filter { key -> row.optJSONObject("feature_flags")?.optBoolean(key, false) == true }?.toSet()
+                                ?: setOf("employee_management", "working_hours", "fifo_inventory", "sales_analytics"))
+                                .let { flags -> if (row.optString("business_type", "big_club") == "big_club") flags + "tables" else flags },
                             currency = row.optString("currency", "KES"),
                             lowStockThreshold = row.optInt("low_stock_threshold", 5)
                         )

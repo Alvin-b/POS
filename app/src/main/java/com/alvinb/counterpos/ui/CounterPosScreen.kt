@@ -465,6 +465,7 @@ NavigationBar(
         var endTime by remember { mutableStateOf("17:00") }
         var selectedEmployeeRole by remember { mutableStateOf("cashier") }
         var removeEmployeeId by remember { mutableStateOf<String?>(null) }
+        var newCounterName by remember { mutableStateOf("") }
         var businessNameDraft by remember(session.activeBusiness?.shopId, session.activeBusiness?.shopName) {
             mutableStateOf(session.activeBusiness?.shopName.orEmpty())
         }
@@ -500,6 +501,20 @@ NavigationBar(
                         }
                     }
                     state.actionError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
+                    if (role == "owner" && session.activeBusiness?.businessType == "big_club") {
+                        Text("Service counters", fontWeight = FontWeight.SemiBold)
+                        Text("Set up the counters your club uses. Employees select the source counter before each sale.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        serviceCounters.forEach { counter ->
+                            Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(counter.name, fontWeight = FontWeight.Medium)
+                                Text(if (counter.active) "Active" else "Inactive", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(value = newCounterName, onValueChange = { newCounterName = it.take(60) }, label = { Text("Counter name") }, singleLine = true, modifier = Modifier.weight(1f))
+                            Button(onClick = { viewModel.createServiceCounter(newCounterName); newCounterName = "" }, enabled = newCounterName.isNotBlank()) { Text("Add") }
+                        }
+                    }
                     Text("Employee access", fontWeight = FontWeight.SemiBold)
                     Text(if ("working_hours" in enabledFeatures) "Scan an employee's secure QR to approve their device, then control whether they can sell and when." else "Scan an employee's secure QR to approve their device and control whether they can sell.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("Issue employee access", fontWeight = FontWeight.SemiBold)
