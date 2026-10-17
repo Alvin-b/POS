@@ -99,8 +99,8 @@ class SupabaseRestClient(context: Context) {
         authenticate("password", email, json.optString("password"))
     }
 
-    suspend fun createAccessPass(shopId: String, role: String): JSONObject =
-        parseObject(request("/functions/v1/create-access-pass", "POST", JSONObject().put("shop_id", shopId).put("role", role).toString(), true))
+    suspend fun createAccessPass(shopId: String, role: String, employeeName: String? = null): JSONObject =
+        parseObject(request("/functions/v1/create-access-pass", "POST", JSONObject().put("shop_id", shopId).put("role", role).putNullable("employee_name", employeeName?.trim()?.takeIf(String::isNotBlank)).toString(), true))
 
     suspend fun createAccessChallenge(): JSONObject =
         parseObject(request("/functions/v1/create-access-challenge", "POST", "{}", false))
@@ -108,7 +108,7 @@ class SupabaseRestClient(context: Context) {
     suspend fun pollAccessChallenge(token: String): JSONObject =
         parseObject(request("/functions/v1/poll-access-challenge", "POST", JSONObject().put("token", token).toString(), false))
 
-    suspend fun approveAccessChallenge(token: String, shopId: String, role: String): JSONObject =
+    suspend fun approveAccessChallenge(token: String, shopId: String, role: String = "waiter"): JSONObject =
         parseObject(request("/functions/v1/approve-access-challenge", "POST", JSONObject().put("token", token).put("shop_id", shopId).put("role", role).toString(), true))
 
     suspend fun listShopMembers(shopId: String): JSONArray =

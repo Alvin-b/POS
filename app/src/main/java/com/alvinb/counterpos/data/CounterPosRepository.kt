@@ -85,19 +85,16 @@ class CounterPosRepository(
     suspend fun createAccessPass(role: String): JSONObject = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: throw IllegalStateException("Open a business before creating an access pass.")
         require(shop.role == "owner" || shop.role == "manager") { "Only a business owner or manager can add staff." }
-        require(role in setOf("manager", "inventory_clerk", "cashier")) { "Invalid staff role." }
+        require(role == "waiter") { "Only waiter access is currently available." }
         remote.createAccessPass(shop.shopId, role)
     }
-    suspend fun createEmployee(email: String, role: String): JSONObject = withContext(Dispatchers.IO) {
+    suspend fun createEmployee(name: String): JSONObject = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: throw IllegalStateException("Open a business before creating an employee.")
         require(shop.role == "owner" || shop.role == "manager") { "Only a business owner or manager can create employees." }
-        require(email.trim().contains("@")) { "Enter a valid employee email." }
-        require(role in setOf("manager", "inventory_clerk", "cashier")) { "Invalid employee role." }
-        remote.addMemberByEmail(shop.shopId, email.trim(), role)
-        val pass = remote.createAccessPass(shop.shopId, role)
+        require(name.trim().isNotBlank()) { "Enter the employee name." }
+        val pass = remote.createAccessPass(shop.shopId, "waiter", name.trim())
         JSONObject().put("passkey", pass.optString("passkey")).put("members", remote.listShopMembers(shop.shopId))
     }
-
     suspend fun createAccessChallenge(): String = withContext(Dispatchers.IO) {
         remote.createAccessChallenge().optString("token").takeIf(String::isNotBlank)
             ?: throw IllegalStateException("Could not create QR sign-in request.")
@@ -129,7 +126,7 @@ class CounterPosRepository(
 
     suspend fun setEmployeeRole(userId: String, role: String): JSONArray = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: throw IllegalStateException("Open a business first.")
-        require(role in setOf("manager", "inventory_clerk", "cashier")) { "Choose a valid employee role." }
+        require(role == "waiter") { "Only waiter access is currently available." }
         remote.setEmployeeRole(shop.shopId, userId, role)
         remote.listShopMembers(shop.shopId)
     }

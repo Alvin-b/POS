@@ -237,12 +237,12 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
             .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not create employee pass") } }
     }
 
-    fun createEmployee(email: String, role: String) = viewModelScope.launch {
+    fun createEmployee(name: String) = viewModelScope.launch {
         _uiState.update { it.copy(actionError = null) }
-        runCatching { repository.createEmployee(email, role) }
+        runCatching { repository.createEmployee(name) }
             .onSuccess { result ->
                 val rows = result.optJSONArray("members")
-                _uiState.update { it.copy(employeePasskey = result.optString("passkey"), employeeMembers = rows?.let { array -> (0 until array.length()).mapNotNull(array::optJSONObject) } ?: it.employeeMembers, notice = "Employee created. Copy the passkey or scan their QR to grant access.") }
+                _uiState.update { it.copy(employeePasskey = result.optString("passkey"), employeeMembers = rows?.let { array -> (0 until array.length()).mapNotNull(array::optJSONObject) } ?: it.employeeMembers, notice = "Waiter created. Copy the passkey or scan their QR to grant access.") }
             }
             .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not create employee") } }
     }
@@ -347,7 +347,7 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
             "USER" -> {
                 val shopId = _uiState.value.adminSelectedBusinessId
                 val email = parts.getOrNull(2).orEmpty().trim()
-                val role = parts.getOrNull(3).orEmpty().trim().ifBlank { "cashier" }
+                val role = parts.getOrNull(3).orEmpty().trim().ifBlank { "waiter" }
                 if (shopId.isNullOrBlank()) {
                     _uiState.update { it.copy(isScannerOpen = false, startupError = "Open a business profile before scanning a staff QR.") }
                 } else {

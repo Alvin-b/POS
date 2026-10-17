@@ -463,11 +463,10 @@ NavigationBar(
         var selectedEmployeeId by remember { mutableStateOf<String?>(null) }
         var startTime by remember { mutableStateOf("09:00") }
         var endTime by remember { mutableStateOf("17:00") }
-        var selectedEmployeeRole by remember { mutableStateOf("cashier") }
+        var selectedEmployeeRole by remember { mutableStateOf("waiter") }
         var removeEmployeeId by remember { mutableStateOf<String?>(null) }
         var newCounterName by remember { mutableStateOf("") }
-        var employeeEmail by remember { mutableStateOf("") }
-        var newEmployeeRole by remember { mutableStateOf("cashier") }
+        var employeeName by remember { mutableStateOf("") }
         var businessNameDraft by remember(session.activeBusiness?.shopId, session.activeBusiness?.shopName) {
             mutableStateOf(session.activeBusiness?.shopName.orEmpty())
         }
@@ -520,14 +519,10 @@ NavigationBar(
                     Text("Employee access", fontWeight = FontWeight.SemiBold)
                     Text(if ("working_hours" in enabledFeatures) "Scan an employee's secure QR to approve their device, then control whether they can sell and when." else "Scan an employee's secure QR to approve their device and control whether they can sell.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("Create employee", fontWeight = FontWeight.SemiBold)
-                    Text("Create the employee record first. Then copy their one-time passkey or approve their secure QR.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    OutlinedTextField(value = employeeEmail, onValueChange = { employeeEmail = it }, label = { Text("Employee email") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf("cashier", "inventory_clerk", "manager").forEach { option ->
-                            FilterChip(selected = newEmployeeRole == option, onClick = { newEmployeeRole = option }, label = { Text(option.replace('_', ' '), fontSize = 11.sp) })
-                        }
-                    }
-                    Button(onClick = { viewModel.createEmployee(employeeEmail, newEmployeeRole); employeeEmail = "" }, enabled = employeeEmail.contains("@"), modifier = Modifier.fillMaxWidth()) { Text("Create employee & generate passkey") }
+                    Text("Create the waiter record first. Then copy their one-time passkey or approve their secure QR.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(value = employeeName, onValueChange = { employeeName = it.take(120) }, label = { Text("Waiter name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Text("Access: POS / Sell, Sales reports, and Tables", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Button(onClick = { viewModel.createEmployee(employeeName); employeeName = "" }, enabled = employeeName.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("Create waiter & generate passkey") }
                     state.employeePasskey?.let { passkey ->
                         val clipboard = LocalClipboardManager.current
                         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
@@ -547,7 +542,7 @@ NavigationBar(
                         val employeeStatus = employee.optString("employment_status", "active")
                             Card(onClick = {
                                 selectedEmployeeId = userId
-                                selectedEmployeeRole = employee.optString("role", "cashier")
+                                selectedEmployeeRole = employee.optString("role", "waiter")
                             }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                                 Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(employee.optString("email", "Employee"), fontWeight = FontWeight.SemiBold)
@@ -561,7 +556,7 @@ NavigationBar(
                                     Text("Employee details", fontWeight = FontWeight.SemiBold)
                                     Text("Role", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        listOf("cashier", "inventory_clerk", "manager").forEach { option ->
+                                        listOf("waiter").forEach { option ->
                                             FilterChip(selected = selectedEmployeeRole == option, onClick = { selectedEmployeeRole = option }, label = { Text(option.replace('_', ' ')) })
                                         }
                                     }
