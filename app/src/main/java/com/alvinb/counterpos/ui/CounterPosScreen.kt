@@ -542,11 +542,11 @@ NavigationBar(
                         val employeeStatus = employee.optString("employment_status", "active")
                             Card(onClick = {
                                 selectedEmployeeId = userId
-                                selectedEmployeeRole = employee.optString("role", "waiter")
+                                selectedEmployeeRole = if (employee.optString("role", "cashier") == "cashier") "waiter" else employee.optString("role", "waiter")
                             }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                                 Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(employee.optString("email", "Employee"), fontWeight = FontWeight.SemiBold)
-                                Text("${employee.optString("role")} · ${employeeStatus.uppercase()}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("${employee.optString("role").let { if (it == "cashier") "waiter" else it }} · ${employeeStatus.uppercase()}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     if (employeeStatus == "active") OutlinedButton(onClick = { viewModel.setEmployeeStatus(userId, "suspended") }) { Text("Lock sales") }
                                     else Button(onClick = { viewModel.setEmployeeStatus(userId, "active") }) { Text("Reactivate") }

@@ -108,7 +108,7 @@ class SupabaseRestClient(context: Context) {
     suspend fun pollAccessChallenge(token: String): JSONObject =
         parseObject(request("/functions/v1/poll-access-challenge", "POST", JSONObject().put("token", token).toString(), false))
 
-    suspend fun approveAccessChallenge(token: String, shopId: String, role: String = "waiter"): JSONObject =
+    suspend fun approveAccessChallenge(token: String, shopId: String, role: String = "cashier"): JSONObject =
         parseObject(request("/functions/v1/approve-access-challenge", "POST", JSONObject().put("token", token).put("shop_id", shopId).put("role", role).toString(), true))
 
     suspend fun listShopMembers(shopId: String): JSONArray =

@@ -86,13 +86,13 @@ class CounterPosRepository(
         val shop = activeBusiness ?: throw IllegalStateException("Open a business before creating an access pass.")
         require(shop.role == "owner" || shop.role == "manager") { "Only a business owner or manager can add staff." }
         require(role == "waiter") { "Only waiter access is currently available." }
-        remote.createAccessPass(shop.shopId, role)
+        remote.createAccessPass(shop.shopId, if (role == "waiter") "cashier" else role)
     }
     suspend fun createEmployee(name: String): JSONObject = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: throw IllegalStateException("Open a business before creating an employee.")
         require(shop.role == "owner" || shop.role == "manager") { "Only a business owner or manager can create employees." }
         require(name.trim().isNotBlank()) { "Enter the employee name." }
-        val pass = remote.createAccessPass(shop.shopId, "waiter", name.trim())
+        val pass = remote.createAccessPass(shop.shopId, "cashier", name.trim())
         JSONObject().put("passkey", pass.optString("passkey")).put("members", remote.listShopMembers(shop.shopId))
     }
     suspend fun createAccessChallenge(): String = withContext(Dispatchers.IO) {
@@ -107,10 +107,10 @@ class CounterPosRepository(
         loadAccount(autoSelectFirstBusiness = true)
     }
 
-    suspend fun approveAccessChallenge(token: String, role: String = "cashier") = withContext(Dispatchers.IO) {
+    suspend fun approveAccessChallenge(token: String, role: String = "waiter") = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: throw IllegalStateException("Open a business first.")
         require(shop.role == "owner" || shop.role == "manager") { "Only an owner or manager can approve staff QR requests." }
-        remote.approveAccessChallenge(token, shop.shopId, role)
+        remote.approveAccessChallenge(token, shop.shopId, if (role == "waiter") "cashier" else role)
     }
 
     suspend fun shopMembers(): JSONArray = withContext(Dispatchers.IO) {
@@ -127,7 +127,7 @@ class CounterPosRepository(
     suspend fun setEmployeeRole(userId: String, role: String): JSONArray = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: throw IllegalStateException("Open a business first.")
         require(role == "waiter") { "Only waiter access is currently available." }
-        remote.setEmployeeRole(shop.shopId, userId, role)
+        remote.setEmployeeRole(shop.shopId, userId, if (role == "waiter") "cashier" else role)
         remote.listShopMembers(shop.shopId)
     }
 
