@@ -1,7 +1,7 @@
 [
   {
     "catalogCode": "6001000000011",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001189",
     "name": "Tusker Lager",
     "brand": "Tusker",
     "size": "500ml",
@@ -18,7 +18,7 @@
   },
   {
     "catalogCode": "6001000000028",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001196",
     "name": "Tusker Malt",
     "brand": "Tusker",
     "size": "500ml",
@@ -35,7 +35,7 @@
   },
   {
     "catalogCode": "6001000000035",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001202",
     "name": "White Cap Lager",
     "brand": "White Cap",
     "size": "500ml",
@@ -52,7 +52,7 @@
   },
   {
     "catalogCode": "6001000000042",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001219",
     "name": "Pilsner Lager",
     "brand": "Pilsner",
     "size": "500ml",
@@ -69,7 +69,7 @@
   },
   {
     "catalogCode": "6001000000059",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001226",
     "name": "Guinness",
     "brand": "Guinness",
     "size": "500ml",
@@ -86,7 +86,7 @@
   },
   {
     "catalogCode": "6001000000066",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001233",
     "name": "Balozi Lager",
     "brand": "Balozi",
     "size": "500ml",
@@ -103,7 +103,7 @@
   },
   {
     "catalogCode": "6001000000073",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001240",
     "name": "Johnnie Walker Black",
     "brand": "Johnnie Walker",
     "size": "750ml",
@@ -120,7 +120,7 @@
   },
   {
     "catalogCode": "6001000000080",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001257",
     "name": "Jameson Irish Whiskey",
     "brand": "Jameson",
     "size": "750ml",
@@ -137,7 +137,7 @@
   },
   {
     "catalogCode": "6001000000097",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001264",
     "name": "Smirnoff Vodka",
     "brand": "Smirnoff",
     "size": "750ml",
@@ -154,7 +154,7 @@
   },
   {
     "catalogCode": "6001000000103",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001271",
     "name": "Captain Morgan",
     "brand": "Captain Morgan",
     "size": "750ml",
@@ -171,7 +171,7 @@
   },
   {
     "catalogCode": "6001000000110",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "6161101604031",
     "name": "Chrome Vodka",
     "brand": "Chrome",
     "size": "750ml",
@@ -182,13 +182,13 @@
     "inMyStock": true,
     "lowStockThreshold": 5,
     "imageAssetName": "product_stock_011",
-    "productSourceUrl": null,
-    "imageSourceUrl": null,
-    "verificationNote": ""
+    "productSourceUrl": "https://world.openfoodfacts.org/product/6161101604031/chrome-vodka",
+    "imageSourceUrl": "https://images.openfoodfacts.org/images/products/616/110/160/4031/front_fr.3.400.jpg",
+    "verificationNote": "Barcode and front image verified from the Kenya-tagged Open Food Facts record; retailer pages may use a separate SKU."
   },
   {
     "catalogCode": "6001000000127",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001295",
     "name": "Kenya Cane",
     "brand": "Kenya Cane",
     "size": "750ml",
@@ -205,7 +205,7 @@
   },
   {
     "catalogCode": "6001000000134",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001301",
     "name": "Gilbey's Gin",
     "brand": "Gilbey's",
     "size": "750ml",
@@ -222,7 +222,7 @@
   },
   {
     "catalogCode": "6001000000141",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001318",
     "name": "Summit Lager",
     "brand": "Summit",
     "size": "500ml",
@@ -239,7 +239,7 @@
   },
   {
     "catalogCode": "6001000000158",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001325",
     "name": "Tusker Cider",
     "brand": "Tusker",
     "size": "500ml",
@@ -256,7 +256,7 @@
   },
   {
     "catalogCode": "6001000000165",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001332",
     "name": "Tusker Lite",
     "brand": "Tusker",
     "size": "500ml",
@@ -273,7 +273,7 @@
   },
   {
     "catalogCode": "6001000000172",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001349",
     "name": "Smirnoff Ice Pineapple Punch",
     "brand": "Smirnoff Ice",
     "size": "330ml",
@@ -290,7 +290,7 @@
   },
   {
     "catalogCode": "6001000000189",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001356",
     "name": "Gordon's London Dry Gin",
     "brand": "Gordon's",
     "size": "750ml",
@@ -307,7 +307,7 @@
   },
   {
     "catalogCode": "6001000000196",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001363",
     "name": "Johnnie Walker Red Label",
     "brand": "Johnnie Walker",
     "size": "700ml",
@@ -324,7 +324,7 @@
   },
   {
     "catalogCode": "LIB-HUNTERSHUNTERSDRYAPPLECIDERBOTTLE330ML330M",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002445",
     "name": "Hunter’s Dry Apple Cider Bottle 330ml",
     "brand": "Hunter's",
     "size": "330ml",
@@ -341,7 +341,7 @@
   },
   {
     "catalogCode": "LIB-KENYANORIGINALSKENYANORIGINALLEMONCELLOCOC",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002469",
     "name": "Kenyan Original Lemon Cello Cocktail 330Ml Can",
     "brand": "Kenyan Originals",
     "size": "330ml",
@@ -358,7 +358,7 @@
   },
   {
     "catalogCode": "LIB-KENYANORIGINALSKENYANORIGINALMUKHOMBEROCOC",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002476",
     "name": "Kenyan Original Mukhombero Cocktail 330Ml Can",
     "brand": "Kenyan Originals",
     "size": "330ml",
@@ -375,7 +375,7 @@
   },
   {
     "catalogCode": "LIB-MANYATTAMANYATTAPINEAPPLEMINTCIDERCAN330ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002575",
     "name": "Manyatta Pineapple & Mint Cider Can 330ml",
     "brand": "Manyatta",
     "size": "330ml",
@@ -392,7 +392,7 @@
   },
   {
     "catalogCode": "LIB-SAVANNASAVANNADRYPREMIUMCIDERBOTTLE330ML33",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002759",
     "name": "Savanna Dry Premium Cider Bottle 330ml",
     "brand": "Savanna",
     "size": "330ml",
@@ -409,7 +409,7 @@
   },
   {
     "catalogCode": "LIB-AZAMAZAMCARBONATEDENERGYDRINK300ML300ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002322",
     "name": "Azam Carbonated Energy Drink 300ml",
     "brand": "Azam",
     "size": "300ml",
@@ -426,7 +426,7 @@
   },
   {
     "catalogCode": "LIB-BRAVABRAVABRAVADOENERGYDRINK300ML300ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002353",
     "name": "Brava Bravado Energy Drink 300ml",
     "brand": "Brava",
     "size": "300ml",
@@ -443,7 +443,7 @@
   },
   {
     "catalogCode": "LIB-MONSTERMONSTERORIGINALENERGYDRINK500ML500M",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002605",
     "name": "Monster Original Energy Drink 500ml",
     "brand": "Monster",
     "size": "500 ml",
@@ -460,7 +460,7 @@
   },
   {
     "catalogCode": "LIB-POKKAPOKKALEMONISOTONICDRINK500ML500ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002681",
     "name": "Pokka Lemon Isotonic Drink 500Ml",
     "brand": "Pokka",
     "size": "500ml",
@@ -477,7 +477,7 @@
   },
   {
     "catalogCode": "LIB-POWERPLAYPOWERPLAYORIGINALENERGYDRINK400ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002698",
     "name": "Power Play Original Energy Drink 400ml",
     "brand": "Power Play",
     "size": "400ml",
@@ -494,7 +494,7 @@
   },
   {
     "catalogCode": "LIB-PREDATORPREDATORENERGYDRINK400ML400ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002704",
     "name": "Predator Energy Drink 400ml",
     "brand": "Predator",
     "size": "400ml",
@@ -511,7 +511,7 @@
   },
   {
     "catalogCode": "LIB-REDBULLREDBULLENERGYDRINK250ML250ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002728",
     "name": "Red Bull Energy Drink, 250 Ml",
     "brand": "Red Bull",
     "size": "250ml",
@@ -528,7 +528,7 @@
   },
   {
     "catalogCode": "LIB-RELOADRELOADORANGEISOTONICDRINK500ML500ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002735",
     "name": "Reload Orange Isotonic Drink 500ml",
     "brand": "Reload",
     "size": "500ml",
@@ -545,7 +545,7 @@
   },
   {
     "catalogCode": "LIB-AFIAAFIAFRUITDRINKAPPLE500ML500ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002100",
     "name": "Afia Fruit Drink Apple 500ml",
     "brand": "Afia",
     "size": "500ml",
@@ -562,7 +562,7 @@
   },
   {
     "catalogCode": "LIB-AFIAAFIAFRUITDRINKMIXEDFRUIT500ML500ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002117",
     "name": "Afia Fruit Drink Mixed Fruit 500ml",
     "brand": "Afia",
     "size": "500ml",
@@ -579,7 +579,7 @@
   },
   {
     "catalogCode": "LIB-DELMONTEDELMONTEJUICEBLENDMIXEDBERRY1L1L",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002407",
     "name": "Del Monte Juice Blend Mixed Berry 1L",
     "brand": "Del Monte",
     "size": "1L",
@@ -596,7 +596,7 @@
   },
   {
     "catalogCode": "LIB-PICKNPEELPICKNPEELAPPLE1L1L",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002636",
     "name": "Pick 'N' Peel Apple 1L",
     "brand": "Pick 'N' Peel",
     "size": "1L",
@@ -613,7 +613,7 @@
   },
   {
     "catalogCode": "LIB-PICKNPEELPICKNPEELORANGE1L1L",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002643",
     "name": "Pick 'N' Peel Orange 1L",
     "brand": "Pick 'N' Peel",
     "size": "1L",
@@ -630,7 +630,7 @@
   },
   {
     "catalogCode": "LIB-PICKNPEELPICKNPEELPINEAPPLE1L1L",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002650",
     "name": "Pick 'N' Peel Pineapple 1L",
     "brand": "Pick 'N' Peel",
     "size": "1L",
@@ -647,7 +647,7 @@
   },
   {
     "catalogCode": "LIB-PICKNPEELPICKNPEELTROPICALMIX1L1L",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002667",
     "name": "Pick 'N' Peel Tropical Mix 1L",
     "brand": "Pick 'N' Peel",
     "size": "1L",
@@ -664,7 +664,7 @@
   },
   {
     "catalogCode": "LIB-SUNTOPSUNTOPORANGEFRUITJUICE250ML250ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002827",
     "name": "Suntop Orange Fruit Juice 250Ml",
     "brand": "Suntop",
     "size": "250ml",
@@ -681,7 +681,7 @@
   },
   {
     "catalogCode": "LIB-FITCHLEEDESFITCHLEEDESINDIANTONICSPARKLING",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002421",
     "name": "Fitch Leedes Indian Tonic Sparkling Drink 200ml",
     "brand": "Fitch & Leedes",
     "size": "200 ml can",
@@ -698,7 +698,7 @@
   },
   {
     "catalogCode": "LIB-SCHWEPPESINDIANTONICWATER200ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002766",
     "name": "Indian Tonic Water",
     "brand": "Schweppes",
     "size": "200 ml",
@@ -715,7 +715,7 @@
   },
   {
     "catalogCode": "LIB-KENYANORIGINALSKENYANORIGINALSCLASSICTONIC",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002483",
     "name": "Kenyan Originals Classic Tonic Can 200ml",
     "brand": "Kenyan Originals",
     "size": "200 ml can",
@@ -732,7 +732,7 @@
   },
   {
     "catalogCode": "LIB-KENYANORIGINALSKENYANORIGINALSLIGHTTONICCA",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002490",
     "name": "Kenyan Originals Light Tonic Can 200ml",
     "brand": "Kenyan Originals",
     "size": "200 ml can",
@@ -749,7 +749,7 @@
   },
   {
     "catalogCode": "LIB-KENYANORIGINALSKENYANORIGINALSROSECUCUMBER",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002506",
     "name": "Kenyan Originals Rose & Cucumber Tonic Can 200ml",
     "brand": "Kenyan Originals",
     "size": "200 ml can",
@@ -766,7 +766,7 @@
   },
   {
     "catalogCode": "LIB-KENYANORIGINALSKENYANORIGINALSTURMERICCHIL",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002513",
     "name": "Kenyan Originals Turmeric & Chilli Tonic Can 200ml",
     "brand": "Kenyan Originals",
     "size": "200 ml can",
@@ -783,7 +783,7 @@
   },
   {
     "catalogCode": "LIB-SCHWEPPESSCHWEPPESGINGERALE300ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002773",
     "name": "Schweppes Ginger Ale",
     "brand": "Schweppes",
     "size": "300 ml",
@@ -800,7 +800,7 @@
   },
   {
     "catalogCode": "LIB-SCHWEPPESSCHWEPPESSODAWATER500ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002780",
     "name": "Schweppes Soda Water",
     "brand": "Schweppes",
     "size": "500 ml",
@@ -817,7 +817,7 @@
   },
   {
     "catalogCode": "LIB-SCHWEPPESSCHWEPPESTONICWATER330ML330MLCAN",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002797",
     "name": "Schweppes Tonic Water 330Ml",
     "brand": "Schweppes",
     "size": "330 ml can",
@@ -834,7 +834,7 @@
   },
   {
     "catalogCode": "LIB-COCACOLACOCACOLADRINK500ML500ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002360",
     "name": "Coca Cola Drink 500Ml",
     "brand": "Coca-Cola",
     "size": "500ml",
@@ -851,7 +851,7 @@
   },
   {
     "catalogCode": "LIB-FANTAFANTAORANGESODA500ML500ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002414",
     "name": "Fanta Orange Soda 500Ml",
     "brand": "Fanta",
     "size": "500ml",
@@ -868,7 +868,7 @@
   },
   {
     "catalogCode": "LIB-KRESTKRESTBITTERLEMONSOFTDRINK350ML350ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002544",
     "name": "Krest Bitter Lemon Soft Drink 350Ml",
     "brand": "Krest",
     "size": "350ml",
@@ -885,7 +885,7 @@
   },
   {
     "catalogCode": "LIB-MIRINDAMIRINDAFRUITYSOFTDRINK2L2L",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002599",
     "name": "Mirinda Fruity Soft Drink 2L",
     "brand": "Mirinda",
     "size": "2L",
@@ -902,7 +902,7 @@
   },
   {
     "catalogCode": "LIB-MOUNTAINDEWMOUNTAINDEWSOFTDRINK330ML330ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002612",
     "name": "Mountain Dew Soft Drink 330ml",
     "brand": "Mountain Dew",
     "size": "330ml",
@@ -919,7 +919,7 @@
   },
   {
     "catalogCode": "LIB-SAFARISAFARILEMONADELIMECARBONATEDSOFTDRIN",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002742",
     "name": "Safari Lemonade Lime Carbonated Soft Drink 300ml",
     "brand": "Safari",
     "size": "300ml",
@@ -936,7 +936,7 @@
   },
   {
     "catalogCode": "LIB-SPRITESPRITESODACARBONATEDSOFTDRINK350ML35",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002803",
     "name": "Sprite Soda Carbonated Soft Drink 350Ml",
     "brand": "Sprite",
     "size": "350ml",
@@ -953,7 +953,7 @@
   },
   {
     "catalogCode": "LIB-STONEYSTONEYTANGAWIZICARBONATEDSOFTDRINK35",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002810",
     "name": "Stoney Tangawizi Carbonated Soft Drink 350ml",
     "brand": "Stoney",
     "size": "350ml",
@@ -970,7 +970,7 @@
   },
   {
     "catalogCode": "LIB-AMARULAAMARULACREAMLIQUEUR750MLLIQUEUR750M",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002308",
     "name": "Amarula Cream Liqueur 750Ml Liqueur",
     "brand": "Amarula",
     "size": "750ml",
@@ -987,7 +987,7 @@
   },
   {
     "catalogCode": "LIB-BAHARIBAHARIBLUERUM750ML750ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002339",
     "name": "Bahari Blue Rum 750ml",
     "brand": "Bahari",
     "size": "750ml",
@@ -1004,7 +1004,7 @@
   },
   {
     "catalogCode": "LIB-JOHNNIEWALKERJOHNNIEWALKERREDLABEL750MLSCO",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002452",
     "name": "Johnnie Walker Red Label 750Ml Scotch Whiskey",
     "brand": "Johnnie Walker",
     "size": "750ml",
@@ -1021,7 +1021,7 @@
   },
   {
     "catalogCode": "LIB-AQUAMISTAQUAMISTMINERALWATER500ML500ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002315",
     "name": "Aquamist Mineral Water 500ml",
     "brand": "Aquamist",
     "size": "500ml",
@@ -1038,7 +1038,7 @@
   },
   {
     "catalogCode": "LIB-DASANIDASANIMINERALWATER500ML500ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002391",
     "name": "Dasani Mineral Water 500Ml",
     "brand": "Dasani",
     "size": "500ml",
@@ -1055,7 +1055,7 @@
   },
   {
     "catalogCode": "LIB-HIGHLANDSHIGHLANDSMINERALWATER500ML500ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002438",
     "name": "Highlands Mineral Water 500Ml",
     "brand": "Highlands",
     "size": "500ml",
@@ -1072,7 +1072,7 @@
   },
   {
     "catalogCode": "LIB-KERINGETKERINGETMINERALWATER500ML500ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002520",
     "name": "Keringet Mineral Water 500ml",
     "brand": "Keringet",
     "size": "500ml",
@@ -1089,7 +1089,7 @@
   },
   {
     "catalogCode": "LIB-KERINGETKERINGETSPARKLINGMINERALWATER1L1L",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002537",
     "name": "Keringet Sparkling Mineral Water 1l",
     "brand": "Keringet",
     "size": "1L",
@@ -1106,7 +1106,7 @@
   },
   {
     "catalogCode": "LIB-MAYERSMAYERSSPARKLINGWATER500ML500ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002582",
     "name": "Mayers Sparkling Water 500ml",
     "brand": "Mayers",
     "size": "500ml",
@@ -1123,7 +1123,7 @@
   },
   {
     "catalogCode": "LIB-PERRIERPERRIERSPARKLINGWATER330ML330ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002629",
     "name": "Perrier Sparkling Water 330ml",
     "brand": "Perrier",
     "size": "330ml",
@@ -1140,7 +1140,7 @@
   },
   {
     "catalogCode": "LIB-QUENCHERQUENCHERLIFEPREMIUMDRINKINGWATER50",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002711",
     "name": "Quencher Life Premium Drinking Water 500ml X 6",
     "brand": "Quencher",
     "size": "500ml x 6",
@@ -1157,7 +1157,7 @@
   },
   {
     "catalogCode": "LIB-4THSTREET4THSTREETSWEETREDWINE750ML750ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002087",
     "name": "4th Street Sweet Red Wine 750ml",
     "brand": "4th Street",
     "size": "750ml",
@@ -1174,7 +1174,7 @@
   },
   {
     "catalogCode": "LIB-4THSTREET4THSTREETSWEETROSEWINE750ML750ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002094",
     "name": "4th Street Sweet Rose Wine 750ml",
     "brand": "4th Street",
     "size": "750ml",
@@ -1191,7 +1191,7 @@
   },
   {
     "catalogCode": "LIB-BARONDEVALLSBARONDEVALLSREDWINE750ML750ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002346",
     "name": "Barón de Valls Red Wine 750ml",
     "brand": "Barón de Valls",
     "size": "750ml",
@@ -1208,7 +1208,7 @@
   },
   {
     "catalogCode": "LIB-COCKBURNSCOCKBURNS2011LATEBOTTLEDVINTAGEPO",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002377",
     "name": "Cockburn's 2011 Late Bottled Vintage Port",
     "brand": "Cockburn's",
     "size": "750ml",
@@ -1225,7 +1225,7 @@
   },
   {
     "catalogCode": "LIB-COCKBURNSCOCKBURNSFINETAWNY750ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002384",
     "name": "Cockburn's Fine Tawny",
     "brand": "Cockburn's",
     "size": "750ml",
@@ -1242,7 +1242,7 @@
   },
   {
     "catalogCode": "LIB-LELESHWALELESHWASWEETWHITEWINE750ML750ML",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002551",
     "name": "Leleshwa Sweet White Wine 750ml",
     "brand": "Leleshwa",
     "size": "750ml",
@@ -1259,7 +1259,7 @@
   },
   {
     "catalogCode": "LIB-LELESHWAMZABIBUBYLELESHWADRYWHITEWINE5L5L",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002568",
     "name": "Mzabibu By Leleshwa Dry White Wine 5L",
     "brand": "Leleshwa",
     "size": "5L",
@@ -1276,7 +1276,7 @@
   },
   {
     "catalogCode": "LIB-PIERLANTPIERLANTBRUTSPARKLINGWINE750ML750M",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002674",
     "name": "Pierlant Brut Sparkling Wine 750ml",
     "brand": "Pierlant",
     "size": "750ml",
@@ -1293,7 +1293,7 @@
   },
   {
     "catalogCode": "LIB-YELLOWTAILYELLOWTAILSPARKLINGCUVEE75CL",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002834",
     "name": "Yellow Tail Sparkling Cuvee",
     "brand": "Yellow Tail",
     "size": "75cl",
@@ -1310,7 +1310,7 @@
   },
   {
     "catalogCode": "LIB-YELLOWTAILYELLOWTAILSPARKLINGCUVEEROSE75CL",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002841",
     "name": "Yellow Tail Sparkling Cuvee Rose",
     "brand": "Yellow Tail",
     "size": "75cl",
@@ -1327,7 +1327,7 @@
   },
   {
     "catalogCode": "LIB-ALCOHOL-BELL-LAGER",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002179",
     "name": "Bell Lager",
     "brand": "Bell",
     "size": "500ml bottle",
@@ -1344,7 +1344,7 @@
   },
   {
     "catalogCode": "LIB-ALCOHOL-HEINEKEN-ORIGINAL",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002223",
     "name": "Heineken Original",
     "brand": "Heineken",
     "size": "330ml bottle",
@@ -1361,7 +1361,7 @@
   },
   {
     "catalogCode": "LIB-ALCOHOL-CORONA-EXTRA",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002216",
     "name": "Corona Extra Lager Beer",
     "brand": "Corona",
     "size": "355ml bottle",
@@ -1378,7 +1378,7 @@
   },
   {
     "catalogCode": "LIB-ALCOHOL-STELLA-ARTOIS",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002278",
     "name": "Stella Artois Belgium Beer",
     "brand": "Stella Artois",
     "size": "330ml bottle",
@@ -1395,7 +1395,7 @@
   },
   {
     "catalogCode": "LIB-ALCOHOL-BUDWEISER",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002186",
     "name": "Budweiser American-Style Lager Beer",
     "brand": "Budweiser",
     "size": "500ml can",
@@ -1412,7 +1412,7 @@
   },
   {
     "catalogCode": "LIB-ALCOHOL-CASTLE-LITE",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002193",
     "name": "Castle Lite Beer",
     "brand": "Castle Lite",
     "size": "330ml bottle",
@@ -1429,7 +1429,7 @@
   },
   {
     "catalogCode": "LIB-ALCOHOL-WINDHOEK-LAGER",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002292",
     "name": "Windhoek Lager",
     "brand": "Windhoek",
     "size": "330ml bottle",
@@ -1446,7 +1446,7 @@
   },
   {
     "catalogCode": "LIB-ALCOHOL-JACK-DANIELS-OLD-NO-7",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002247",
     "name": "Jack Daniel's Old No. 7",
     "brand": "Jack Daniel's",
     "size": "700ml bottle",
@@ -1463,7 +1463,7 @@
   },
   {
     "catalogCode": "LIB-ALCOHOL-HENNESSY-VERY-SPECIAL",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002230",
     "name": "Hennessy Very Special",
     "brand": "Hennessy",
     "size": "700ml bottle",
@@ -1480,7 +1480,7 @@
   },
   {
     "catalogCode": "LIB-ALCOHOL-CHIVAS-REGAL-12",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002209",
     "name": "Chivas Regal 12",
     "brand": "Chivas Regal",
     "size": "750ml bottle",
@@ -1497,7 +1497,7 @@
   },
   {
     "catalogCode": "LIB-ALCOHOL-BALLANTINES-FINEST",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002155",
     "name": "Ballantine's Finest",
     "brand": "Ballantine's",
     "size": "750ml bottle",
@@ -1514,7 +1514,7 @@
   },
   {
     "catalogCode": "LIB-ALCOHOL-ABSOLUT-VODKA",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002124",
     "name": "Absolut Vodka",
     "brand": "Absolut",
     "size": "750ml bottle",
@@ -1531,7 +1531,7 @@
   },
   {
     "catalogCode": "LIB-ALCOHOL-BEEFEATER-LONDON-DRY-GIN",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002162",
     "name": "Beefeater London Dry Gin",
     "brand": "Beefeater",
     "size": "750ml bottle",
@@ -1548,7 +1548,7 @@
   },
   {
     "catalogCode": "LIB-ALCOHOL-BACARDI-CARTA-BLANCA",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002131",
     "name": "Bacardi Carta Blanca",
     "brand": "Bacardi",
     "size": "750ml bottle",
@@ -1565,7 +1565,7 @@
   },
   {
     "catalogCode": "LIB-ALCOHOL-BAILEYS-ORIGINAL-IRISH-CREAM",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002148",
     "name": "Baileys Original Irish Cream",
     "brand": "Baileys",
     "size": "750ml bottle",
@@ -1582,7 +1582,7 @@
   },
   {
     "catalogCode": "LIB-ALCOHOL-VICEROY-BRANDY",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002285",
     "name": "Viceroy Brandy",
     "brand": "Viceroy",
     "size": "750ml bottle",
@@ -1599,7 +1599,7 @@
   },
   {
     "catalogCode": "LIB-ALCOHOL-SAVANNA-DRY-CIDER",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002261",
     "name": "Savanna Dry Premium Cider",
     "brand": "Savanna",
     "size": "330ml bottle",
@@ -1616,7 +1616,7 @@
   },
   {
     "catalogCode": "LIB-ALCOHOL-JC-LE-ROUX-LE-DOMAINE",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000002254",
     "name": "J.C. Le Roux Le Domaine Premium Sparkling Wine",
     "brand": "J.C. Le Roux",
     "size": "750ml bottle",
@@ -1633,7 +1633,7 @@
   },
   {
     "catalogCode": "38424",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000885",
     "name": "Heineken Lager Beer Can 500ml",
     "brand": "Heineken",
     "size": "500ml",
@@ -1650,7 +1650,7 @@
   },
   {
     "catalogCode": "11143",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000038",
     "name": "Budweiser American-Style Lager Beer Can 500ml",
     "brand": "Budweiser",
     "size": "500ml",
@@ -1667,7 +1667,7 @@
   },
   {
     "catalogCode": "189832",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000380",
     "name": "Bila Shaka Capitan Craft Lager Beer Bottle 500ml",
     "brand": "Bila Shaka",
     "size": "500ml",
@@ -1684,7 +1684,7 @@
   },
   {
     "catalogCode": "38425",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000892",
     "name": "Desperados Tequila-Flavoured Beer Bottle 330ml",
     "brand": "Desperados",
     "size": "330ml",
@@ -1701,7 +1701,7 @@
   },
   {
     "catalogCode": "63034",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001370",
     "name": "Corona Extra Lager Beer Bottles 6 x 355ml",
     "brand": "Corona",
     "size": "6 x 355ml",
@@ -1718,7 +1718,7 @@
   },
   {
     "catalogCode": "132534",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000168",
     "name": "Kenyan Originals Pineapple & Mint Cider Can 330ml",
     "brand": "Kenyan Originals",
     "size": "330ml",
@@ -1735,7 +1735,7 @@
   },
   {
     "catalogCode": "41742",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001042",
     "name": "Hunter’s Gold Apple Cider Bottle 330ml",
     "brand": "Hunter's",
     "size": "330ml",
@@ -1752,7 +1752,7 @@
   },
   {
     "catalogCode": "132531",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000151",
     "name": "Kenyan Originals Lime & Ginger Cider Can 330ml",
     "brand": "Kenyan Originals",
     "size": "330ml",
@@ -1769,7 +1769,7 @@
   },
   {
     "catalogCode": "186918",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000359",
     "name": "Kenyan Originals Honey & Lemon Cider Can 330ml",
     "brand": "Kenyan Originals",
     "size": "330ml",
@@ -1786,7 +1786,7 @@
   },
   {
     "catalogCode": "252976",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000717",
     "name": "Somersby Apple Cider Bottle 330ml",
     "brand": "Somersby",
     "size": "330ml",
@@ -1803,7 +1803,7 @@
   },
   {
     "catalogCode": "41871",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001059",
     "name": "Snapp Apple Flavour Sparkling Alcoholic Drink Can 330ml",
     "brand": "Snapp",
     "size": "330ml",
@@ -1820,7 +1820,7 @@
   },
   {
     "catalogCode": "244653",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000663",
     "name": "Royal Circle Re-Mix Whisky & Cola Ready-to-Drink 250ml",
     "brand": "Royal Circle",
     "size": "250ml",
@@ -1837,7 +1837,7 @@
   },
   {
     "catalogCode": "194185",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000427",
     "name": "Uprise Whisky & Cola Ready-to-Drink 500ml",
     "brand": "Uprise",
     "size": "500ml",
@@ -1854,7 +1854,7 @@
   },
   {
     "catalogCode": "236717",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000564",
     "name": "Freez Blue Hawai Mix Drink 275ml",
     "brand": "Freez",
     "size": "275ml",
@@ -1871,7 +1871,7 @@
   },
   {
     "catalogCode": "236713",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000557",
     "name": "Freez Lychee Mix Drink 275ml",
     "brand": "Freez",
     "size": "275ml",
@@ -1888,7 +1888,7 @@
   },
   {
     "catalogCode": "237581",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000571",
     "name": "Wilshire Blended Whisky 750ml",
     "brand": "Wilshire",
     "size": "750ml",
@@ -1905,7 +1905,7 @@
   },
   {
     "catalogCode": "243774",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000632",
     "name": "Omen Extra Premium Whisky 750ml",
     "brand": "Omen",
     "size": "750ml",
@@ -1922,7 +1922,7 @@
   },
   {
     "catalogCode": "129394",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000120",
     "name": "Monkey Shoulder Whisky 700ml",
     "brand": "Monkey Shoulder",
     "size": "700ml",
@@ -1939,7 +1939,7 @@
   },
   {
     "catalogCode": "225557",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000540",
     "name": "Royal Circle Whisky 750ml",
     "brand": "Royal Circle",
     "size": "750ml",
@@ -1956,7 +1956,7 @@
   },
   {
     "catalogCode": "22536",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000533",
     "name": "Best Whisky Blended Whisky 750ml",
     "brand": "Best",
     "size": "750ml",
@@ -1973,7 +1973,7 @@
   },
   {
     "catalogCode": "40557",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000939",
     "name": "Grants Family Reserve Whisky 750ml",
     "brand": "Grant's",
     "size": "750ml",
@@ -1990,7 +1990,7 @@
   },
   {
     "catalogCode": "36828",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000847",
     "name": "Absolut Vodka 1l",
     "brand": "Absolut",
     "size": "1L",
@@ -2007,7 +2007,7 @@
   },
   {
     "catalogCode": "91550",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001479",
     "name": "Triple Ace Vodka 750ml",
     "brand": "Triple Ace",
     "size": "750ml",
@@ -2024,7 +2024,7 @@
   },
   {
     "catalogCode": "41547",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000977",
     "name": "Kibao Vodka 750ml",
     "brand": "Kibao",
     "size": "750ml",
@@ -2041,7 +2041,7 @@
   },
   {
     "catalogCode": "42132",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001097",
     "name": "Ketel One Vodka 750ml",
     "brand": "Ketel One",
     "size": "750ml",
@@ -2058,7 +2058,7 @@
   },
   {
     "catalogCode": "11193",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000052",
     "name": "Belvedere Pure Vodka 700ml",
     "brand": "Belvedere",
     "size": "700ml",
@@ -2075,7 +2075,7 @@
   },
   {
     "catalogCode": "194183",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000410",
     "name": "Avalon Premium Gin 750ml",
     "brand": "Avalon",
     "size": "750ml",
@@ -2092,7 +2092,7 @@
   },
   {
     "catalogCode": "167813",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000267",
     "name": "Tanqueray Blackcurrant Royale Distilled Gin 700ml",
     "brand": "Tanqueray",
     "size": "700ml",
@@ -2109,7 +2109,7 @@
   },
   {
     "catalogCode": "180706",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000311",
     "name": "Gin Society Blood Orange Gin 750ml",
     "brand": "Gin Society",
     "size": "750ml",
@@ -2126,7 +2126,7 @@
   },
   {
     "catalogCode": "241261",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000595",
     "name": "Stretton's Original London Dry Gin 750ml",
     "brand": "Stretton's",
     "size": "750ml",
@@ -2143,7 +2143,7 @@
   },
   {
     "catalogCode": "176653",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000281",
     "name": "Caribia Gin 750ml",
     "brand": "Caribia",
     "size": "750ml",
@@ -2160,7 +2160,7 @@
   },
   {
     "catalogCode": "243777",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000656",
     "name": "Omen Dry Gin 750ml",
     "brand": "Omen",
     "size": "750ml",
@@ -2177,7 +2177,7 @@
   },
   {
     "catalogCode": "243775",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000649",
     "name": "Omen Extra Dark Rum 750ml",
     "brand": "Omen",
     "size": "750ml",
@@ -2194,7 +2194,7 @@
   },
   {
     "catalogCode": "35080",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000830",
     "name": "Bacardi Carta Negra Black Rum 750ml",
     "brand": "Bacardi",
     "size": "750ml",
@@ -2211,7 +2211,7 @@
   },
   {
     "catalogCode": "36850",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000854",
     "name": "Havana Club Rhum Anejo 3 Years 700ml",
     "brand": "Havana Club",
     "size": "700ml",
@@ -2228,7 +2228,7 @@
   },
   {
     "catalogCode": "237995",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000588",
     "name": "Tiger Eye Blanca Rhum 1l",
     "brand": "Tiger Eye",
     "size": "1L",
@@ -2245,7 +2245,7 @@
   },
   {
     "catalogCode": "42134",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001103",
     "name": "Myers Rum Rhum 1l",
     "brand": "Myers",
     "size": "1L",
@@ -2262,7 +2262,7 @@
   },
   {
     "catalogCode": "41534",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000960",
     "name": "Viceroy Brandy 750ml",
     "brand": "Viceroy",
     "size": "750ml",
@@ -2279,7 +2279,7 @@
   },
   {
     "catalogCode": "67793",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001394",
     "name": "Don Montego Moldova Brandy 500ml",
     "brand": "Don Montego",
     "size": "500ml",
@@ -2296,7 +2296,7 @@
   },
   {
     "catalogCode": "194177",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000403",
     "name": "Dallas Brandy 750ml",
     "brand": "Dallas",
     "size": "750ml",
@@ -2313,7 +2313,7 @@
   },
   {
     "catalogCode": "41928",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001073",
     "name": "Richot Brandy 750ml",
     "brand": "Richot",
     "size": "750ml",
@@ -2330,7 +2330,7 @@
   },
   {
     "catalogCode": "38742",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000908",
     "name": "KWV 5 Year Old Brandy 750ml",
     "brand": "KWV",
     "size": "750ml",
@@ -2347,7 +2347,7 @@
   },
   {
     "catalogCode": "41614",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001011",
     "name": "Amarula Original Marula Fruit Cream Liqueur 750ml",
     "brand": "Amarula",
     "size": "750ml",
@@ -2364,7 +2364,7 @@
   },
   {
     "catalogCode": "41877",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001066",
     "name": "Baileys Original Irish Cream Liqueur 1l",
     "brand": "Baileys",
     "size": "1L",
@@ -2381,7 +2381,7 @@
   },
   {
     "catalogCode": "11154",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000045",
     "name": "Jägermeister Herbal Liqueur 700ml",
     "brand": "Jägermeister",
     "size": "700ml",
@@ -2398,7 +2398,7 @@
   },
   {
     "catalogCode": "36857",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000861",
     "name": "Kahlúa Original Rum & Coffee Liqueur 700ml",
     "brand": "Kahlúa",
     "size": "700ml",
@@ -2415,7 +2415,7 @@
   },
   {
     "catalogCode": "42044",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001080",
     "name": "Kahawa Coffee Liqueur 750ml",
     "brand": "Kahawa",
     "size": "750ml",
@@ -2432,7 +2432,7 @@
   },
   {
     "catalogCode": "89304",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001424",
     "name": "Bols Blue Curaçao Orange Liqueur 700ml",
     "brand": "Bols",
     "size": "700ml",
@@ -2449,7 +2449,7 @@
   },
   {
     "catalogCode": "135473",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000199",
     "name": "Butlers Strawberry Liqueur 750ml",
     "brand": "Butlers",
     "size": "750ml",
@@ -2466,7 +2466,7 @@
   },
   {
     "catalogCode": "215359",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000502",
     "name": "The War Horse Shiraz 750ml",
     "brand": "The War Horse",
     "size": "750ml",
@@ -2483,7 +2483,7 @@
   },
   {
     "catalogCode": "11273",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000069",
     "name": "Frontera Concha Y Toro Cabernet Sauvignon Red Wine 750ml",
     "brand": "Frontera",
     "size": "750ml",
@@ -2500,7 +2500,7 @@
   },
   {
     "catalogCode": "41685",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001035",
     "name": "Nederburg Pinotage Red Wine 750ml",
     "brand": "Nederburg",
     "size": "750ml",
@@ -2517,7 +2517,7 @@
   },
   {
     "catalogCode": "41572",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001004",
     "name": "Drostdy Hof Claret Select Wine 750ml",
     "brand": "Drostdy Hof",
     "size": "750ml",
@@ -2534,7 +2534,7 @@
   },
   {
     "catalogCode": "111129",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000021",
     "name": "Terra Linda Syrah Red Wine 750ml",
     "brand": "Terra Linda",
     "size": "750ml",
@@ -2551,7 +2551,7 @@
   },
   {
     "catalogCode": "186669",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000342",
     "name": "Canti Merlot Red Wine 750ml",
     "brand": "Canti",
     "size": "750ml",
@@ -2568,7 +2568,7 @@
   },
   {
     "catalogCode": "35062",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000823",
     "name": "Gato Negro Sauvignon Blanc Wine 1.5l",
     "brand": "Gato Negro",
     "size": "1.5L",
@@ -2585,7 +2585,7 @@
   },
   {
     "catalogCode": "38803",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000915",
     "name": "KWV Classic Collection Chenin Blanc White Wine 750ml",
     "brand": "KWV",
     "size": "750ml",
@@ -2602,7 +2602,7 @@
   },
   {
     "catalogCode": "41560",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000984",
     "name": "Chamdor Sparkling Red Grape Wine 750ml",
     "brand": "Chamdor",
     "size": "750ml",
@@ -2619,7 +2619,7 @@
   },
   {
     "catalogCode": "41561",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000991",
     "name": "Chamdor Sparkling White Grape Wine 750ml",
     "brand": "Chamdor",
     "size": "750ml",
@@ -2636,7 +2636,7 @@
   },
   {
     "catalogCode": "199001",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000434",
     "name": "Rooiberg Winery NonAlcoholic Sparkling White Wine 750ml",
     "brand": "Rooiberg Winery",
     "size": "750ml",
@@ -2653,7 +2653,7 @@
   },
   {
     "catalogCode": "199002",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000441",
     "name": "Rooiberg Winery NonAlcoholic Sparkling Red Wine 750ml",
     "brand": "Rooiberg Winery",
     "size": "750ml",
@@ -2670,7 +2670,7 @@
   },
   {
     "catalogCode": "129382",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000113",
     "name": "Highland Club Pinacolada Soda 2L",
     "brand": "Highland Club",
     "size": "2L",
@@ -2687,7 +2687,7 @@
   },
   {
     "catalogCode": "294",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000786",
     "name": "Club Cola Soda 2L",
     "brand": "Club",
     "size": "2L",
@@ -2704,7 +2704,7 @@
   },
   {
     "catalogCode": "47507",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001165",
     "name": "Club Cola Drink 350Ml",
     "brand": "Club",
     "size": "350ml",
@@ -2721,7 +2721,7 @@
   },
   {
     "catalogCode": "211721",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000496",
     "name": "Schweppes Novida Pineapple Fruit Drink 350Ml",
     "brand": "Schweppes",
     "size": "350ml",
@@ -2738,7 +2738,7 @@
   },
   {
     "catalogCode": "203244",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000465",
     "name": "Green Cola Sour Cherry Carbonated Drink 330ml",
     "brand": "Green Cola",
     "size": "330ml",
@@ -2755,7 +2755,7 @@
   },
   {
     "catalogCode": "64265",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001387",
     "name": "Highlands Pineapple Club Soda 2L",
     "brand": "Highlands",
     "size": "2L",
@@ -2772,7 +2772,7 @@
   },
   {
     "catalogCode": "29379",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000779",
     "name": "Club Cola Soda 500Ml",
     "brand": "Club",
     "size": "500ml",
@@ -2789,7 +2789,7 @@
   },
   {
     "catalogCode": "199744",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000458",
     "name": "Hola Cola Carbonated Drink 301Ml",
     "brand": "Hola",
     "size": "301ml",
@@ -2806,7 +2806,7 @@
   },
   {
     "catalogCode": "219541",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000526",
     "name": "Mirinda Pineapple 2Litre",
     "brand": "Mirinda",
     "size": "2L",
@@ -2823,7 +2823,7 @@
   },
   {
     "catalogCode": "90200",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001455",
     "name": "Fitch And Leedes Indian Tonic Lite Sugar Free Can 200Ml",
     "brand": "Fitch & Leedes",
     "size": "200ml",
@@ -2840,7 +2840,7 @@
   },
   {
     "catalogCode": "90198",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001448",
     "name": "Fitch And Leedes Ginger Ale Sparkling Drink 200ml",
     "brand": "Fitch & Leedes",
     "size": "200ml",
@@ -2857,7 +2857,7 @@
   },
   {
     "catalogCode": "27886",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000755",
     "name": "Aquamist Sparkling Water 1l",
     "brand": "Aquamist",
     "size": "1L",
@@ -2874,7 +2874,7 @@
   },
   {
     "catalogCode": "82094",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001400",
     "name": "Mayers Natural Spring Sparkling Water 1l",
     "brand": "Mayers",
     "size": "1L",
@@ -2891,7 +2891,7 @@
   },
   {
     "catalogCode": "34232",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000793",
     "name": "Keringet Natural Mineral Water 1l X 6",
     "brand": "Keringet",
     "size": "1L x 6",
@@ -2908,7 +2908,7 @@
   },
   {
     "catalogCode": "167855",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000274",
     "name": "Carrefour Mineral Water 10l",
     "brand": "Carrefour",
     "size": "10L",
@@ -2925,7 +2925,7 @@
   },
   {
     "catalogCode": "41087",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000953",
     "name": "Mt. Kenyan Natural Drinking Water 1l",
     "brand": "Mt. Kenya",
     "size": "1L",
@@ -2942,7 +2942,7 @@
   },
   {
     "catalogCode": "27892",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000762",
     "name": "Aquamist Strawberry Flavoured Water 500ml",
     "brand": "Aquamist",
     "size": "500ml",
@@ -2959,7 +2959,7 @@
   },
   {
     "catalogCode": "118060",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000090",
     "name": "Gofrut Apple Juice 1L",
     "brand": "Gofrut",
     "size": "1L",
@@ -2976,7 +2976,7 @@
   },
   {
     "catalogCode": "25627",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000731",
     "name": "Savanah Strawberry Juice 2L",
     "brand": "Savanah",
     "size": "2L",
@@ -2993,7 +2993,7 @@
   },
   {
     "catalogCode": "37135",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000878",
     "name": "Ribena Blackcurrant, Strawberry Juice 1L",
     "brand": "Ribena",
     "size": "1L",
@@ -3010,7 +3010,7 @@
   },
   {
     "catalogCode": "118059",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000083",
     "name": "Gofrut Mango Juice 1L",
     "brand": "Gofrut",
     "size": "1L",
@@ -3027,7 +3027,7 @@
   },
   {
     "catalogCode": "41065",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000946",
     "name": "Pick N Peel Orange Juice 1L",
     "brand": "Pick N Peel",
     "size": "1L",
@@ -3044,7 +3044,7 @@
   },
   {
     "catalogCode": "51141",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001172",
     "name": "Del Monte Pineapple Gold Juice 1L",
     "brand": "Del Monte",
     "size": "1L",
@@ -3061,7 +3061,7 @@
   },
   {
     "catalogCode": "193736",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000397",
     "name": "Magic Blue Energy Drink 300ml",
     "brand": "Magic",
     "size": "300ml",
@@ -3078,7 +3078,7 @@
   },
   {
     "catalogCode": "247518",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000670",
     "name": "Lucozade Pet Ready To Drink 500ml",
     "brand": "Lucozade",
     "size": "500ml",
@@ -3095,7 +3095,7 @@
   },
   {
     "catalogCode": "250869",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000687",
     "name": "Monster Aussie Energy Drink Can 500ml",
     "brand": "Monster",
     "size": "500ml",
@@ -3112,7 +3112,7 @@
   },
   {
     "catalogCode": "159119",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000243",
     "name": "Reload Orange Isotonic Drink 250ml",
     "brand": "Reload",
     "size": "250ml",
@@ -3129,7 +3129,7 @@
   },
   {
     "catalogCode": "159120",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000250",
     "name": "Reload Isotonic Lemon Drink 500ml",
     "brand": "Reload",
     "size": "500ml",
@@ -3146,7 +3146,7 @@
   },
   {
     "catalogCode": "98302",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001493",
     "name": "Veroni Active Isotonic Orange Drink 700ml",
     "brand": "Veroni Active",
     "size": "700ml",
@@ -3163,7 +3163,7 @@
   },
   {
     "catalogCode": "34555",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000816",
     "name": "You.C1000 Isotonic Orange Water 500ml",
     "brand": "You.C1000",
     "size": "500ml",
@@ -3180,7 +3180,7 @@
   },
   {
     "catalogCode": "24167",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000601",
     "name": "Fanta Orange Soda 330Ml",
     "brand": "Fanta",
     "size": "330ml",
@@ -3197,7 +3197,7 @@
   },
   {
     "catalogCode": "96042",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000001486",
     "name": "Vimto Sparkling Fruit Drink 300Ml",
     "brand": "Vimto",
     "size": "300ml",
@@ -3214,7 +3214,7 @@
   },
   {
     "catalogCode": "34554",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000809",
     "name": "You.C1000 Isotonic Lemon Water 500ml",
     "brand": "You.C1000",
     "size": "500ml",
@@ -3231,7 +3231,7 @@
   },
   {
     "catalogCode": "219540",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000519",
     "name": "Pepsi Cola Soft Drink 2L",
     "brand": "Pepsi",
     "size": "2L",
@@ -3248,7 +3248,7 @@
   },
   {
     "catalogCode": "156079",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000236",
     "name": "Reaktor Simba Energy Drink 300ml",
     "brand": "Reaktor",
     "size": "300ml",
@@ -3265,7 +3265,7 @@
   },
   {
     "catalogCode": "180692",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000304",
     "name": "Brothers Original Sambuca Liqueur 750ml",
     "brand": "Brothers",
     "size": "750ml",
@@ -3282,7 +3282,7 @@
   },
   {
     "catalogCode": "24174",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000625",
     "name": "Fanta Passion Soda 500ml",
     "brand": "Fanta",
     "size": "500ml",
@@ -3299,7 +3299,7 @@
   },
   {
     "catalogCode": "179846",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000298",
     "name": "Fanta Blackcurrant Soda 500ml x Pack of 24",
     "brand": "Fanta",
     "size": "500ml x 24",
@@ -3316,7 +3316,7 @@
   },
   {
     "catalogCode": "24171",
-    "verifiedBarcode": null,
+    "verifiedBarcode": "2010000000618",
     "name": "Fanta Blackcurrant Soda 500Ml",
     "brand": "Fanta",
     "size": "500ml",
