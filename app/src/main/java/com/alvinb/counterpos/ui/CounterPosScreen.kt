@@ -522,7 +522,7 @@ NavigationBar(
                     Text("Create the waiter record first. Then copy their one-time passkey or approve their secure QR.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     OutlinedTextField(value = employeeName, onValueChange = { employeeName = it.take(120) }, label = { Text("Waiter name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Text("Access: POS / Sell, Sales reports, and Tables", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Button(onClick = { viewModel.createEmployee(employeeName); employeeName = "" }, enabled = employeeName.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("Create waiter & generate passkey") }
+                    Button(onClick = { viewModel.createEmployee(employeeName); employeeName = "" }, enabled = employeeName.isNotBlank() && !state.isCreatingEmployee, modifier = Modifier.fillMaxWidth()) { if (state.isCreatingEmployee) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Create waiter & generate passkey") }
                     state.employeePasskey?.let { passkey ->
                         val clipboard = LocalClipboardManager.current
                         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {

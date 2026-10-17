@@ -49,6 +49,7 @@ data class CounterPosUiState(
     val isAccessLocked: Boolean = false,
     val accessLockMessage: String? = null,
     val employeePasskey: String? = null,
+    val isCreatingEmployee: Boolean = false,
     val adminBusinessPasskey: String? = null,
 
     // Sale sheet
@@ -233,21 +234,26 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
     }
 
     fun issueEmployeePass(role: String) = viewModelScope.launch {
+        _uiState.update { it.copy(employeePasskey = null, isCreatingEmployee = true, actionError = null) }
         runCatching { repository.createEmployeeAccessPass(role) }
-            .onSuccess { pass -> _uiState.update { it.copy(employeePasskey = pass.optString("passkey"), notice = "One-time ${role.replace('_', ' ')} pass created. Share it privately.") } }
-            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not create employee pass") } }
+            .onSuccess { pass ->
+                val key = pass.optString("passkey").trim()
+                if (key.isBlank()) throw IllegalStateException("The server did not return a new employee passkey.")
+                _uiState.update { it.copy(employeePasskey = key, isCreatingEmployee = false, notice = "One-time ${role.replace('_', ' ')} pass created. Share it privately.") }
+            }
+            .onFailure { error -> _uiState.update { it.copy(isCreatingEmployee = false, actionError = error.message ?: "Could not create employee pass") } }
     }
-
     fun createEmployee(name: String) = viewModelScope.launch {
-        _uiState.update { it.copy(actionError = null) }
+        _uiState.update { it.copy(employeePasskey = null, isCreatingEmployee = true, actionError = null) }
         runCatching { repository.createEmployee(name) }
             .onSuccess { result ->
+                val key = result.optString("passkey").trim()
+                if (key.isBlank()) throw IllegalStateException("The server did not return a new employee passkey.")
                 val rows = result.optJSONArray("members")
-                _uiState.update { it.copy(employeePasskey = result.optString("passkey"), employeeMembers = rows?.let { array -> (0 until array.length()).mapNotNull(array::optJSONObject) } ?: it.employeeMembers, notice = "Waiter created. Copy the passkey or scan their QR to grant access.") }
+                _uiState.update { it.copy(employeePasskey = key, isCreatingEmployee = false, employeeMembers = rows?.let { array -> (0 until array.length()).mapNotNull(array::optJSONObject) } ?: it.employeeMembers, notice = "Waiter created. Copy the passkey or scan their QR to grant access.") }
             }
-            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not create employee") } }
+            .onFailure { error -> _uiState.update { it.copy(isCreatingEmployee = false, actionError = error.message ?: "Could not create employee") } }
     }
-
     fun clearEmployeePass() = _uiState.update { it.copy(employeePasskey = null) }
 
     fun loadEmployeeMembers() = viewModelScope.launch {

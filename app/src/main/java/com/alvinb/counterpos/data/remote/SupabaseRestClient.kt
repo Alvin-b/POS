@@ -94,11 +94,20 @@ class SupabaseRestClient(context: Context) {
 
     suspend fun redeemAccessPass(passkey: String): AuthSession = withContext(Dispatchers.IO) {
         val json = parseObject(request("/functions/v1/redeem-access-pass", "POST", JSONObject().put("passkey", passkey.trim()).toString(), false))
-        val email = json.optString("email").takeIf(String::isNotBlank)
+        val directAccessToken = json.optString("access_token").takeIf(String::isNotBlank)
+        val directRefreshToken = json.optString("refresh_token").takeIf(String::isNotBlank)
+        if (directAccessToken != null && directRefreshToken != null) {
+            val user = json.optJSONObject("user")
+            val created = AuthSession(directAccessToken, directRefreshToken, user?.optString("id").orEmpty(), user?.optString("email").takeIf { !it.isNullOrBlank() })
+            saveSession(created)
+            return@withContext created
+        }
+        val email = sequenceOf("email", "user_email").map { json.optString(it) }.firstOrNull { it.isNotBlank() }
             ?: throw IOException(json.optString("error", "Invalid passkey"))
-        authenticate("password", email, json.optString("password"))
+        val password = sequenceOf("password", "temporary_password", "user_password").map { json.optString(it) }.firstOrNull { it.isNotBlank() }
+            ?: throw IOException(json.optString("error", "The passkey response did not include a temporary password"))
+        authenticate("password", email, password)
     }
-
     suspend fun createAccessPass(shopId: String, role: String, employeeName: String? = null): JSONObject =
         parseObject(request("/functions/v1/create-access-pass", "POST", JSONObject().put("shop_id", shopId).put("role", role).putNullable("employee_name", employeeName?.trim()?.takeIf(String::isNotBlank)).toString(), true))
 
