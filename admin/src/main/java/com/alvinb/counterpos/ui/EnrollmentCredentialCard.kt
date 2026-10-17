@@ -1,11 +1,13 @@
 package com.alvinb.counterpos.ui
 
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -25,6 +27,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
+import android.graphics.Bitmap
 
 @Composable
 fun EnrollmentCredentialCard(
@@ -50,6 +57,12 @@ fun EnrollmentCredentialCard(
                 color = MaterialTheme.colorScheme.onSecondaryContainer
             )
             Text("Send this passkey to the owner or employee. Their app displays the QR code for administrator approval.", fontSize = 12.sp, textAlign = TextAlign.Center)
+            Image(
+                bitmap = remember(credential.qrPayload) { createAccessQr(credential.qrPayload) }.asImageBitmap(),
+                contentDescription = "Access pass QR code",
+                contentScale = ContentScale.FillBounds,
+                modifier = Modifier.padding(vertical = 4.dp).size(190.dp)
+            )
             Text("One-time passkey", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
             SelectionContainer {
                 Text(credential.passkey, fontSize = 22.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, textAlign = TextAlign.Center)
@@ -66,6 +79,16 @@ fun EnrollmentCredentialCard(
                 OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Hide") }
                 Button(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Done") }
             }
+        }
+    }
+}
+
+private fun createAccessQr(payload: String): Bitmap {
+    val size = 720
+    val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, size, size)
+    return Bitmap.createBitmap(size, size, Bitmap.Config.RGB_565).also { bitmap ->
+        for (x in 0 until size) for (y in 0 until size) {
+            bitmap.setPixel(x, y, if (matrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
         }
     }
 }

@@ -60,11 +60,29 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         when {
             !state.isReady -> LoadingScreen()
+            !session.isAuthenticated && state.isScannerOpen -> BarcodeScannerScreen(
+                mode = ScannerMode.ADMIN_QR,
+                products = emptyList(),
+                onClose = viewModel::closeScanner,
+                onProductScannedForSale = {},
+                onProductScannedForStock = {},
+                onProductScannedForTable = {},
+                onAdminQrCodeScanned = { payload ->
+                    viewModel.closeScanner()
+                    viewModel.signInWithCredential(payload)
+                },
+                onBarcodeAssigned = {},
+                onBarcodeNotRecognized = { payload ->
+                    viewModel.closeScanner()
+                    viewModel.signInWithCredential(payload)
+                }
+            )
             !session.isAuthenticated -> AuthScreen(
                 error = state.startupError,
                 notice = state.notice,
                 onCredentialSignIn = viewModel::signInWithCredential,
                 onQrSignIn = viewModel::signInWithQrRequested,
+                onScanAccessQr = { viewModel.openScanner(ScannerMode.ADMIN_QR) },
                 qrPayload = state.loginQrPayload,
                 onClearError = viewModel::clearStartupError
             )
@@ -111,6 +129,7 @@ private fun AuthScreen(
     notice: String?,
     onCredentialSignIn: (String) -> Unit,
     onQrSignIn: () -> Unit,
+    onScanAccessQr: () -> Unit,
     qrPayload: String?,
     onClearError: () -> Unit
 ) {
@@ -203,6 +222,7 @@ private fun AuthScreen(
                     ) { Text("Continue") }
                 }
                 OutlinedButton(onClick = onQrSignIn, modifier = Modifier.fillMaxWidth()) { Text("Sign in with QR code") }
+                OutlinedButton(onClick = onScanAccessQr, modifier = Modifier.fillMaxWidth()) { Text("Scan access pass QR") }
                 if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 if (!notice.isNullOrBlank()) Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
             }

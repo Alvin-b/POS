@@ -142,6 +142,10 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
         val value = credential.trim()
         if (value.startsWith("CPSA1|", ignoreCase = true)) {
             signInWithSuperadminToken(value)
+        } else if (value.startsWith("CPX1.", ignoreCase = true)) {
+            // Access-pass QR payloads are intentionally prefixed so the scanner can
+            // distinguish them from ordinary text. Redemption uses the passkey body.
+            signInWithPasskey(value.substringAfter('.').trim())
         } else {
             signInWithPasskey(value)
         }
