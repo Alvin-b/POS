@@ -237,6 +237,16 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
             .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not create employee pass") } }
     }
 
+    fun createEmployee(email: String, role: String) = viewModelScope.launch {
+        _uiState.update { it.copy(actionError = null) }
+        runCatching { repository.createEmployee(email, role) }
+            .onSuccess { result ->
+                val rows = result.optJSONArray("members")
+                _uiState.update { it.copy(employeePasskey = result.optString("passkey"), employeeMembers = rows?.let { array -> (0 until array.length()).mapNotNull(array::optJSONObject) } ?: it.employeeMembers, notice = "Employee created. Copy the passkey or scan their QR to grant access.") }
+            }
+            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not create employee") } }
+    }
+
     fun clearEmployeePass() = _uiState.update { it.copy(employeePasskey = null) }
 
     fun loadEmployeeMembers() = viewModelScope.launch {

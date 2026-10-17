@@ -88,6 +88,15 @@ class CounterPosRepository(
         require(role in setOf("manager", "inventory_clerk", "cashier")) { "Invalid staff role." }
         remote.createAccessPass(shop.shopId, role)
     }
+    suspend fun createEmployee(email: String, role: String): JSONObject = withContext(Dispatchers.IO) {
+        val shop = activeBusiness ?: throw IllegalStateException("Open a business before creating an employee.")
+        require(shop.role == "owner" || shop.role == "manager") { "Only a business owner or manager can create employees." }
+        require(email.trim().contains("@")) { "Enter a valid employee email." }
+        require(role in setOf("manager", "inventory_clerk", "cashier")) { "Invalid employee role." }
+        remote.addMemberByEmail(shop.shopId, email.trim(), role)
+        val pass = remote.createAccessPass(shop.shopId, role)
+        JSONObject().put("passkey", pass.optString("passkey")).put("members", remote.listShopMembers(shop.shopId))
+    }
 
     suspend fun createAccessChallenge(): String = withContext(Dispatchers.IO) {
         remote.createAccessChallenge().optString("token").takeIf(String::isNotBlank)

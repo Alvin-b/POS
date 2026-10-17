@@ -466,6 +466,8 @@ NavigationBar(
         var selectedEmployeeRole by remember { mutableStateOf("cashier") }
         var removeEmployeeId by remember { mutableStateOf<String?>(null) }
         var newCounterName by remember { mutableStateOf("") }
+        var employeeEmail by remember { mutableStateOf("") }
+        var newEmployeeRole by remember { mutableStateOf("cashier") }
         var businessNameDraft by remember(session.activeBusiness?.shopId, session.activeBusiness?.shopName) {
             mutableStateOf(session.activeBusiness?.shopName.orEmpty())
         }
@@ -517,11 +519,15 @@ NavigationBar(
                     }
                     Text("Employee access", fontWeight = FontWeight.SemiBold)
                     Text(if ("working_hours" in enabledFeatures) "Scan an employee's secure QR to approve their device, then control whether they can sell and when." else "Scan an employee's secure QR to approve their device and control whether they can sell.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Issue employee access", fontWeight = FontWeight.SemiBold)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { viewModel.issueEmployeePass("cashier") }, modifier = Modifier.weight(1f)) { Text("Cashier pass") }
-                        OutlinedButton(onClick = { viewModel.issueEmployeePass("inventory_clerk") }, modifier = Modifier.weight(1f)) { Text("Stock pass") }
+                    Text("Create employee", fontWeight = FontWeight.SemiBold)
+                    Text("Create the employee record first. Then copy their one-time passkey or approve their secure QR.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(value = employeeEmail, onValueChange = { employeeEmail = it }, label = { Text("Employee email") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("cashier", "inventory_clerk", "manager").forEach { option ->
+                            FilterChip(selected = newEmployeeRole == option, onClick = { newEmployeeRole = option }, label = { Text(option.replace('_', ' '), fontSize = 11.sp) })
+                        }
                     }
+                    Button(onClick = { viewModel.createEmployee(employeeEmail, newEmployeeRole); employeeEmail = "" }, enabled = employeeEmail.contains("@"), modifier = Modifier.fillMaxWidth()) { Text("Create employee & generate passkey") }
                     state.employeePasskey?.let { passkey ->
                         val clipboard = LocalClipboardManager.current
                         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
