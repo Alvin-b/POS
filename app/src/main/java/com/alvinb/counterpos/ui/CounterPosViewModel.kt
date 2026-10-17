@@ -49,6 +49,7 @@ data class CounterPosUiState(
     val isAccessLocked: Boolean = false,
     val accessLockMessage: String? = null,
     val employeePasskey: String? = null,
+    val adminBusinessPasskey: String? = null,
 
     // Sale sheet
     val selectedSaleCode: String? = null,
@@ -308,6 +309,13 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
             .onSuccess { _adminBusinesses.value = it }
             .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not create business") } }
     }
+    fun generateBusinessOwnerPass(shopId: String) = viewModelScope.launch {
+        _uiState.update { it.copy(startupError = null, notice = "Creating business owner pass…") }
+        runCatching { repository.adminCreateAccessPass(shopId, "owner") }
+            .onSuccess { pass -> _uiState.update { it.copy(adminBusinessPasskey = pass.optString("passkey"), notice = "Business owner pass created. Copy it and send it privately.") } }
+            .onFailure { error -> _uiState.update { it.copy(notice = null, startupError = error.message ?: "Could not create business owner pass") } }
+    }
+    fun clearBusinessOwnerPass() = _uiState.update { it.copy(adminBusinessPasskey = null) }
 
     fun selectAdminBusiness(shopId: String) = _uiState.update {
         it.copy(adminSelectedBusinessId = shopId, notice = "Business selected. Scan a staff QR code to attach a user.")

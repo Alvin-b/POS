@@ -222,6 +222,10 @@ class CounterPosRepository(
         remote.adminCreateBusiness(name, ownerEmail.takeIf { it.isNotBlank() })
         return remote.adminBusinesses()
     }
+    suspend fun adminCreateAccessPass(shopId: String, role: String = "owner"): JSONObject = withContext(Dispatchers.IO) {
+        require(role == "owner") { "Only business owner passes are currently issued from the platform portal." }
+        remote.createAccessPass(shopId, role)
+    }
 
     suspend fun addMemberByEmail(shopId: String, email: String, role: String): List<AdminBusiness> {
         require(role in setOf("manager", "inventory_clerk", "cashier")) { "Choose a valid staff role." }
