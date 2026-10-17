@@ -303,6 +303,8 @@ private fun AdminConsoleScreen(
     var businessName by remember { mutableStateOf("") }
     var ownerEmail by remember { mutableStateOf("") }
     var reason by remember { mutableStateOf("") }
+    var inventoryMode by remember { mutableStateOf("shared") }
+    var counterCount by remember { mutableStateOf("1") }
 
     LaunchedEffect(Unit) { viewModel.loadAdminBusinesses() }
 
@@ -354,11 +356,22 @@ private fun AdminConsoleScreen(
                         }
                         OutlinedTextField(value = businessName, onValueChange = { businessName = it; onClearError() }, label = { Text("Business name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                         OutlinedTextField(value = ownerEmail, onValueChange = { ownerEmail = it; onClearError() }, label = { Text("Owner email (optional)") }, supportingText = { Text("Leave blank if the owner will enroll later.") }, singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+                        Text("Inventory setup", fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { inventoryMode = "shared" }, modifier = Modifier.weight(1f)) {
+                                Text(if (inventoryMode == "shared") "✓ Shared stock" else "Shared stock")
+                            }
+                            OutlinedButton(onClick = { inventoryMode = "per_counter" }, modifier = Modifier.weight(1f)) {
+                                Text(if (inventoryMode == "per_counter") "✓ Per-counter" else "Per-counter")
+                            }
+                        }
+                        Text("Shared: one stock balance for the whole business. Per-counter: each counter has its own stock and transfers.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedTextField(value = counterCount, onValueChange = { counterCount = it.filter(Char::isDigit).take(2) }, label = { Text("Number of counters") }, singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
                         OutlinedTextField(value = reason, onValueChange = { reason = it }, label = { Text("Lifecycle reason (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                         if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                         Button(
                             onClick = {
-                                viewModel.createBusinessForOwner(businessName, ownerEmail)
+                                viewModel.createBusinessForOwner(businessName, ownerEmail, inventoryMode, counterCount.toIntOrNull()?.coerceIn(1, 50) ?: 1)
                                 businessName = ""
                                 ownerEmail = ""
                             },
@@ -413,6 +426,7 @@ private fun AdminBusinessCard(
             }
             Text("Owner: ${business.ownerEmail}", fontSize = 12.sp)
             Text("${business.memberCount} staff · ${business.productCount} products · ${business.stockUnits} units", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("${if (business.counterInventoryMode == "per_counter") "Separate stock" else "Shared stock"} · ${business.counterCount} counters", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (!business.lifecycleReason.isNullOrBlank()) Text("Reason: ${business.lifecycleReason}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedButton(onClick = onSelect, modifier = Modifier.fillMaxWidth()) {
                 Text(if (selected) "Business profile open" else "Open business profile")

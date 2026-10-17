@@ -207,13 +207,28 @@ class CounterPosRepository(
         remote.createServiceCounter(activeBusiness!!.shopId, name).also { _serviceCounters.value = _serviceCounters.value + it }
     }
 
+    suspend fun loadCounterStock(counterId: String): Map<String, Int> = withActiveBusiness {
+        remote.counterStock(activeBusiness!!.shopId, counterId)
+    }
+
+    suspend fun renameServiceCounter(counterId: String, name: String): List<ServiceCounter> = withActiveBusiness {
+        remote.renameServiceCounter(activeBusiness!!.shopId, counterId, name)
+        remote.serviceCounters(activeBusiness!!.shopId).also { _serviceCounters.value = it }
+    }
+
+    suspend fun transferCounterStock(productCode: String, fromCounter: String, toCounter: String, quantity: Int): Boolean =
+        withActiveProduct(productCode) { product ->
+            remote.transferCounterStock(activeBusiness!!.shopId, product.remoteId!!, fromCounter, toCounter, quantity, "Counter transfer from mobile app")
+            true
+        }
+
     suspend fun adminSetBusinessStatus(shopId: String, status: String, reason: String?): List<AdminBusiness> {
         remote.adminSetBusinessStatus(shopId, status, reason)
         return remote.adminBusinesses()
     }
 
-    suspend fun adminCreateBusiness(name: String, ownerEmail: String): List<AdminBusiness> {
-        remote.adminCreateBusiness(name, ownerEmail.takeIf { it.isNotBlank() })
+    suspend fun adminCreateBusiness(name: String, ownerEmail: String, inventoryMode: String, counterCount: Int): List<AdminBusiness> {
+        remote.adminCreateBusiness(name, ownerEmail.takeIf { it.isNotBlank() }, inventoryMode, counterCount)
         return remote.adminBusinesses()
     }
 
@@ -267,15 +282,7 @@ class CounterPosRepository(
     private suspend fun syncBusiness(membership: BusinessMembership) {
         dao.clearTenantCache()
         seedCatalogIfEmpty()
-        var counters = remote.serviceCounters(membership.shopId)
-        if (counters.isEmpty() && membership.businessType == "big_club" && membership.role in setOf("owner", "manager")) {
-            // Clubs commonly start with four physical bars/counters. This is an idempotent
-            // bootstrap: the unique shop/name constraint prevents duplicates on resync.
-            listOf("Counter 1", "Counter 2", "Counter 3", "Counter 4").forEach { name ->
-                runCatching { remote.createServiceCounter(membership.shopId, name) }
-            }
-            counters = remote.serviceCounters(membership.shopId)
-        }
+        val counters = remote.serviceCounters(membership.shopId)
         _serviceCounters.value = counters
 
         // Remote catalog rows augment the bundled image fallback. The remote
@@ -469,44 +476,51 @@ class CounterPosRepository(
         unitPriceKsh: Int,
         selectedCounterId: String? = null
     ): Boolean = withActiveProduct(code) { product ->
-        selectedCounterId?.let { counterId ->
-            remote.recordTableSaleFromCounter(activeBusiness!!.shopId, tableId, product.remoteId!!, counterId, quantity, unitName, unitPriceKsh)
-        } ?: remote.recordTableSale(activeBusiness!!.shopId, tableId, product.remoteId!!, quantity, unitName, unitPriceKsh)
+        val counterId = selectedCounterId?.takeIf(String::isNotBlank)
+            ?: throw IllegalStateException("Choose the serving counter before adding items to a table.")
+        remote.recordTableSaleFromCounter(activeBusiness!!.shopId, tableId, product.remoteId!!, counterId, quantity, unitName, unitPriceKsh)
         syncBusiness(activeBusiness!!)
         true
     }
 
     suspend fun sellWithUnit(code: String, quantity: Int, unitName: String, unitPriceKsh: Int, selectedCounterId: String? = null): Boolean =
         withActiveProduct(code) { product ->
-            selectedCounterId?.let { remote.recordSaleUnitFromCounter(product.remoteId!!, it, quantity, unitName, unitPriceKsh) }
-                ?: remote.recordSaleUnit(product.remoteId!!, quantity, unitName, unitPriceKsh)
+            val counterId = selectedCounterId?.takeIf(String::isNotBlank)
+                ?: throw IllegalStateException("Choose the serving counter before recording a sale.")
+            remote.recordSaleUnitFromCounter(product.remoteId!!, counterId, quantity, unitName, unitPriceKsh)
             syncBusiness(activeBusiness!!)
             true
         }
 
-    suspend fun addFromLibrary(code: String, quantity: Int, priceKsh: Int, unitCostKsh: Int): Boolean =
+    suspend fun addFromLibrary(code: String, quantity: Int, priceKsh: Int, unitCostKsh: Int, selectedCounterId: String? = null): Boolean =
         withActiveBusiness {
             val catalogId = dao.getProductByCode(code)?.remoteId ?: return@withActiveBusiness false
-            remote.addFromCatalog(activeBusiness!!.shopId, catalogId, quantity, priceKsh, unitCostKsh)
+            val counterId = selectedCounterId?.takeIf(String::isNotBlank)
+                ?: throw IllegalStateException("Choose the receiving counter first.")
+            remote.addFromCatalogAtCounter(activeBusiness!!.shopId, catalogId, counterId, quantity, priceKsh, unitCostKsh)
             syncBusiness(activeBusiness!!)
             true
         }
 
-    suspend fun restock(code: String, quantity: Int, unitCostKsh: Int): Boolean =
+    suspend fun restock(code: String, quantity: Int, unitCostKsh: Int, selectedCounterId: String? = null): Boolean =
         withActiveProduct(code) { product ->
-            remote.receiveStock(product.remoteId!!, quantity, unitCostKsh)
+            val counterId = selectedCounterId?.takeIf(String::isNotBlank)
+                ?: throw IllegalStateException("Choose the receiving counter first.")
+            remote.receiveStockAtCounter(counterId, product.remoteId!!, quantity, unitCostKsh)
             syncBusiness(activeBusiness!!)
             true
         }
 
-    suspend fun setStock(code: String, newStock: Int): Boolean =
+    suspend fun setStock(code: String, newStock: Int, selectedCounterId: String? = null): Boolean =
         withActiveProduct(code) { product ->
-            remote.adjustStock(product.remoteId!!, newStock, "Stock count edited in mobile app")
+            val counterId = selectedCounterId?.takeIf(String::isNotBlank)
+                ?: throw IllegalStateException("Choose a counter before changing its stock count.")
+            remote.adjustCounterStock(counterId, product.remoteId!!, newStock, "Stock count edited in mobile app")
             syncBusiness(activeBusiness!!)
             true
         }
 
-    suspend fun updateProduct(product: ProductEntity): Boolean =
+    suspend fun updateProduct(product: ProductEntity, selectedCounterId: String? = null): Boolean =
         withActiveProduct(product.catalogCode) { current ->
             dao.updateProduct(product)
             val payload = JSONObject()
@@ -519,15 +533,17 @@ class CounterPosRepository(
                 payload.put("barcode", product.verifiedBarcode)
             }
             remote.updateProduct(current.remoteId!!, payload)
-            if (product.stockQuantity != current.stockQuantity) {
-                remote.adjustStock(current.remoteId, product.stockQuantity, "Product edit stock count")
+            val counterId = selectedCounterId?.takeIf(String::isNotBlank)
+                ?: throw IllegalStateException("Choose a counter before changing its stock count.")
+            if (activeBusiness!!.counterInventoryMode == "per_counter" || product.stockQuantity != current.stockQuantity) {
+                remote.adjustCounterStock(counterId, current.remoteId!!, product.stockQuantity, "Product edit stock count")
             }
             syncBusiness(activeBusiness!!)
             true
         }
 
     suspend fun undoLatestSale(): Boolean = withActiveBusiness {
-        remote.undoSale(activeBusiness!!.shopId)
+        remote.undoSaleFromCounter(activeBusiness!!.shopId)
         syncBusiness(activeBusiness!!)
         true
     }
@@ -554,10 +570,13 @@ class CounterPosRepository(
         unitCostKsh: Int,
         brand: String = "",
         size: String = "",
-        salesUnits: List<SaleUnit> = emptyList()
+        salesUnits: List<SaleUnit> = emptyList(),
+        selectedCounterId: String? = null
     ): Boolean = withActiveBusiness {
         val code = barcode.trim().ifBlank { "PROD_" + UUID.randomUUID().toString().take(8) }
-        remote.registerProduct(
+        val counterId = selectedCounterId?.takeIf(String::isNotBlank)
+            ?: throw IllegalStateException("Choose the receiving counter first.")
+        remote.registerProductAtCounter(
             shopId = activeBusiness!!.shopId,
             code = code,
             name = name.trim(),
@@ -566,7 +585,8 @@ class CounterPosRepository(
             quantity = initialStock,
             unitCost = unitCostKsh,
             brand = brand,
-            size = size
+            size = size,
+            counterId = counterId
         )
         syncBusiness(activeBusiness!!)
         true

@@ -39,6 +39,7 @@ data class CounterPosUiState(
     val selectedCounterId: String? = null,
     val counterReport: List<CounterReportRow> = emptyList(),
     val isLoadingCounterReport: Boolean = false,
+    val counterStockByProduct: Map<String, Int> = emptyMap(),
     val isCreatingTable: Boolean = false,
     val adminSelectedBusinessId: String? = null,
     val isTeamPanelOpen: Boolean = false,
@@ -293,8 +294,8 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
             .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not change business status") } }
     }
 
-    fun createBusinessForOwner(name: String, ownerEmail: String) = viewModelScope.launch {
-        runCatching { repository.adminCreateBusiness(name, ownerEmail) }
+    fun createBusinessForOwner(name: String, ownerEmail: String, inventoryMode: String = "shared", counterCount: Int = 1) = viewModelScope.launch {
+        runCatching { repository.adminCreateBusiness(name, ownerEmail, inventoryMode, counterCount) }
             .onSuccess { _adminBusinesses.value = it }
             .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not create business") } }
     }
@@ -359,7 +360,48 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
         it.copy(tab = tab, actionError = null, isSearchActive = false, searchQuery = "")
     }
 
-    fun selectCounter(counterId: String) = _uiState.update { it.copy(selectedCounterId = counterId) }
+    fun selectCounter(counterId: String) {
+        _uiState.update { it.copy(selectedCounterId = counterId, actionError = null) }
+        refreshCounterStock(counterId)
+    }
+
+    fun refreshCounterStock(counterId: String? = _uiState.value.selectedCounterId) = viewModelScope.launch {
+        val business = session.value.activeBusiness ?: return@launch
+        if (business.counterInventoryMode != "per_counter" || counterId.isNullOrBlank()) {
+            _uiState.update { it.copy(counterStockByProduct = emptyMap()) }
+            return@launch
+        }
+        runCatching { repository.loadCounterStock(counterId) }
+            .onSuccess { stock -> _uiState.update { it.copy(counterStockByProduct = stock) } }
+            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not load counter stock") } }
+    }
+
+    fun createServiceCounter(name: String) = viewModelScope.launch {
+        runCatching { repository.createServiceCounter(name) }
+            .onSuccess { counter -> _uiState.update { it.copy(notice = "Added ${counter.name}.", actionError = null) } }
+            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not add counter") } }
+    }
+
+    fun renameServiceCounter(counterId: String, name: String) = viewModelScope.launch {
+        runCatching { repository.renameServiceCounter(counterId, name) }
+            .onSuccess { _uiState.update { it.copy(notice = "Counter name updated.", actionError = null) } }
+            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not rename counter") } }
+    }
+
+    fun transferCounterStock(productCode: String, destinationCounterId: String, quantity: Int) = viewModelScope.launch {
+        val sourceCounterId = _uiState.value.selectedCounterId
+        if (sourceCounterId.isNullOrBlank() || sourceCounterId == destinationCounterId || quantity < 1) {
+            _uiState.update { it.copy(actionError = "Choose another destination and a valid quantity.") }
+            return@launch
+        }
+        runCatching { repository.transferCounterStock(productCode, sourceCounterId, destinationCounterId, quantity) }
+            .onSuccess {
+                val destination = serviceCounters.value.firstOrNull { it.id == destinationCounterId }?.name ?: "counter"
+                _uiState.update { it.copy(notice = "Stock transferred to $destination.", actionError = null) }
+                refreshCounterStock()
+            }
+            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not transfer stock") } }
+    }
 
     fun loadCounterReport(fromIso: String, toIso: String) = viewModelScope.launch {
         _uiState.update { it.copy(isLoadingCounterReport = true, actionError = null) }
@@ -554,6 +596,10 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
     fun confirmSale() {
         val state = _uiState.value
         val code = state.selectedSaleCode ?: return
+        if (state.selectedCounterId.isNullOrBlank()) {
+            _uiState.update { it.copy(actionError = "Choose a serving counter first.") }
+            return
+        }
         if (mutationInProgress) return
         mutationInProgress = true
 
@@ -579,6 +625,7 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                     )
                 }
                 if (success) {
+                    refreshCounterStock(state.selectedCounterId)
                     val product = products.value.firstOrNull { it.catalogCode == code }
                     val total = state.selectedUnitPrice * state.saleQuantity
                     _uiState.update {
@@ -621,7 +668,9 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
             return
         }
         viewModelScope.launch {
-            val success = repository.restock(product.catalogCode, additionalBottles, unitCostKsh)
+            val counterId = _uiState.value.selectedCounterId
+            if (counterId.isNullOrBlank()) { _uiState.update { it.copy(actionError = "Choose a receiving counter first.") }; return@launch }
+            val success = repository.restock(product.catalogCode, additionalBottles, unitCostKsh, counterId)
             if (success) {
                 _uiState.update {
                     it.copy(
@@ -629,6 +678,7 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                         notice = "✓ Added $additionalBottles bottles at KSh $unitCostKsh to ${product.name}"
                     )
                 }
+                refreshCounterStock(counterId)
             } else {
                 _uiState.update { it.copy(actionError = "Failed to update stock.") }
             }
@@ -662,7 +712,9 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                 salesUnitsJson = serializeSaleUnits(units),
                 verifiedBarcode = barcode?.trim()?.ifBlank { null } ?: product.verifiedBarcode
             )
-            val success = repository.updateProduct(updated)
+            val counterId = _uiState.value.selectedCounterId
+            if (counterId.isNullOrBlank()) { _uiState.update { it.copy(actionError = "Choose a counter first.") }; return@launch }
+            val success = repository.updateProduct(updated, counterId)
             if (success) {
                 _uiState.update {
                     it.copy(
@@ -670,6 +722,7 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                         notice = "✓ Updated ${updated.name}: Stock set to $newStock bottles, price KSh $newPrice"
                     )
                 }
+                refreshCounterStock(counterId)
             } else {
                 _uiState.update { it.copy(actionError = "Failed to save product changes.") }
             }
@@ -705,6 +758,8 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
             return
         }
         viewModelScope.launch {
+            val counterId = _uiState.value.selectedCounterId
+            if (counterId.isNullOrBlank()) { _uiState.update { it.copy(actionError = "Choose a receiving counter first.") }; return@launch }
             val code = barcode.trim().ifBlank { "PROD_" + UUID.randomUUID().toString().take(8) }
             val success = repository.registerNewProduct(
                 barcode = code,
@@ -715,7 +770,8 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                 unitCostKsh = unitCostKsh,
                 brand = brand,
                 size = size,
-                salesUnits = units
+                salesUnits = units,
+                selectedCounterId = counterId
             )
             if (success) {
                 _uiState.update {
@@ -726,6 +782,7 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                         notice = "✓ Added new product '$name' with $initialStock bottles and ${units.size} sales units."
                     )
                 }
+                refreshCounterStock(counterId)
             } else {
                 _uiState.update { it.copy(actionError = "Failed to add product.") }
             }
@@ -752,7 +809,9 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
             return
         }
         viewModelScope.launch {
-            val success = repository.addFromLibrary(code, quantity, priceKsh, unitCostKsh)
+            val counterId = _uiState.value.selectedCounterId
+            if (counterId.isNullOrBlank()) { _uiState.update { it.copy(actionError = "Choose a receiving counter first.") }; return@launch }
+            val success = repository.addFromLibrary(code, quantity, priceKsh, unitCostKsh, counterId)
             if (success) {
                 val item = products.value.firstOrNull { it.catalogCode == code }
                 _uiState.update {
@@ -762,6 +821,7 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                         notice = "✓ Added ${item?.name ?: "Product"} to your shop stock!"
                     )
                 }
+                refreshCounterStock(counterId)
             } else {
                 _uiState.update { it.copy(actionError = "Could not add to stock.") }
             }
@@ -777,6 +837,7 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                 _uiState.update {
                     it.copy(notice = if (success) "✓ Last sale undone and stock restored" else "Nothing to undo")
                 }
+                refreshCounterStock()
             } catch (e: Exception) {
                 _uiState.update { it.copy(notice = e.message ?: "Failed to undo") }
             } finally {

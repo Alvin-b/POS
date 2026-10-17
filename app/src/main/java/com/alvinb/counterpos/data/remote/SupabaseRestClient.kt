@@ -26,6 +26,7 @@ data class BusinessMembership(
     val employmentStatus: String = "active",
     val businessType: String = "big_club",
     val businessSize: String = "medium",
+    val counterInventoryMode: String = "shared",
     val featureFlags: Set<String> = setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics"),
     val currency: String,
     val lowStockThreshold: Int
@@ -52,7 +53,9 @@ data class AdminBusiness(
     val createdAt: String,
     val suspendedAt: String?,
     val closedAt: String?,
-    val lifecycleReason: String?
+    val lifecycleReason: String?,
+    val counterInventoryMode: String = "shared",
+    val counterCount: Long = 1
 )
 
 data class ServiceCounter(
@@ -190,6 +193,7 @@ class SupabaseRestClient(context: Context) {
                             employmentStatus = row.optString("employment_status", "active"),
                             businessType = row.optString("business_type", "big_club"),
                             businessSize = row.optString("business_size", "medium"),
+                            counterInventoryMode = row.optString("counter_inventory_mode", "shared"),
                             featureFlags = row.optJSONObject("feature_flags")?.keys()?.asSequence()?.filter { key -> row.optJSONObject("feature_flags")?.optBoolean(key, false) == true }?.toSet()
                                 ?: setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics"),
                             currency = row.optString("currency", "KES"),
@@ -227,9 +231,21 @@ class SupabaseRestClient(context: Context) {
         }
     }
 
+    suspend fun counterStock(shopId: String, counterId: String): Map<String, Int> = buildMap {
+        val rows = rpcArray("counter_stock_report", JSONObject().put("_shop", shopId).put("_counter", counterId))
+        for (index in 0 until rows.length()) rows.optJSONObject(index)?.let { row ->
+            put(row.optString("product_id"), row.optInt("quantity"))
+        }
+    }
+
     suspend fun createServiceCounter(shopId: String, name: String): ServiceCounter {
         val row = rpcObject("create_service_counter", JSONObject().put("_shop", shopId).put("_name", name.trim()))
         return ServiceCounter(row.optString("id"), row.optString("name", name.trim()), row.optBoolean("active", true))
+    }
+
+    suspend fun renameServiceCounter(shopId: String, counterId: String, name: String): ServiceCounter {
+        val row = rpcObject("rename_service_counter", JSONObject().put("_shop", shopId).put("_counter", counterId).put("_name", name.trim()))
+        return ServiceCounter(row.optString("id", counterId), row.optString("name", name.trim()), row.optBoolean("active", true))
     }
 
     suspend fun counterSalesReport(shopId: String, fromIso: String, toIso: String): List<CounterReportRow> = buildList {
@@ -372,6 +388,25 @@ class SupabaseRestClient(context: Context) {
                 .putNullable("_reason", reason)
         )
 
+    suspend fun receiveStockAtCounter(counterId: String, productId: String, quantity: Int, unitCost: Int): JSONObject =
+        rpcObject("receive_stock_at_counter", JSONObject().put("_counter", counterId).put("_product", productId).put("_qty", quantity).put("_unit_cost", unitCost))
+
+    suspend fun addFromCatalogAtCounter(shopId: String, catalogId: String, counterId: String, quantity: Int, price: Int, unitCost: Int): JSONObject =
+        rpcObject("add_from_catalog_at_counter", JSONObject().put("_shop", shopId).put("_catalog", catalogId).put("_counter", counterId).put("_qty", quantity).put("_price", price).put("_unit_cost", unitCost))
+
+    suspend fun registerProductAtCounter(shopId: String, code: String, name: String, category: String, price: Int, quantity: Int, unitCost: Int, brand: String, size: String, counterId: String): JSONObject =
+        rpcObject("register_product_at_counter", JSONObject().put("_shop", shopId).put("_code", code).put("_name", name).put("_price", price).put("_qty", quantity.coerceAtLeast(1)).put("_counter", counterId).put("_photo_path", JSONObject.NULL).put("_unit_cost", unitCost).putNullable("_size", size.ifBlank { null }).put("_type", "beer").putNullable("_brand", brand.ifBlank { null }).putNullable("_category", category.ifBlank { null }))
+
+    suspend fun adjustCounterStock(counterId: String, productId: String, newStock: Int, reason: String?): JSONObject =
+        rpcObject("adjust_counter_stock", JSONObject().put("_counter", counterId).put("_product", productId).put("_new_stock", newStock).putNullable("_reason", reason))
+
+    suspend fun transferCounterStock(shopId: String, productId: String, fromCounter: String, toCounter: String, quantity: Int, reason: String?) {
+        rpcVoid("transfer_counter_stock", JSONObject().put("_shop", shopId).put("_product", productId).put("_from_counter", fromCounter).put("_to_counter", toCounter).put("_qty", quantity).putNullable("_reason", reason))
+    }
+
+    suspend fun undoSaleFromCounter(shopId: String): JSONObject =
+        rpcObject("undo_sale_from_counter", JSONObject().put("_shop", shopId))
+
     suspend fun updateProduct(productId: String, fields: JSONObject): JSONObject =
         patch("products?id=eq.$productId", fields)
 
@@ -395,7 +430,9 @@ class SupabaseRestClient(context: Context) {
                             createdAt = row.optString("created_at"),
                             suspendedAt = row.optString("suspended_at").takeIf(String::isNotBlank),
                             closedAt = row.optString("closed_at").takeIf(String::isNotBlank),
-                            lifecycleReason = row.optString("lifecycle_reason").takeIf(String::isNotBlank)
+                            lifecycleReason = row.optString("lifecycle_reason").takeIf(String::isNotBlank),
+                            counterInventoryMode = row.optString("counter_inventory_mode", "shared"),
+                            counterCount = row.optLong("counter_count", 1)
                         )
                     )
                 }
@@ -414,10 +451,13 @@ class SupabaseRestClient(context: Context) {
         return adminBusinesses().firstOrNull { it.shopId == shopId }
     }
 
-    suspend fun adminCreateBusiness(name: String, ownerEmail: String?): JSONObject =
+    suspend fun adminCreateBusiness(name: String, ownerEmail: String?, inventoryMode: String, counterCount: Int): JSONObject =
         rpcObject(
-            "admin_create_business",
-            JSONObject().put("_name", name.trim()).putNullable("_owner_email", ownerEmail?.trim()?.takeIf(String::isNotBlank))
+            "admin_create_business_with_counter_setup",
+            JSONObject().put("_name", name.trim())
+                .putNullable("_owner_email", ownerEmail?.trim()?.takeIf(String::isNotBlank))
+                .put("_counter_inventory_mode", inventoryMode)
+                .put("_counter_count", counterCount)
         )
 
     suspend fun addMemberByEmail(shopId: String, email: String, role: String): JSONObject =

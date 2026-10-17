@@ -138,16 +138,26 @@ import java.util.TimeZone
 fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val session by viewModel.session.collectAsStateWithLifecycle()
-    val products by viewModel.products.collectAsStateWithLifecycle()
+    val cachedProducts by viewModel.products.collectAsStateWithLifecycle()
     val sales by viewModel.sales.collectAsStateWithLifecycle()
     val diningTables by viewModel.diningTables.collectAsStateWithLifecycle()
     val tableOrders by viewModel.tableOrders.collectAsStateWithLifecycle()
     val serviceCounters by viewModel.serviceCounters.collectAsStateWithLifecycle()
+    val products = remember(cachedProducts, state.counterStockByProduct, state.selectedCounterId, session.activeBusiness?.counterInventoryMode) {
+        if (session.activeBusiness?.counterInventoryMode == "per_counter") {
+            cachedProducts.map { product ->
+                if (product.inMyStock && product.remoteId != null) {
+                    product.copy(stockQuantity = state.counterStockByProduct[product.remoteId] ?: 0)
+                } else product
+            }
+        } else cachedProducts
+    }
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val snackbarHostState = remember { SnackbarHostState() }
     var photoTargetCode by remember { mutableStateOf<String?>(null) }
+    var transferProductCode by remember { mutableStateOf<String?>(null) }
     var pendingSalesPdf by remember { mutableStateOf<ByteArray?>(null) }
 
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -184,8 +194,13 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
     val canReceiveStock = role in setOf("owner", "manager", "inventory_clerk")
     val canEditProducts = role in setOf("owner", "manager")
 
-    LaunchedEffect(serviceCounters) {
-        if (state.selectedCounterId == null) serviceCounters.firstOrNull()?.let { viewModel.selectCounter(it.id) }
+    LaunchedEffect(session.activeBusiness?.shopId, serviceCounters, state.selectedCounterId) {
+        if (state.selectedCounterId !in serviceCounters.map { it.id }) {
+            serviceCounters.firstOrNull()?.let { viewModel.selectCounter(it.id) }
+        }
+    }
+    LaunchedEffect(state.selectedCounterId, session.activeBusiness?.counterInventoryMode, session.activeBusiness?.shopId) {
+        viewModel.refreshCounterStock()
     }
     LaunchedEffect(state.tab) {
         if (state.tab == PosTab.REPORTS) viewModel.loadCounterReport(todayStartIso(), nowIso())
@@ -338,6 +353,8 @@ NavigationBar(
                     onAddCatalogClick = viewModel::openCatalogItem,
                     canReceiveStock = canReceiveStock,
                     canEditProducts = canEditProducts,
+                    canTransferStock = session.activeBusiness?.counterInventoryMode == "per_counter" && role in setOf("owner", "manager") && serviceCounters.size > 1,
+                    onTransferStock = { product -> transferProductCode = product.catalogCode },
                     onChangePhoto = { product ->
                         photoTargetCode = product.catalogCode
                         photoPicker.launch(arrayOf("image/*"))
@@ -460,12 +477,49 @@ NavigationBar(
         }
     }
 
+    transferProductCode?.let { code ->
+        val product = products.firstOrNull { it.catalogCode == code }
+        if (product == null) transferProductCode = null else {
+            val destinations = serviceCounters.filter { it.id != state.selectedCounterId }
+            var destinationId by remember(code, serviceCounters, state.selectedCounterId) { mutableStateOf(destinations.firstOrNull()?.id.orEmpty()) }
+            var transferQuantity by remember(code) { mutableStateOf("1") }
+            val quantity = transferQuantity.toIntOrNull() ?: 0
+            AlertDialog(
+                onDismissRequest = { transferProductCode = null },
+                title = { Text("Move ${product.name}") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("From ${serviceCounters.firstOrNull { it.id == state.selectedCounterId }?.name ?: "selected counter"} · ${product.stockQuantity} available")
+                        Text("Move to", fontWeight = FontWeight.SemiBold)
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            destinations.forEach { counter ->
+                                FilterChip(selected = destinationId == counter.id, onClick = { destinationId = counter.id }, label = { Text(counter.name) })
+                            }
+                        }
+                        OutlinedTextField(value = transferQuantity, onValueChange = { transferQuantity = it.filter(Char::isDigit).take(6) }, label = { Text("Quantity") }, singleLine = true)
+                        state.actionError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        viewModel.transferCounterStock(code, destinationId, quantity)
+                        transferProductCode = null
+                    }, enabled = destinationId.isNotBlank() && quantity in 1..product.stockQuantity) { Text("Move stock") }
+                },
+                dismissButton = { TextButton(onClick = { transferProductCode = null }) { Text("Cancel") } }
+            )
+        }
+    }
+
     if (state.isTeamPanelOpen && role in setOf("owner", "manager") && "employee_management" in enabledFeatures) {
         var selectedEmployeeId by remember { mutableStateOf<String?>(null) }
         var startTime by remember { mutableStateOf("09:00") }
         var endTime by remember { mutableStateOf("17:00") }
         var selectedEmployeeRole by remember { mutableStateOf("cashier") }
         var removeEmployeeId by remember { mutableStateOf<String?>(null) }
+        var editingCounterId by remember { mutableStateOf<String?>(null) }
+        var counterNameDraft by remember { mutableStateOf("") }
+        var newCounterName by remember { mutableStateOf("") }
         var businessNameDraft by remember(session.activeBusiness?.shopId, session.activeBusiness?.shopName) {
             mutableStateOf(session.activeBusiness?.shopName.orEmpty())
         }
@@ -499,6 +553,25 @@ NavigationBar(
                                 enabled = !state.isSavingBusinessName && businessNameDraft.isNotBlank()
                             ) { Text(if (state.isSavingBusinessName) "Saving" else "Save") }
                         }
+                    }
+                    Text("Service counters", fontWeight = FontWeight.SemiBold)
+                    Text("Name each bar or counter. The selected counter is used for sales, stock, and reporting.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    serviceCounters.forEach { counter ->
+                        if (editingCounterId == counter.id) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(value = counterNameDraft, onValueChange = { counterNameDraft = it.take(60) }, label = { Text("Counter name") }, singleLine = true, modifier = Modifier.weight(1f))
+                                Button(onClick = { viewModel.renameServiceCounter(counter.id, counterNameDraft); editingCounterId = null }, enabled = counterNameDraft.isNotBlank()) { Text("Save") }
+                            }
+                        } else {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text(counter.name, fontWeight = FontWeight.Medium)
+                                TextButton(onClick = { editingCounterId = counter.id; counterNameDraft = counter.name }) { Text("Rename") }
+                            }
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(value = newCounterName, onValueChange = { newCounterName = it.take(60) }, label = { Text("New counter name") }, singleLine = true, modifier = Modifier.weight(1f))
+                        Button(onClick = { viewModel.createServiceCounter(newCounterName); newCounterName = "" }, enabled = newCounterName.isNotBlank()) { Text("Add") }
                     }
                     state.actionError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
                     Text("Employee access", fontWeight = FontWeight.SemiBold)
@@ -933,6 +1006,8 @@ private fun FullscreenStockScreen(
     onAddCatalogClick: (ProductEntity) -> Unit,
     canReceiveStock: Boolean,
     canEditProducts: Boolean,
+    canTransferStock: Boolean,
+    onTransferStock: (ProductEntity) -> Unit,
     onChangePhoto: (ProductEntity) -> Unit
 ) {
     val mine = remember(products) { products.filter { it.inMyStock } }
@@ -1116,8 +1191,10 @@ private fun FullscreenStockScreen(
                     product = product,
                     canReceiveStock = canReceiveStock,
                     canEditProducts = canEditProducts,
+                    canTransferStock = canTransferStock,
                     onAddStock = { onAddStockClick(product) },
                     onEditProduct = { onEditProductClick(product) },
+                    onTransferStock = { onTransferStock(product) },
                     onChangePhoto = { onChangePhoto(product) }
                 )
             }
@@ -1165,7 +1242,7 @@ private fun CounterReportScreen(
         item {
             Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                 Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column { Text("Total units", fontSize = 11.sp); Text("$totalUnits", fontSize = 23.sp, fontWeight = FontWeight.Bold) }
+                    Column { Text("Items served", fontSize = 11.sp); Text("$totalUnits", fontSize = 23.sp, fontWeight = FontWeight.Bold) }
                     Column(horizontalAlignment = Alignment.End) { Text("Total revenue", fontSize = 11.sp); Text(kshLong(totalRevenue), fontSize = 23.sp, fontWeight = FontWeight.Bold) }
                 }
             }
@@ -1176,7 +1253,7 @@ private fun CounterReportScreen(
                 Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(row.counterName, fontWeight = FontWeight.Bold)
-                        Text("${row.saleCount} sales · ${row.units} units", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${row.saleCount} sales · ${row.units} items served", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Text(kshLong(row.revenueKsh), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 }
@@ -1474,8 +1551,10 @@ private fun StockProductCard(
     product: ProductEntity,
     canReceiveStock: Boolean,
     canEditProducts: Boolean,
+    canTransferStock: Boolean,
     onAddStock: () -> Unit,
     onEditProduct: () -> Unit,
+    onTransferStock: () -> Unit,
     onChangePhoto: () -> Unit
 ) {
     val units = remember(product.salesUnitsJson, product.sellingPriceKsh) {
@@ -1548,7 +1627,7 @@ private fun StockProductCard(
                 )
 
                 // Clean Action Buttons: ONLY "+ Add" and "Edit" (No bulky +24 or +6 buttons!)
-                if (canReceiveStock || canEditProducts) Row(
+                if (canReceiveStock || canEditProducts || canTransferStock) Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.padding(top = 8.dp)
                 ) {
@@ -1576,6 +1655,14 @@ private fun StockProductCard(
                             Spacer(Modifier.width(4.dp))
                             Text("Edit", fontSize = 12.sp)
                         }
+                    }
+
+                    if (canTransferStock) {
+                        OutlinedButton(
+                            onClick = onTransferStock,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                            modifier = Modifier.height(34.dp)
+                        ) { Text("Move", fontSize = 12.sp) }
                     }
 
                     // Photo button
