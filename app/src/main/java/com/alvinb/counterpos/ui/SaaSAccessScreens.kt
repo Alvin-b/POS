@@ -439,6 +439,11 @@ private fun AdminBusinessCard(
                 AdminStat("Units", business.stockUnits.toString(), Modifier.weight(1f))
             }
             if (!business.lifecycleReason.isNullOrBlank()) Text(business.lifecycleReason.orEmpty(), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick = onGenerateOwnerPass, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+                Icon(Icons.Default.Security, contentDescription = null)
+                Spacer(Modifier.width(7.dp))
+                Text("Generate owner passkey")
+            }
             OutlinedButton(onClick = onSelect, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
                 Text(if (selected) "Close business tools" else "Open business tools", modifier = Modifier.weight(1f), textAlign = TextAlign.Start)
                 Icon(Icons.Default.ArrowForward, contentDescription = null)
