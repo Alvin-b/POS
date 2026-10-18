@@ -624,7 +624,11 @@ class SupabaseRestClient(context: Context) {
         val json = JSONObject(body)
         json.optString("message").ifBlank {
             json.optString("error_description").ifBlank {
-                json.optString("msg").ifBlank { "Request failed ($status)" }
+                json.optString("msg").ifBlank {
+                    json.optString("error").ifBlank {
+                        json.optString("code").ifBlank { "Request failed ($status)" }
+                    }
+                }
             }
         }
     }.getOrDefault(body.ifBlank { "Request failed ($status)" })
