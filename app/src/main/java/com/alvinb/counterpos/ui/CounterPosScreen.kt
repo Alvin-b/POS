@@ -515,7 +515,6 @@ NavigationBar(
         var selectedEmployeeId by remember { mutableStateOf<String?>(null) }
         var startTime by remember { mutableStateOf("09:00") }
         var endTime by remember { mutableStateOf("17:00") }
-        var selectedEmployeeRole by remember { mutableStateOf("cashier") }
         var removeEmployeeId by remember { mutableStateOf<String?>(null) }
         var editingCounterId by remember { mutableStateOf<String?>(null) }
         var counterNameDraft by remember { mutableStateOf("") }
@@ -574,12 +573,11 @@ NavigationBar(
                         Button(onClick = { viewModel.createServiceCounter(newCounterName); newCounterName = "" }, enabled = newCounterName.isNotBlank()) { Text("Add") }
                     }
                     state.actionError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
-                    Text("Employee access", fontWeight = FontWeight.SemiBold)
-                    Text(if ("working_hours" in enabledFeatures) "Scan an employee's secure QR to approve their device, then control whether they can sell and when." else "Scan an employee's secure QR to approve their device and control whether they can sell.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Issue employee access", fontWeight = FontWeight.SemiBold)
+                    Text("Waiter access", fontWeight = FontWeight.SemiBold)
+                    Text(if ("working_hours" in enabledFeatures) "Scan a waiter's secure QR to approve their device, then control whether they can sell and when." else "Scan a waiter's secure QR to approve their device and control whether they can sell.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Issue waiter access", fontWeight = FontWeight.SemiBold)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { viewModel.issueEmployeePass("cashier") }, modifier = Modifier.weight(1f)) { Text("Cashier pass") }
-                        OutlinedButton(onClick = { viewModel.issueEmployeePass("inventory_clerk") }, modifier = Modifier.weight(1f)) { Text("Stock pass") }
+                        Button(onClick = { viewModel.issueEmployeePass("cashier") }, modifier = Modifier.weight(1f)) { Text("Waiter passkey") }
                     }
                     state.employeePasskey?.let { passkey ->
                         val clipboard = LocalClipboardManager.current
@@ -598,13 +596,14 @@ NavigationBar(
                     state.employeeMembers.forEach { employee ->
                         val userId = employee.optString("member_user_id")
                         val employeeStatus = employee.optString("employment_status", "active")
+                        val employeeRole = employee.optString("role")
+                        val employeeRoleLabel = if (employeeRole == "cashier") "Waiter" else employeeRole.replace('_', ' ').replaceFirstChar { it.uppercase() }
                             Card(onClick = {
                                 selectedEmployeeId = userId
-                                selectedEmployeeRole = employee.optString("role", "cashier")
                             }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                                 Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(employee.optString("email", "Employee"), fontWeight = FontWeight.SemiBold)
-                                Text("${employee.optString("role")} · ${employeeStatus.uppercase()}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("$employeeRoleLabel · ${employeeStatus.uppercase()}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     if (employeeStatus == "active") OutlinedButton(onClick = { viewModel.setEmployeeStatus(userId, "suspended") }) { Text("Lock sales") }
                                     else Button(onClick = { viewModel.setEmployeeStatus(userId, "active") }) { Text("Reactivate") }
@@ -612,13 +611,7 @@ NavigationBar(
                                 }
                                 if (selectedEmployeeId == userId) {
                                     Text("Employee details", fontWeight = FontWeight.SemiBold)
-                                    Text("Role", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        listOf("cashier", "inventory_clerk", "manager").forEach { option ->
-                                            FilterChip(selected = selectedEmployeeRole == option, onClick = { selectedEmployeeRole = option }, label = { Text(option.replace('_', ' ')) })
-                                        }
-                                    }
-                                    Button(onClick = { viewModel.setEmployeeRole(userId, selectedEmployeeRole) }, modifier = Modifier.fillMaxWidth()) { Text("Save role") }
+                                    Text("Position: $employeeRoleLabel", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         OutlinedTextField(value = startTime, onValueChange = { startTime = it }, label = { Text("Start") }, singleLine = true, modifier = Modifier.weight(1f))
                                         OutlinedTextField(value = endTime, onValueChange = { endTime = it }, label = { Text("End") }, singleLine = true, modifier = Modifier.weight(1f))
@@ -630,7 +623,7 @@ NavigationBar(
                             }
                         }
                     }
-                    if (state.employeeMembers.isEmpty()) Text("No employees enrolled yet. Use Scan employee QR below.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (state.employeeMembers.isEmpty()) Text("No waiters enrolled yet. Use Scan employee QR below.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             },
             confirmButton = {

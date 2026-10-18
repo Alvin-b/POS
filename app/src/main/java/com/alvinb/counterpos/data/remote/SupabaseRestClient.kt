@@ -451,11 +451,20 @@ class SupabaseRestClient(context: Context) {
         return adminBusinesses().firstOrNull { it.shopId == shopId }
     }
 
-    suspend fun adminCreateBusiness(name: String, ownerEmail: String?, inventoryMode: String, counterCount: Int): JSONObject =
+    suspend fun adminCreateBusiness(
+        name: String,
+        ownerEmail: String?,
+        businessType: String,
+        businessSize: String,
+        inventoryMode: String,
+        counterCount: Int
+    ): JSONObject =
         rpcObject(
-            "admin_create_business_with_counter_setup",
+            "admin_create_business_profile",
             JSONObject().put("_name", name.trim())
                 .putNullable("_owner_email", ownerEmail?.trim()?.takeIf(String::isNotBlank))
+                .put("_business_type", businessType)
+                .put("_business_size", businessSize)
                 .put("_counter_inventory_mode", inventoryMode)
                 .put("_counter_count", counterCount)
         )

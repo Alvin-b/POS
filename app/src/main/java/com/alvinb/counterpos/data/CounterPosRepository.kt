@@ -28,7 +28,7 @@ import java.util.Locale
 import java.util.UUID
 import kotlin.math.abs
 
- data class SessionSnapshot(
+data class SessionSnapshot(
     val isAuthenticated: Boolean = false,
     val userId: String = "",
     val email: String = "",
@@ -38,6 +38,11 @@ import kotlin.math.abs
     val isLoading: Boolean = false,
     val message: String? = null,
     val error: String? = null
+)
+
+data class AdminBusinessCreationResult(
+    val createdShopId: String?,
+    val businesses: List<AdminBusiness>
 )
 
 class CounterPosRepository(
@@ -87,6 +92,12 @@ class CounterPosRepository(
         require(shop.role == "owner" || shop.role == "manager") { "Only a business owner or manager can add staff." }
         require(role in setOf("manager", "inventory_clerk", "cashier")) { "Invalid staff role." }
         remote.createAccessPass(shop.shopId, role)
+    }
+
+    suspend fun createAdminBusinessAccessPass(shopId: String, role: String): JSONObject = withContext(Dispatchers.IO) {
+        require(_session.value.isPlatformAdmin) { "Only a platform administrator can issue a client business passkey." }
+        require(role in setOf("owner", "manager", "inventory_clerk", "cashier")) { "Invalid business role." }
+        remote.createAccessPass(shopId, role)
     }
 
     suspend fun createAccessChallenge(): String = withContext(Dispatchers.IO) {
@@ -233,9 +244,17 @@ class CounterPosRepository(
         return remote.adminBusinesses()
     }
 
-    suspend fun adminCreateBusiness(name: String, ownerEmail: String, inventoryMode: String, counterCount: Int): List<AdminBusiness> {
-        remote.adminCreateBusiness(name, ownerEmail.takeIf { it.isNotBlank() }, inventoryMode, counterCount)
-        return remote.adminBusinesses()
+    suspend fun adminCreateBusiness(
+        name: String,
+        ownerEmail: String,
+        businessType: String,
+        businessSize: String,
+        inventoryMode: String,
+        counterCount: Int
+    ): AdminBusinessCreationResult {
+        val createdRow = remote.adminCreateBusiness(name, ownerEmail.takeIf { it.isNotBlank() }, businessType, businessSize, inventoryMode, counterCount)
+        val createdShopId = createdRow.optString("id").takeIf(String::isNotBlank)
+        return AdminBusinessCreationResult(createdShopId, remote.adminBusinesses())
     }
 
     suspend fun addMemberByEmail(shopId: String, email: String, role: String): List<AdminBusiness> {

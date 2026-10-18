@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -61,6 +62,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -83,11 +86,14 @@ fun SuperadminDashboardScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var businessName by remember { mutableStateOf("") }
     var ownerEmail by remember { mutableStateOf("") }
+    var businessType by remember { mutableStateOf("big_club") }
+    var businessSize by remember { mutableStateOf("medium") }
     var inventoryMode by remember { mutableStateOf("shared") }
     var counterCount by remember { mutableStateOf("1") }
     var lifecycleReason by remember { mutableStateOf("") }
     var searchQuery by remember { mutableStateOf("") }
     var statusFilter by remember { mutableStateOf("all") }
+    var showLifecycleReason by remember { mutableStateOf(false) }
     var showBusinessForm by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.loadAdminBusinesses() }
@@ -107,7 +113,7 @@ fun SuperadminDashboardScreen(
         return
     }
 
-    val activeCount = businesses.count { it.status == "active" }
+    val liveCount = businesses.count { it.status == "active" && it.ownerEmail != "Pending owner enrollment" }
     val pendingOwnerCount = businesses.count { it.ownerEmail == "Pending owner enrollment" }
     val filteredBusinesses = remember(businesses, searchQuery, statusFilter) {
         businesses.filter { business ->
@@ -129,13 +135,9 @@ fun SuperadminDashboardScreen(
                 DashboardHeader(email = email, onSignOut = onSignOut)
             }
             item {
-                DashboardHero()
-            }
-            item {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                    MetricCard("Businesses", businesses.size.toString(), Icons.Default.Storefront, Modifier.weight(1f))
-                    MetricCard("Active", activeCount.toString(), Icons.Default.CheckCircle, Modifier.weight(1f))
-                    MetricCard("Owner setup", pendingOwnerCount.toString(), Icons.Default.Groups, Modifier.weight(1f))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    MetricCard("Live", liveCount.toString(), Icons.Default.CheckCircle, Modifier.weight(1f))
+                    MetricCard("Awaiting owner", pendingOwnerCount.toString(), Icons.Default.Groups, Modifier.weight(1f))
                 }
             }
             if (!error.isNullOrBlank()) {
@@ -149,24 +151,39 @@ fun SuperadminDashboardScreen(
                     expanded = showBusinessForm,
                     businessName = businessName,
                     ownerEmail = ownerEmail,
+                    businessType = businessType,
+                    businessSize = businessSize,
                     inventoryMode = inventoryMode,
                     counterCount = counterCount,
+                    isCreating = state.isCreatingAdminBusiness,
                     onExpandedChange = { showBusinessForm = it },
                     onBusinessNameChange = { businessName = it; onClearError() },
                     onOwnerEmailChange = { ownerEmail = it; onClearError() },
+                    onBusinessTypeChange = {
+                        businessType = it
+                        if (it == "counter_seller") {
+                            businessSize = "medium"
+                            inventoryMode = "shared"
+                            counterCount = "1"
+                        }
+                    },
+                    onBusinessSizeChange = { businessSize = it },
                     onInventoryModeChange = { inventoryMode = it },
                     onCounterCountChange = { counterCount = it.filter(Char::isDigit).take(2) },
-                    onScanBusinessQr = { viewModel.openScanner(ScannerMode.ADMIN_QR) },
                     onCreateBusiness = {
                         viewModel.createBusinessForOwner(
                             businessName,
                             ownerEmail,
+                            businessType,
+                            businessSize,
                             inventoryMode,
-                            counterCount.toIntOrNull()?.coerceIn(1, 50) ?: 1
+                            if (businessType == "big_club") counterCount.toIntOrNull() ?: 1 else 1,
+                            onCreated = {
+                                businessName = ""
+                                ownerEmail = ""
+                                showBusinessForm = false
+                            }
                         )
-                        businessName = ""
-                        ownerEmail = ""
-                        showBusinessForm = false
                     }
                 )
             }
@@ -174,8 +191,8 @@ fun SuperadminDashboardScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text("Business portfolio", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                            Text("${filteredBusinesses.size} of ${businesses.size} businesses", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Businesses", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                            Text("${filteredBusinesses.size} shown · ${businesses.size} total", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Icon(Icons.Default.Business, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                     }
@@ -208,14 +225,19 @@ fun SuperadminDashboardScreen(
                             )
                         }
                     }
-                    OutlinedTextField(
-                        value = lifecycleReason,
-                        onValueChange = { lifecycleReason = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        label = { Text("Reason for suspend / close (optional)") },
-                        supportingText = { Text("This note is attached to business lifecycle changes.") }
-                    )
+                    TextButton(onClick = { showLifecycleReason = !showLifecycleReason }) {
+                        Text(if (showLifecycleReason) "Hide status note" else "Add a status note (optional)")
+                    }
+                    AnimatedVisibility(visible = showLifecycleReason) {
+                        OutlinedTextField(
+                            value = lifecycleReason,
+                            onValueChange = { lifecycleReason = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("Reason for suspend / close") },
+                            supportingText = { Text("This note is attached to business lifecycle changes.") }
+                        )
+                    }
                 }
             }
             if (filteredBusinesses.isEmpty()) {
@@ -230,8 +252,11 @@ fun SuperadminDashboardScreen(
                     PortfolioBusinessCard(
                         business = business,
                         selected = state.adminSelectedBusinessId == business.shopId,
+                        adminEnrollmentCredential = state.adminEnrollmentCredential,
                         onSelect = { viewModel.selectAdminBusiness(business.shopId) },
                         onScanPhone = { role -> viewModel.openAdminEnrollmentScanner(business.shopId, role) },
+                        onCreatePasskey = { role -> viewModel.createAdminEnrollmentPass(business.shopId, role) },
+                        onClearPasskey = viewModel::clearAdminEnrollmentCredential,
                         onStatusChange = { shopId, status, fallback ->
                             val reason = lifecycleReason.trim().ifBlank { fallback }
                             viewModel.setBusinessStatus(shopId, status, reason)
@@ -340,16 +365,23 @@ private fun RegisterBusinessCard(
     expanded: Boolean,
     businessName: String,
     ownerEmail: String,
+    businessType: String,
+    businessSize: String,
     inventoryMode: String,
     counterCount: String,
+    isCreating: Boolean,
     onExpandedChange: (Boolean) -> Unit,
     onBusinessNameChange: (String) -> Unit,
     onOwnerEmailChange: (String) -> Unit,
+    onBusinessTypeChange: (String) -> Unit,
+    onBusinessSizeChange: (String) -> Unit,
     onInventoryModeChange: (String) -> Unit,
     onCounterCountChange: (String) -> Unit,
-    onScanBusinessQr: () -> Unit,
     onCreateBusiness: () -> Unit
 ) {
+    val ownerEmailValid = ownerEmail.isBlank() || (ownerEmail.trim().contains("@") && ownerEmail.none(Char::isWhitespace))
+    val counterCountValid = businessType != "big_club" || (counterCount.toIntOrNull()?.let { it in 1..50 } == true)
+    val canCreate = businessName.trim().length in 2..120 && ownerEmailValid && counterCountValid && !isCreating
     Card(
         modifier = Modifier.fillMaxWidth().animateContentSize(),
         shape = RoundedCornerShape(21.dp),
@@ -371,11 +403,6 @@ private fun RegisterBusinessCard(
             }
             AnimatedVisibility(visible = expanded) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(onClick = onScanBusinessQr, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Import setup from business QR")
-                    }
                     OutlinedTextField(
                         value = businessName,
                         onValueChange = onBusinessNameChange,
@@ -388,48 +415,85 @@ private fun RegisterBusinessCard(
                         onValueChange = onOwnerEmailChange,
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("Owner email (optional)") },
-                        supportingText = { Text("Leave blank if the owner will enroll from another phone.") },
+                        isError = !ownerEmailValid,
+                        supportingText = { Text(if (ownerEmailValid) "Leave blank if the owner will enroll from another phone." else "Enter a valid email address or leave this blank.") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                         singleLine = true
                     )
-                    Text("Stock setup", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Business type", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
-                            selected = inventoryMode == "shared",
-                            onClick = { onInventoryModeChange("shared") },
-                            label = { Text("Shared stock") },
+                            selected = businessType == "big_club",
+                            onClick = { onBusinessTypeChange("big_club") },
+                            label = { Text("Bar / Club") },
                             modifier = Modifier.weight(1f),
-                            leadingIcon = if (inventoryMode == "shared") ({ Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }) else null
+                            leadingIcon = if (businessType == "big_club") ({ Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }) else null
                         )
                         FilterChip(
-                            selected = inventoryMode == "per_counter",
-                            onClick = { onInventoryModeChange("per_counter") },
-                            label = { Text("Per-counter") },
+                            selected = businessType == "counter_seller",
+                            onClick = { onBusinessTypeChange("counter_seller") },
+                            label = { Text("Liquor Store") },
                             modifier = Modifier.weight(1f),
-                            leadingIcon = if (inventoryMode == "per_counter") ({ Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }) else null
+                            leadingIcon = if (businessType == "counter_seller") ({ Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }) else null
                         )
                     }
                     Text(
-                        if (inventoryMode == "shared") "One balance is shared by all counters." else "Each counter keeps its own balance; stock can be transferred between counters.",
+                        if (businessType == "big_club") "Tables and working-hours controls enabled."
+                        else "Inventory and staff controls enabled; tables and working-hours screens hidden.",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    OutlinedTextField(
-                        value = counterCount,
-                        onValueChange = onCounterCountChange,
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Number of service counters") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true
-                    )
+                    if (businessType == "big_club") {
+                        Text("Club size", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("small" to "Small", "medium" to "Medium", "large" to "Large").forEach { (value, label) ->
+                                FilterChip(selected = businessSize == value, onClick = { onBusinessSizeChange(value) }, label = { Text(label) }, modifier = Modifier.weight(1f))
+                            }
+                        }
+                        Text("Stock setup", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = inventoryMode == "shared",
+                                onClick = { onInventoryModeChange("shared") },
+                                label = { Text("Shared stock") },
+                                modifier = Modifier.weight(1f),
+                                leadingIcon = if (inventoryMode == "shared") ({ Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }) else null
+                            )
+                            FilterChip(
+                                selected = inventoryMode == "per_counter",
+                                onClick = { onInventoryModeChange("per_counter") },
+                                label = { Text("Per-counter") },
+                                modifier = Modifier.weight(1f),
+                                leadingIcon = if (inventoryMode == "per_counter") ({ Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }) else null
+                            )
+                        }
+                        Text(
+                            if (inventoryMode == "shared") "One balance is shared by all service counters." else "Each counter keeps its own stock balance.",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedTextField(
+                            value = counterCount,
+                            onValueChange = onCounterCountChange,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Number of service counters (1–50)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true
+                        )
+                    } else {
+                        Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)) {
+                            Text("Liquor Store uses one counter with shared stock.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(12.dp))
+                        }
+                    }
                     Button(
                         onClick = onCreateBusiness,
-                        enabled = businessName.trim().isNotBlank(),
+                        enabled = canCreate,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        if (isCreating) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("Create business profile")
+                        Text(if (isCreating) "Creating business…" else "Create business profile")
                     }
                 }
             }
@@ -441,13 +505,27 @@ private fun RegisterBusinessCard(
 private fun PortfolioBusinessCard(
     business: AdminBusiness,
     selected: Boolean,
+    adminEnrollmentCredential: AdminEnrollmentCredential?,
     onSelect: () -> Unit,
     onScanPhone: (String) -> Unit,
+    onCreatePasskey: (String) -> Unit,
+    onClearPasskey: () -> Unit,
     onStatusChange: (String, String, String?) -> Unit
 ) {
-    var enrollmentRole by remember(business.shopId) { mutableStateOf("owner") }
-    var roleMenuExpanded by remember(business.shopId) { mutableStateOf(false) }
     val highlight = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
+    val clipboardManager = LocalClipboardManager.current
+    val visibleCredential = adminEnrollmentCredential?.takeIf { it.businessId == business.shopId }
+    val profileSummary = if (business.businessType == "big_club") {
+        "Bar / Club · ${business.businessSize.replaceFirstChar { it.uppercase() }}"
+    } else {
+        "Liquor Store"
+    }
+    val ownerSummary = if (business.ownerEmail == "Pending owner enrollment") "Owner enrollment pending" else business.ownerEmail.ifBlank { "Owner not assigned" }
+    val setupSummary = if (business.businessType == "counter_seller") {
+        "Single counter · shared stock"
+    } else {
+        "${business.counterCount} counters · ${if (business.counterInventoryMode == "per_counter") "stock per counter" else "shared stock"}"
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -463,47 +541,35 @@ private fun PortfolioBusinessCard(
                 Column(Modifier.weight(1f)) {
                     Text(business.shopName, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
-                        "${business.businessType.replace('_', ' ').replaceFirstChar { it.uppercase() }} · ${business.businessSize}",
+                        "$profileSummary · $ownerSummary",
                         fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = if (business.ownerEmail == "Pending owner enrollment") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 BusinessStatusPill(business.status)
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text("BUSINESS OWNER", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 0.8.sp)
-                Text(
-                    if (business.ownerEmail == "Pending owner enrollment") "Owner enrollment pending" else business.ownerEmail.ifBlank { "Owner not assigned" },
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                BusinessStat("Team", business.memberCount.toString(), Icons.Default.Groups, Modifier.weight(1f))
-                BusinessStat("Products", business.productCount.toString(), Icons.Default.Inventory2, Modifier.weight(1f))
-                BusinessStat("Stock units", business.stockUnits.toString(), Icons.Default.Storefront, Modifier.weight(1f))
-            }
-
-            Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Business, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(7.dp))
-                    Text(
-                        "${if (business.counterInventoryMode == "per_counter") "Separate stock" else "Shared stock"} · ${business.counterCount} counters",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Text("Created ${business.createdAt.take(10)}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            AnimatedVisibility(visible = selected) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        BusinessStat("Team", business.memberCount.toString(), Icons.Default.Groups, Modifier.weight(1f))
+                        BusinessStat("Products", business.productCount.toString(), Icons.Default.Inventory2, Modifier.weight(1f))
+                        BusinessStat("Stock units", business.stockUnits.toString(), Icons.Default.Storefront, Modifier.weight(1f))
+                    }
+                    Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Business, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(7.dp))
+                            Text(setupSummary, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                            Text("Created ${business.createdAt.take(10)}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    if (!business.lifecycleReason.isNullOrBlank()) {
+                        Text("Lifecycle note: ${business.lifecycleReason}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
-            }
-
-            if (!business.lifecycleReason.isNullOrBlank()) {
-                Text("Lifecycle note: ${business.lifecycleReason}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             OutlinedButton(onClick = onSelect, modifier = Modifier.fillMaxWidth()) {
@@ -516,35 +582,52 @@ private fun PortfolioBusinessCard(
                 Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
                     Surface(shape = RoundedCornerShape(15.dp), color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.58f)) {
                         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Enroll a phone", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            Text("Enroll the business owner", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                             Text(
-                                "On the other phone, tap ‘Sign in with QR code’. Scan its pending QR here to grant access to this business.",
+                                "Ask the owner to open QR sign-in on their phone. Scanning grants Owner access to this business; the owner manages waiter enrollment afterward.",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.weight(1f)) {
-                                    OutlinedButton(onClick = { roleMenuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
-                                        Text(enrollmentRole.replace('_', ' ').replaceFirstChar { it.uppercase() }, maxLines = 1)
-                                    }
-                                    DropdownMenu(expanded = roleMenuExpanded, onDismissRequest = { roleMenuExpanded = false }) {
-                                        listOf("owner", "manager", "inventory_clerk", "cashier").forEach { role ->
-                                            DropdownMenuItem(
-                                                text = { Text(role.replace('_', ' ').replaceFirstChar { it.uppercase() }) },
-                                                onClick = { enrollmentRole = role; roleMenuExpanded = false }
-                                            )
-                                        }
-                                    }
-                                }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Role: Owner", modifier = Modifier.weight(1f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                                 Button(
-                                    onClick = { onScanPhone(enrollmentRole) },
+                                    onClick = { onScanPhone("owner") },
                                     enabled = business.status == "active",
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(17.dp))
                                     Spacer(Modifier.width(6.dp))
-                                    Text("Scan QR", maxLines = 1)
+                                    Text("Scan owner QR", maxLines = 1)
                                 }
+                            }
+                        }
+                    }
+                    Surface(shape = RoundedCornerShape(15.dp), color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.62f)) {
+                        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Enroll with passkey", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            Text("Create a single-use owner passkey and send it privately.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Button(
+                                onClick = { onCreatePasskey("owner") },
+                                enabled = business.status == "active",
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Create owner passkey")
+                            }
+                            if (visibleCredential != null && visibleCredential.passkey.isNotBlank()) {
+                                Text("PASSKEY", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 0.8.sp)
+                                Text(visibleCredential.passkey, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedButton(
+                                        onClick = { clipboardManager.setText(AnnotatedString(visibleCredential.passkey)) },
+                                        modifier = Modifier.weight(1f)
+                                    ) { Text("Copy passkey") }
+                                    TextButton(onClick = onClearPasskey) { Text("Clear") }
+                                }
+                                Text(
+                                    "For ${visibleCredential.businessName.ifBlank { business.shopName }} · ${visibleCredential.role.replace('_', ' ')} · one use · expires in ${visibleCredential.expiresInHours} hours",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                     }
@@ -626,4 +709,10 @@ private fun EmptyPortfolioState(hasBusinesses: Boolean, onClearSearch: () -> Uni
             if (hasBusinesses) TextButton(onClick = onClearSearch) { Text("Clear filters") }
         }
     }
+}
+
+private fun businessTypeDisplayName(type: String): String = when (type) {
+    "big_club" -> "Bar / Club"
+    "counter_seller" -> "Liquor Store"
+    else -> type.replace('_', ' ').replaceFirstChar { it.uppercase() }
 }
