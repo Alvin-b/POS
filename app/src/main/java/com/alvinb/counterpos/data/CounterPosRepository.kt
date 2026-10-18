@@ -107,6 +107,12 @@ class CounterPosRepository(
         remote.approveAccessChallenge(token, shop.shopId, role)
     }
 
+    suspend fun adminApproveAccessChallenge(token: String, shopId: String, role: String) = withContext(Dispatchers.IO) {
+        require(account?.isPlatformAdmin == true) { "Only a platform administrator can enroll a user into a business." }
+        require(role in setOf("owner", "manager", "inventory_clerk", "cashier")) { "Choose a valid business role." }
+        remote.approveAccessChallenge(token, shopId, role)
+    }
+
     suspend fun shopMembers(): JSONArray = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: throw IllegalStateException("Open a business first.")
         remote.listShopMembers(shop.shopId)

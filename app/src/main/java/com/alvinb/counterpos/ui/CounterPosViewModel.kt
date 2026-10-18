@@ -42,6 +42,7 @@ data class CounterPosUiState(
     val counterStockByProduct: Map<String, Int> = emptyMap(),
     val isCreatingTable: Boolean = false,
     val adminSelectedBusinessId: String? = null,
+    val adminQrRole: String = "owner",
     val isTeamPanelOpen: Boolean = false,
     val loginQrPayload: String? = null,
     val isQrPolling: Boolean = false,
@@ -305,20 +306,69 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
     }
 
     fun selectAdminBusiness(shopId: String) = _uiState.update {
-        it.copy(adminSelectedBusinessId = shopId, notice = "Business selected. Scan a staff QR code to attach a user.")
+        it.copy(adminSelectedBusinessId = shopId, notice = "Selected. On the other phone, tap Sign in with QR code, then scan its QR here to enroll the user.")
+    }
+
+    fun openAdminEnrollmentScanner(shopId: String, role: String) {
+        val business = _adminBusinesses.value.firstOrNull { it.shopId == shopId }
+        if (!session.value.isPlatformAdmin) {
+            _uiState.update { it.copy(startupError = "Only a platform administrator can use this enrollment flow.") }
+            return
+        }
+        if (business == null || business.status != "active") {
+            _uiState.update { it.copy(startupError = "Select an active business before enrolling a phone.") }
+            return
+        }
+        if (role !in setOf("owner", "manager", "inventory_clerk", "cashier")) {
+            _uiState.update { it.copy(startupError = "Choose a valid business role.") }
+            return
+        }
+        _uiState.update {
+            it.copy(
+                adminSelectedBusinessId = shopId,
+                adminQrRole = role,
+                isScannerOpen = true,
+                scannerMode = ScannerMode.ADMIN_QR,
+                startupError = null,
+                notice = "Scan the pending sign-in QR on the other phone to enroll it as ${role.replace('_', ' ')}."
+            )
+        }
     }
 
     fun handleAdminQrCode(payload: String) {
         val qr = payload.trim()
         if (qr.startsWith("CPR1|")) {
-            val shop = session.value.activeBusiness
-            if (shop == null || shop.role !in setOf("owner", "manager")) {
-                _uiState.update { it.copy(isScannerOpen = false, actionError = "Only a business owner or manager can approve employee QR requests.") }
+            val currentSession = session.value
+            val currentState = _uiState.value
+            val isPlatformAdmin = currentSession.isPlatformAdmin
+            val shopId = if (isPlatformAdmin) currentState.adminSelectedBusinessId else currentSession.activeBusiness?.shopId
+            val business = _adminBusinesses.value.firstOrNull { it.shopId == shopId }
+            val businessRole = currentSession.activeBusiness?.role
+            val role = if (isPlatformAdmin) currentState.adminQrRole else "cashier"
+            if (shopId.isNullOrBlank()) {
+                _uiState.update { it.copy(isScannerOpen = false, startupError = "Select a business before scanning the phone's sign-in QR.") }
+            } else if (isPlatformAdmin && (business == null || business.status != "active")) {
+                _uiState.update { it.copy(isScannerOpen = false, startupError = "The selected business is not active. Reopen it before enrolling a phone.") }
+            } else if (!isPlatformAdmin && (businessRole !in setOf("owner", "manager"))) {
+                _uiState.update { it.copy(isScannerOpen = false, actionError = "Only a business owner, manager, or platform administrator can approve sign-in QR requests.") }
             } else {
+                val businessName = business?.shopName ?: currentSession.activeBusiness?.shopName ?: "the business"
                 viewModelScope.launch {
-                    runCatching { repository.approveAccessChallenge(qr) }
-                        .onSuccess { _uiState.update { it.copy(isScannerOpen = false, notice = "Employee QR approved. Their app will sign in automatically.") } }
-                        .onFailure { error -> _uiState.update { it.copy(isScannerOpen = false, actionError = error.message ?: "Could not approve employee QR") } }
+                    runCatching {
+                        if (isPlatformAdmin) repository.adminApproveAccessChallenge(qr, shopId, role)
+                        else repository.approveAccessChallenge(qr)
+                    }
+                        .onSuccess {
+                            _uiState.update {
+                                it.copy(
+                                    isScannerOpen = false,
+                                    startupError = null,
+                                    actionError = null,
+                                    notice = "Approved for $businessName as ${role.replace('_', ' ')}. The other phone should sign in automatically."
+                                )
+                            }
+                        }
+                        .onFailure { error -> _uiState.update { it.copy(isScannerOpen = false, startupError = error.message ?: "Could not approve sign-in QR") } }
                 }
             }
             return

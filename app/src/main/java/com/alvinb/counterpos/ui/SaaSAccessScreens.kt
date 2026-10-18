@@ -2,6 +2,7 @@ package com.alvinb.counterpos.ui
 
 import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,6 +21,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -408,7 +411,7 @@ private fun AdminConsoleScreen(
                     reason = reason,
                     selected = state.adminSelectedBusinessId == business.shopId,
                     onSelect = { viewModel.selectAdminBusiness(business.shopId) },
-                    onScanUser = { viewModel.openScanner(ScannerMode.ADMIN_QR) },
+                    onScanUser = { role -> viewModel.openAdminEnrollmentScanner(business.shopId, role) },
                     onStatusChange = viewModel::setBusinessStatus
                 )
             }
@@ -431,9 +434,11 @@ private fun AdminBusinessCard(
     reason: String,
     selected: Boolean,
     onSelect: () -> Unit,
-    onScanUser: () -> Unit,
+    onScanUser: (String) -> Unit,
     onStatusChange: (String, String, String?) -> Unit
 ) {
+    var enrollmentRole by remember(business.shopId) { mutableStateOf("owner") }
+    var enrollmentRoleMenuExpanded by remember(business.shopId) { mutableStateOf(false) }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -452,8 +457,34 @@ private fun AdminBusinessCard(
                 Text(if (selected) "Business profile open" else "Open business profile")
             }
             if (selected) {
-                Text("User QR format: COUNTERPOS|USER|registered-user@email|cashier", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Button(onClick = onScanUser, modifier = Modifier.fillMaxWidth()) { Text("Scan user QR") }
+                Text("On the phone to enroll, tap ‘Sign in with QR code’ and keep its QR visible. Scan it here to add that phone to this business.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.weight(1f)) {
+                        OutlinedButton(
+                            onClick = { enrollmentRoleMenuExpanded = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(enrollmentRole.replace('_', ' ').replaceFirstChar { it.uppercase() }) }
+                        DropdownMenu(
+                            expanded = enrollmentRoleMenuExpanded,
+                            onDismissRequest = { enrollmentRoleMenuExpanded = false }
+                        ) {
+                            listOf("owner", "manager", "inventory_clerk", "cashier").forEach { role ->
+                                DropdownMenuItem(
+                                    text = { Text(role.replace('_', ' ').replaceFirstChar { it.uppercase() }) },
+                                    onClick = {
+                                        enrollmentRole = role
+                                        enrollmentRoleMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    Button(
+                        onClick = { onScanUser(enrollmentRole) },
+                        enabled = business.status == "active",
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Scan phone QR") }
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (business.status != "active") {
