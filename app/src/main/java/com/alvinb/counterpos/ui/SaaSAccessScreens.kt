@@ -89,7 +89,7 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                 qrPayload = state.loginQrPayload,
                 onClearError = viewModel::clearStartupError
             )
-            session.isPlatformAdmin -> AdminConsoleScreen(
+            session.isPlatformAdmin -> SuperadminDashboardScreen(
                 viewModel = viewModel,
                 email = session.email,
                 error = state.startupError,
