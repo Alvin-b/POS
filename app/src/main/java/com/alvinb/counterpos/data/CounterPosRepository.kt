@@ -10,6 +10,7 @@ import com.alvinb.counterpos.data.local.entity.TableOrderEntity
 import com.alvinb.counterpos.data.local.entity.serializeSaleUnits
 import com.alvinb.counterpos.data.remote.AccountSnapshot
 import com.alvinb.counterpos.data.remote.AdminBusiness
+import com.alvinb.counterpos.data.remote.AdminAuditEvent
 import com.alvinb.counterpos.data.remote.AuthSession
 import com.alvinb.counterpos.data.remote.BusinessMembership
 import com.alvinb.counterpos.data.remote.CounterReportRow
@@ -218,13 +219,21 @@ class CounterPosRepository(
         return remote.adminBusinesses()
     }
 
-    suspend fun adminCreateBusiness(name: String, ownerEmail: String): List<AdminBusiness> {
-        remote.adminCreateBusiness(name, ownerEmail.takeIf { it.isNotBlank() })
+    suspend fun adminCreateBusiness(name: String, ownerEmail: String, businessType: String = "big_club", businessSize: String = "medium"): List<AdminBusiness> {
+        remote.adminCreateBusiness(name, ownerEmail.takeIf { it.isNotBlank() }, businessType, businessSize)
         return remote.adminBusinesses()
     }
     suspend fun adminCreateAccessPass(shopId: String, role: String = "owner"): JSONObject = withContext(Dispatchers.IO) {
-        require(role == "owner") { "Only business owner passes are currently issued from the platform portal." }
+        require(role in setOf("owner", "cashier")) { "Only owner and staff passes are currently issued from the platform portal." }
         remote.createAccessPass(shopId, role)
+    }
+
+    suspend fun adminAuditEvents(shopId: String): List<AdminAuditEvent> = withContext(Dispatchers.IO) {
+        remote.adminAuditEvents(shopId)
+    }
+
+    suspend fun adminApproveAccessChallenge(token: String, shopId: String, role: String = "cashier") = withContext(Dispatchers.IO) {
+        remote.approveAccessChallenge(token, shopId, role)
     }
 
     suspend fun addMemberByEmail(shopId: String, email: String, role: String): List<AdminBusiness> {
@@ -381,7 +390,9 @@ class CounterPosRepository(
         dao.clearSales()
         dao.insertSales(sales)
         val tables = buildList {
-            val rows = remote.diningTables(membership.shopId)
+            // Tables are optional for liquor stores and older Supabase projects may not
+            // have the table migration yet. Do not block sign-in or POS sync in that case.
+            val rows = runCatching { remote.diningTables(membership.shopId) }.getOrDefault(JSONArray())
             for (index in 0 until rows.length()) {
                 rows.optJSONObject(index)?.let { row ->
                     add(
@@ -395,7 +406,7 @@ class CounterPosRepository(
             }
         }
         val orders = buildList {
-            val rows = remote.tableOrders(membership.shopId)
+            val rows = runCatching { remote.tableOrders(membership.shopId) }.getOrDefault(JSONArray())
             for (index in 0 until rows.length()) {
                 rows.optJSONObject(index)?.let { row ->
                     add(

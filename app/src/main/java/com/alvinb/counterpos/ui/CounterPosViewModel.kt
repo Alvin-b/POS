@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.alvinb.counterpos.data.CounterPosRepository
 import com.alvinb.counterpos.data.remote.AdminBusiness
+import com.alvinb.counterpos.data.remote.AdminAuditEvent
 import com.alvinb.counterpos.data.remote.CounterReportRow
 import com.alvinb.counterpos.data.remote.ServiceCounter
 import com.alvinb.counterpos.data.SessionSnapshot
@@ -51,6 +52,10 @@ data class CounterPosUiState(
     val employeePasskey: String? = null,
     val isCreatingEmployee: Boolean = false,
     val adminBusinessPasskey: String? = null,
+    val adminAuditEvents: List<AdminAuditEvent> = emptyList(),
+    val enrollmentCredential: EnrollmentCredential? = null,
+    val isAdminLoading: Boolean = false,
+    val isAdminMutating: Boolean = false,
 
     // Sale sheet
     val selectedSaleCode: String? = null,
@@ -85,6 +90,14 @@ data class CounterPosUiState(
     val startupError: String? = null
 )
 
+data class EnrollmentCredential(
+    val businessId: String,
+    val businessName: String,
+    val role: String,
+    val passkey: String,
+    val qrPayload: String
+)
+
 class CounterPosViewModel(private val repository: CounterPosRepository) : ViewModel() {
     val session = repository.session.stateIn(viewModelScope, SharingStarted.Eagerly, SessionSnapshot())
     private val _adminBusinesses = MutableStateFlow<List<AdminBusiness>>(emptyList())
@@ -97,6 +110,7 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
 
     private val _uiState = MutableStateFlow(CounterPosUiState())
     val uiState = _uiState.asStateFlow()
+    private var adminRequestInProgress = false
     private var mutationInProgress = false
 
     init {
@@ -156,6 +170,8 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                 val message = error.message.orEmpty()
                 val friendly = if (message.contains("function was not found", ignoreCase = true) || message.contains("404")) {
                     "Secure QR sign-in is not deployed on this Supabase project. Deploy create-access-challenge, then tap Retry."
+                } else if (message.contains("dining_tables", ignoreCase = true) || message.contains("schema cache", ignoreCase = true)) {
+                    "QR sign-in is temporarily unavailable because the Supabase Tables schema is missing. Use a passkey now, then apply supabase/migrations/202610190001_tables.sql."
                 } else message.ifBlank { "Could not prepare QR sign-in" }
                 _uiState.update { it.copy(loginQrPayload = null, startupError = friendly, notice = null) }
             }
@@ -312,22 +328,35 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
             .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not save working hours") } }
     }
 
-    fun loadAdminBusinesses() = viewModelScope.launch {
+    fun loadAdminBusinesses(force: Boolean = false) = viewModelScope.launch {
+        if (adminRequestInProgress || (!force && _adminBusinesses.value.isNotEmpty())) return@launch
+        _uiState.update { it.copy(isAdminLoading = true, startupError = null) }
         runCatching { repository.adminBusinesses() }
             .onSuccess { _adminBusinesses.value = it }
             .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not load businesses") } }
+        _uiState.update { it.copy(isAdminLoading = false) }
     }
 
     fun setBusinessStatus(shopId: String, status: String, reason: String?) = viewModelScope.launch {
+        if (adminRequestInProgress) return@launch
+        adminRequestInProgress = true
+        _uiState.update { it.copy(isAdminMutating = true, startupError = null) }
         runCatching { repository.adminSetBusinessStatus(shopId, status, reason) }
-            .onSuccess { _adminBusinesses.value = it }
+            .onSuccess { _adminBusinesses.value = it; _uiState.update { state -> state.copy(notice = if (status == "active") "Business reopened" else "Business marked $status") } }
             .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not change business status") } }
+        adminRequestInProgress = false
+        _uiState.update { it.copy(isAdminMutating = false) }
     }
 
-    fun createBusinessForOwner(name: String, ownerEmail: String) = viewModelScope.launch {
-        runCatching { repository.adminCreateBusiness(name, ownerEmail) }
-            .onSuccess { _adminBusinesses.value = it }
-            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not create business") } }
+    fun createBusinessForOwner(name: String, ownerEmail: String, businessType: String = "big_club", businessSize: String = "medium") = viewModelScope.launch {
+        if (adminRequestInProgress) return@launch
+        adminRequestInProgress = true
+        _uiState.update { it.copy(isAdminMutating = true, startupError = null, notice = "Registering business…") }
+        runCatching { repository.adminCreateBusiness(name, ownerEmail, businessType, businessSize) }
+            .onSuccess { _adminBusinesses.value = it; _uiState.update { state -> state.copy(notice = "${businessType.replace('_', ' ')} business registered. Select it below to issue owner access.") } }
+            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not create business", notice = null) } }
+        adminRequestInProgress = false
+        _uiState.update { it.copy(isAdminMutating = false) }
     }
     fun generateBusinessOwnerPass(shopId: String) = viewModelScope.launch {
         _uiState.update { it.copy(startupError = null, notice = "Creating business owner pass…") }
@@ -337,21 +366,39 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
     }
     fun clearBusinessOwnerPass() = _uiState.update { it.copy(adminBusinessPasskey = null) }
 
-    fun selectAdminBusiness(shopId: String) = _uiState.update {
-        it.copy(adminSelectedBusinessId = shopId, notice = "Business selected. Scan a staff QR code to attach a user.")
+    fun selectAdminBusiness(shopId: String) {
+        _uiState.update { it.copy(adminSelectedBusinessId = shopId, adminAuditEvents = emptyList(), enrollmentCredential = null, notice = "Business selected. Generate an access pass for its owner or staff.") }
+        viewModelScope.launch {
+            runCatching { repository.adminAuditEvents(shopId) }
+                .onSuccess { events -> _uiState.update { state -> state.copy(adminAuditEvents = events) } }
+                .onFailure { error -> _uiState.update { state -> state.copy(startupError = error.message ?: "Could not load audit history") } }
+        }
     }
+
+    fun generateEnrollmentCredential(business: AdminBusiness, role: String) = viewModelScope.launch {
+        if (adminRequestInProgress || business.status != "active") return@launch
+        adminRequestInProgress = true
+        _uiState.update { it.copy(isAdminMutating = true, startupError = null, notice = "Creating a one-time access pass…") }
+        runCatching { repository.adminCreateAccessPass(business.shopId, role) }
+            .onSuccess { pass -> _uiState.update { it.copy(enrollmentCredential = EnrollmentCredential(business.shopId, business.shopName, role, pass.optString("passkey"), "CPX1.${pass.optString("passkey")}"), notice = "One-time ${role.replace('_', ' ')} pass created. Share it privately.") } }
+            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not create access pass") } }
+        adminRequestInProgress = false
+        _uiState.update { it.copy(isAdminMutating = false) }
+    }
+
+    fun clearEnrollmentCredential() = _uiState.update { it.copy(enrollmentCredential = null) }
 
     fun handleAdminQrCode(payload: String) {
         val qr = payload.trim()
         if (qr.startsWith("CPR1|")) {
-            val shop = session.value.activeBusiness
-            if (shop == null || shop.role !in setOf("owner", "manager")) {
-                _uiState.update { it.copy(isScannerOpen = false, actionError = "Only a business owner or manager can approve employee QR requests.") }
+            val shopId = _uiState.value.adminSelectedBusinessId
+            if (shopId.isNullOrBlank()) {
+                _uiState.update { it.copy(isScannerOpen = false, startupError = "Open a business profile before approving an enrollment QR.") }
             } else {
                 viewModelScope.launch {
-                    runCatching { repository.approveAccessChallenge(qr) }
-                        .onSuccess { _uiState.update { it.copy(isScannerOpen = false, notice = "Employee QR approved. Their app will sign in automatically.") } }
-                        .onFailure { error -> _uiState.update { it.copy(isScannerOpen = false, actionError = error.message ?: "Could not approve employee QR") } }
+                    runCatching { repository.adminApproveAccessChallenge(qr, shopId) }
+                        .onSuccess { _uiState.update { it.copy(isScannerOpen = false, notice = "Enrollment approved. The other phone will sign in automatically.") } }
+                        .onFailure { error -> _uiState.update { it.copy(isScannerOpen = false, startupError = error.message ?: "Could not approve enrollment QR") } }
                 }
             }
             return

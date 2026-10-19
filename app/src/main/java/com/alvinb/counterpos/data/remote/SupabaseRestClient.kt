@@ -55,6 +55,14 @@ data class AdminBusiness(
     val lifecycleReason: String?
 )
 
+data class AdminAuditEvent(
+    val action: String,
+    val entityType: String,
+    val actorUserId: String?,
+    val metadata: String,
+    val createdAt: String
+)
+
 data class ServiceCounter(
     val id: String,
     val name: String,
@@ -428,11 +436,21 @@ class SupabaseRestClient(context: Context) {
         return adminBusinesses().firstOrNull { it.shopId == shopId }
     }
 
-    suspend fun adminCreateBusiness(name: String, ownerEmail: String?): JSONObject =
+    suspend fun adminCreateBusiness(name: String, ownerEmail: String?, businessType: String = "big_club", businessSize: String = "medium"): JSONObject =
         rpcObject(
             "admin_create_business",
             JSONObject().put("_name", name.trim()).putNullable("_owner_email", ownerEmail?.trim()?.takeIf(String::isNotBlank))
+                .put("_business_type", businessType).put("_business_size", businessSize)
         )
+
+    suspend fun adminAuditEvents(shopId: String): List<AdminAuditEvent> {
+        val rows = query("audit_events?shop_id=eq.$shopId&select=action,entity_type,actor_user_id,metadata,created_at&order=created_at.desc&limit=30")
+        return buildList {
+            for (index in 0 until rows.length()) rows.optJSONObject(index)?.let { row ->
+                add(AdminAuditEvent(row.optString("action"), row.optString("entity_type"), row.optString("actor_user_id").takeIf(String::isNotBlank), row.optJSONObject("metadata")?.toString() ?: "{}", row.optString("created_at")))
+            }
+        }
+    }
 
     suspend fun addMemberByEmail(shopId: String, email: String, role: String): JSONObject =
         rpcObject(
