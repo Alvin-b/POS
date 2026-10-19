@@ -210,6 +210,12 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
             try {
                 val result = repository.pollAccessChallenge(token)
                 if (result != null) {
+                    result.businessId?.let { businessId ->
+                        runCatching { repository.selectBusiness(businessId) }
+                            .onFailure { error ->
+                                _uiState.update { state -> state.copy(startupError = error.message ?: "Could not open the enrolled business") }
+                            }
+                    }
                     _uiState.update { it.copy(isQrPolling = false, notice = "Signed in successfully") }
                     return
                 }

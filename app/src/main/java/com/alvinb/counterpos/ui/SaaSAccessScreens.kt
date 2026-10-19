@@ -41,7 +41,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -88,7 +87,6 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                 onQrSignIn = viewModel::signInWithQrRequested,
                 onScanAccessQr = { viewModel.openScanner(ScannerMode.ADMIN_QR) },
                 qrPayload = state.loginQrPayload,
-                qrExpiresAtMillis = state.loginQrExpiresAtMillis,
                 isQrPolling = state.isQrPolling,
                 onClearError = viewModel::clearStartupError
             )
@@ -137,27 +135,12 @@ private fun AuthScreen(
     onQrSignIn: () -> Unit,
     onScanAccessQr: () -> Unit,
     qrPayload: String?,
-    qrExpiresAtMillis: Long?,
     isQrPolling: Boolean,
     onClearError: () -> Unit
 ) {
     var credential by remember { mutableStateOf("") }
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
-    var qrSecondsRemaining by remember(qrPayload, qrExpiresAtMillis) { mutableStateOf(0L) }
-
-    LaunchedEffect(qrPayload, qrExpiresAtMillis) {
-        if (qrPayload == null || qrExpiresAtMillis == null) {
-            qrSecondsRemaining = 0L
-            return@LaunchedEffect
-        }
-        while (true) {
-            qrSecondsRemaining = ((qrExpiresAtMillis - System.currentTimeMillis()) / 1_000L).coerceAtLeast(0L)
-            if (qrSecondsRemaining == 0L) break
-            delay(1_000L)
-        }
-    }
-
     fun pasteFromClipboard() {
         val clipText = clipboardManager.getText()?.text
         val textToPaste = if (!clipText.isNullOrBlank()) {
@@ -184,15 +167,8 @@ private fun AuthScreen(
         Spacer(Modifier.height(24.dp))
         if (qrPayload != null) {
             LoginQrCard(payload = qrPayload)
-            Text(
-                if (qrSecondsRemaining > 0L) "QR expires in ${qrSecondsRemaining / 60}:${(qrSecondsRemaining % 60).toString().padStart(2, '0')}"
-                else "QR expired",
-                color = if (qrSecondsRemaining > 0L) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 12.sp
-            )
             OutlinedButton(onClick = onQrSignIn, enabled = !isQrPolling, modifier = Modifier.fillMaxWidth()) {
-                Text(if (qrSecondsRemaining == 0L) "Refresh QR" else "Generate new QR")
+                Text("Refresh QR")
             }
         }
         else Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (error.isNullOrBlank()) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.errorContainer)) {

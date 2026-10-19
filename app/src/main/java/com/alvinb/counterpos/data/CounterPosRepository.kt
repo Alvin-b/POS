@@ -54,6 +54,10 @@ class CounterPosRepository(
         val token: String,
         val expiresAtMillis: Long
     )
+    data class ApprovedAccess(
+        val session: SessionSnapshot,
+        val businessId: String?
+    )
     val products: Flow<List<ProductEntity>> = dao.observeProducts()
     val sales: Flow<List<SaleEntity>> = dao.observeSales()
     val diningTables: Flow<List<DiningTableEntity>> = dao.observeDiningTables()
@@ -112,11 +116,14 @@ class CounterPosRepository(
         AccessChallenge(token, System.currentTimeMillis() + lifetimeSeconds * 1_000L)
     }
 
-    suspend fun pollAccessChallenge(token: String): SessionSnapshot? = withContext(Dispatchers.IO) {
+    suspend fun pollAccessChallenge(token: String): ApprovedAccess? = withContext(Dispatchers.IO) {
         val result = remote.pollAccessChallenge(token)
         if (result.optString("status") != "approved") return@withContext null
         remote.signIn(result.optString("email"), result.optString("password"))
-        loadAccount(autoSelectFirstBusiness = true)
+        ApprovedAccess(
+            session = loadAccount(autoSelectFirstBusiness = true),
+            businessId = result.optString("business_id").takeIf(String::isNotBlank)
+        )
     }
 
     suspend fun approveAccessChallenge(token: String, role: String = "cashier") = withContext(Dispatchers.IO) {
