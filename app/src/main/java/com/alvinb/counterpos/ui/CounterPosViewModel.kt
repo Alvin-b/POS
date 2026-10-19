@@ -534,7 +534,13 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                                 launchBusinessWorkspace(shopId)
                             }
                         }
-                        .onFailure { error -> _uiState.update { it.copy(isScannerOpen = false, startupError = error.message ?: "Could not approve sign-in QR") } }
+                        .onFailure { error ->
+                            val message = error.message.orEmpty()
+                            val friendly = if (message.contains("expired", ignoreCase = true) || message.contains("session", ignoreCase = true) && message.contains("used", ignoreCase = true)) {
+                                "This QR session has expired. Ask the other phone to tap Refresh QR, then scan the new code."
+                            } else message.ifBlank { "Could not approve sign-in QR" }
+                            _uiState.update { it.copy(isScannerOpen = false, startupError = friendly) }
+                        }
                 }
             }
             return

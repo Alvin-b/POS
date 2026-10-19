@@ -171,12 +171,18 @@ private fun AuthScreen(
         Text("Counter POS", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         Text("Secure business point of sale", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
-        if (qrPayload != null) LoginQrCard(payload = qrPayload)
+        val qrExpired = error?.let { message ->
+            message.contains("expired", ignoreCase = true) ||
+                message.contains("session expired", ignoreCase = true) ||
+                message.contains("already used", ignoreCase = true) ||
+                message.contains("used", ignoreCase = true)
+        } == true
+        if (qrPayload != null && !qrExpired) LoginQrCard(payload = qrPayload)
         else Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (error.isNullOrBlank()) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.errorContainer)) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(if (error.isNullOrBlank()) "Preparing secure QR sign-in…" else "Secure QR sign-in unavailable", fontWeight = FontWeight.SemiBold)
+                Text(if (qrExpired) "QR code expired" else if (error.isNullOrBlank()) "Preparing secure QR sign-in…" else "Secure QR sign-in unavailable", fontWeight = FontWeight.SemiBold)
                 if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 12.sp)
-                OutlinedButton(onClick = { onClearError(); onQrSignIn() }, modifier = Modifier.fillMaxWidth()) { Text("Retry QR setup") }
+                OutlinedButton(onClick = { onClearError(); onQrSignIn() }, modifier = Modifier.fillMaxWidth()) { Text(if (qrExpired) "Refresh QR" else "Retry QR setup") }
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -232,7 +238,7 @@ private fun AuthScreen(
                     ) { Text("Continue") }
                 }
                 OutlinedButton(onClick = onQrSignIn, modifier = Modifier.fillMaxWidth()) { Text("Sign in with QR code") }
-                if (qrPayload != null) {
+                if (qrPayload != null && !qrExpired) {
                     OutlinedButton(onClick = onQrSignIn, modifier = Modifier.fillMaxWidth()) { Text("Refresh QR") }
                 }
                 OutlinedButton(onClick = onScanAccessQr, modifier = Modifier.fillMaxWidth()) { Text("Scan access pass QR") }
