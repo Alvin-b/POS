@@ -54,6 +54,7 @@ data class CounterPosUiState(
     val isCreatingAdminBusiness: Boolean = false,
     val isTeamPanelOpen: Boolean = false,
     val loginQrPayload: String? = null,
+    val loginQrExpiresAtMillis: Long? = null,
     val isQrPolling: Boolean = false,
     val employeeMembers: List<JSONObject> = emptyList(),
     val isSavingBusinessName: Boolean = false,
@@ -166,16 +167,17 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
         if (_uiState.value.isQrPolling) return@launch
         _uiState.update { it.copy(loginQrPayload = null, isQrPolling = false, startupError = null, notice = "Connecting to secure QR sign-in…") }
         runCatching { repository.createAccessChallenge() }
-            .onSuccess { token ->
+            .onSuccess { challenge ->
                 _uiState.update {
                     it.copy(
-                        loginQrPayload = token,
+                        loginQrPayload = challenge.token,
+                        loginQrExpiresAtMillis = challenge.expiresAtMillis,
                         isQrPolling = true,
                         startupError = null,
                         notice = "QR ready. Scan it with the Superadmin phone; this phone will sign in automatically."
                     )
                 }
-                pollAccessChallengeUntilApproved(token)
+                pollAccessChallengeUntilApproved(challenge.token)
             }
             .onFailure { error ->
                 val message = error.message.orEmpty()
@@ -188,7 +190,9 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
 
     fun signInWithQrRequested() = viewModelScope.launch {
         if (_uiState.value.isQrPolling) return@launch
-        if (_uiState.value.startupError?.contains("expired", ignoreCase = true) == true) {
+        if (_uiState.value.startupError?.contains("expired", ignoreCase = true) == true ||
+            (_uiState.value.loginQrExpiresAtMillis ?: Long.MAX_VALUE) <= System.currentTimeMillis()
+        ) {
             prepareQrChallenge()
             return@launch
         }
@@ -215,27 +219,36 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                     (message.contains("qr", ignoreCase = true) && message.contains("not found", ignoreCase = true))
                 if (qrNotFound && missingQrRetries == 0) {
                     val replacement = runCatching { repository.createAccessChallenge() }.getOrNull()
-                    if (!replacement.isNullOrBlank()) {
+                    if (replacement != null) {
                         _uiState.update {
                             it.copy(
-                                loginQrPayload = replacement,
+                                loginQrPayload = replacement.token,
+                                loginQrExpiresAtMillis = replacement.expiresAtMillis,
                                 isQrPolling = true,
                                 startupError = null,
                                 notice = "The previous QR was not registered. A fresh QR is ready; ask the Superadmin to scan this new code."
                             )
                         }
-                        return pollAccessChallengeUntilApproved(replacement, missingQrRetries + 1)
+                        return pollAccessChallengeUntilApproved(replacement.token, missingQrRetries + 1)
                     }
                 }
                 val friendly = if (qrNotFound) {
                     "The login QR is not registered by the connected backend. Deploy the current create-access-challenge and poll-access-challenge functions to this Supabase project, then tap Retry QR setup."
+                } else if (message.contains("expired", ignoreCase = true) || message.contains("used", ignoreCase = true)) {
+                    "This QR code has expired or was already used. Tap Refresh QR to generate a new one."
                 } else message.ifBlank { "QR sign-in failed" }
                 _uiState.update { it.copy(loginQrPayload = null, isQrPolling = false, startupError = friendly, notice = null) }
                 return
             }
             delay(2_000)
         }
-        _uiState.update { it.copy(isQrPolling = false, startupError = "QR request expired. Generate a new QR code and try again.") }
+        _uiState.update {
+            it.copy(
+                isQrPolling = false,
+                startupError = "This QR code has expired. Tap Refresh QR to generate a new one.",
+                notice = null
+            )
+        }
     }
 
     fun signUp(email: String, password: String) = viewModelScope.launch {
@@ -259,7 +272,7 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
 
     fun signOut() = viewModelScope.launch {
         repository.signOut()
-        _uiState.update { it.copy(loginQrPayload = null, isQrPolling = false, adminEnrollmentCredential = null, startupError = null, notice = null) }
+        _uiState.update { it.copy(loginQrPayload = null, loginQrExpiresAtMillis = null, isQrPolling = false, adminEnrollmentCredential = null, startupError = null, notice = null) }
         prepareQrChallenge()
     }
 

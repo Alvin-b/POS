@@ -50,6 +50,10 @@ class CounterPosRepository(
     private val assets: AssetManager,
     private val remote: SupabaseRestClient
 ) {
+    data class AccessChallenge(
+        val token: String,
+        val expiresAtMillis: Long
+    )
     val products: Flow<List<ProductEntity>> = dao.observeProducts()
     val sales: Flow<List<SaleEntity>> = dao.observeSales()
     val diningTables: Flow<List<DiningTableEntity>> = dao.observeDiningTables()
@@ -100,9 +104,12 @@ class CounterPosRepository(
         remote.createAccessPass(shopId, role)
     }
 
-    suspend fun createAccessChallenge(): String = withContext(Dispatchers.IO) {
-        remote.createAccessChallenge().optString("token").takeIf(String::isNotBlank)
+    suspend fun createAccessChallenge(): AccessChallenge = withContext(Dispatchers.IO) {
+        val response = remote.createAccessChallenge()
+        val token = response.optString("token").takeIf(String::isNotBlank)
             ?: throw IllegalStateException("Could not create QR sign-in request.")
+        val lifetimeSeconds = response.optLong("expires_in_seconds", 600L).coerceAtLeast(30L)
+        AccessChallenge(token, System.currentTimeMillis() + lifetimeSeconds * 1_000L)
     }
 
     suspend fun pollAccessChallenge(token: String): SessionSnapshot? = withContext(Dispatchers.IO) {

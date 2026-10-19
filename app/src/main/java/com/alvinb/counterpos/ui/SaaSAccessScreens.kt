@@ -41,6 +41,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -87,6 +88,7 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                 onQrSignIn = viewModel::signInWithQrRequested,
                 onScanAccessQr = { viewModel.openScanner(ScannerMode.ADMIN_QR) },
                 qrPayload = state.loginQrPayload,
+                qrExpiresAtMillis = state.loginQrExpiresAtMillis,
                 isQrPolling = state.isQrPolling,
                 onClearError = viewModel::clearStartupError
             )
@@ -135,12 +137,26 @@ private fun AuthScreen(
     onQrSignIn: () -> Unit,
     onScanAccessQr: () -> Unit,
     qrPayload: String?,
+    qrExpiresAtMillis: Long?,
     isQrPolling: Boolean,
     onClearError: () -> Unit
 ) {
     var credential by remember { mutableStateOf("") }
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
+    var qrSecondsRemaining by remember(qrPayload, qrExpiresAtMillis) { mutableStateOf(0L) }
+
+    LaunchedEffect(qrPayload, qrExpiresAtMillis) {
+        if (qrPayload == null || qrExpiresAtMillis == null) {
+            qrSecondsRemaining = 0L
+            return@LaunchedEffect
+        }
+        while (true) {
+            qrSecondsRemaining = ((qrExpiresAtMillis - System.currentTimeMillis()) / 1_000L).coerceAtLeast(0L)
+            if (qrSecondsRemaining == 0L) break
+            delay(1_000L)
+        }
+    }
 
     fun pasteFromClipboard() {
         val clipText = clipboardManager.getText()?.text
@@ -166,7 +182,19 @@ private fun AuthScreen(
         Text("Counter POS", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         Text("Secure business point of sale", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
-        if (qrPayload != null) LoginQrCard(payload = qrPayload)
+        if (qrPayload != null) {
+            LoginQrCard(payload = qrPayload)
+            Text(
+                if (qrSecondsRemaining > 0L) "QR expires in ${qrSecondsRemaining / 60}:${(qrSecondsRemaining % 60).toString().padStart(2, '0')}"
+                else "QR expired",
+                color = if (qrSecondsRemaining > 0L) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 12.sp
+            )
+            OutlinedButton(onClick = onQrSignIn, enabled = !isQrPolling, modifier = Modifier.fillMaxWidth()) {
+                Text(if (qrSecondsRemaining == 0L) "Refresh QR" else "Generate new QR")
+            }
+        }
         else Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (error.isNullOrBlank()) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.errorContainer)) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(if (error.isNullOrBlank()) "Preparing secure QR sign-in…" else "Secure QR sign-in unavailable", fontWeight = FontWeight.SemiBold)
@@ -178,7 +206,7 @@ private fun AuthScreen(
         Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Sign in", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                Text("Enter your business or employee passkey, or the current Superadmin token. Access opens automatically for your account.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Enter your access passkey. The app opens the workspace and features allowed for your account.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(
                     value = credential,
                     onValueChange = { credential = it; onClearError() },
@@ -227,7 +255,7 @@ private fun AuthScreen(
                     ) { Text("Continue") }
                 }
                 if (isQrPolling) {
-                    Text("QR pairing is active. Scan this code with Superadmin; this phone will open the business automatically.", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                    Text("QR pairing is active. An authorized administrator can scan this code; this phone will open the business automatically.", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
                 }
                 OutlinedButton(onClick = onQrSignIn, enabled = !isQrPolling, modifier = Modifier.fillMaxWidth()) {
                     Text(if (isQrPolling) "Waiting for QR approval…" else "Continue QR sign-in")
