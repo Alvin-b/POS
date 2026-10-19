@@ -183,7 +183,7 @@ private fun AuthScreen(
         Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Sign in", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                Text("Enter your business or employee passkey, or the current Superadmin token. Access opens automatically for your account.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Enter your access passkey. The app opens the workspace and features allowed for your account.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(
                     value = credential,
                     onValueChange = { credential = it; onClearError() },
@@ -232,6 +232,9 @@ private fun AuthScreen(
                     ) { Text("Continue") }
                 }
                 OutlinedButton(onClick = onQrSignIn, modifier = Modifier.fillMaxWidth()) { Text("Sign in with QR code") }
+                if (qrPayload != null) {
+                    OutlinedButton(onClick = onQrSignIn, modifier = Modifier.fillMaxWidth()) { Text("Refresh QR") }
+                }
                 OutlinedButton(onClick = onScanAccessQr, modifier = Modifier.fillMaxWidth()) { Text("Scan access pass QR") }
                 if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 if (!notice.isNullOrBlank()) Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
