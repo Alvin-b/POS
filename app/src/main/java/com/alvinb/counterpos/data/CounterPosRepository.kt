@@ -94,8 +94,8 @@ class CounterPosRepository(
 
     suspend fun signInWithPasskey(passkey: String): SessionSnapshot = withContext(Dispatchers.IO) {
         require(passkey.trim().isNotBlank()) { "Enter the passkey sent by the business owner." }
-        remote.redeemAccessPass(passkey.trim())
-        loadAccount(autoSelectFirstBusiness = true)
+        val redemption = remote.redeemAccessPass(passkey.trim())
+        loadAccount(autoSelectFirstBusiness = true, preferredShopId = redemption.businessId)
     }
 
     suspend fun signInWithSuperadminToken(token: String): SessionSnapshot = withContext(Dispatchers.IO) {

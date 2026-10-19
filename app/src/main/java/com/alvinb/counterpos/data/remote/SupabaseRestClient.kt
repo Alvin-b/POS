@@ -81,6 +81,11 @@ data class CounterReportRow(
     val revenueKsh: Long
 )
 
+data class AccessPassRedemption(
+    val session: AuthSession,
+    val businessId: String?
+)
+
 class SupabaseRestClient(context: Context) {
     private val sessionStore = EncryptedSessionStore(context)
     private var session: AuthSession? = loadSession()
@@ -104,11 +109,14 @@ class SupabaseRestClient(context: Context) {
         created
     }
 
-    suspend fun redeemAccessPass(passkey: String): AuthSession = withContext(Dispatchers.IO) {
+    suspend fun redeemAccessPass(passkey: String): AccessPassRedemption = withContext(Dispatchers.IO) {
         val json = parseObject(request("/functions/v1/redeem-access-pass", "POST", JSONObject().put("passkey", passkey.trim()).toString(), false))
         val email = json.optString("email").takeIf(String::isNotBlank)
             ?: throw IOException(json.optString("error", "Invalid passkey"))
-        authenticate("password", email, json.optString("password"))
+        AccessPassRedemption(
+            session = authenticate("password", email, json.optString("password")),
+            businessId = json.optString("business_id").takeIf(String::isNotBlank)
+        )
     }
 
     suspend fun createAccessPass(shopId: String, role: String): JSONObject =
