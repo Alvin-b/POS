@@ -728,10 +728,26 @@ class CounterPosRepository(
 
     suspend fun addFromLibrary(code: String, quantity: Int, priceKsh: Int, unitCostKsh: Int, selectedCounterId: String? = null): Boolean =
         withActiveBusiness {
-            val catalogId = dao.getProductByCode(code)?.remoteId ?: return@withActiveBusiness false
+            val catalogId = dao.getProductByCode(code)?.remoteId
+                ?: throw IllegalStateException("This catalog item is not linked to the Supabase catalog. Refresh the product list and try again.")
             val counterId = selectedCounterId?.takeIf(String::isNotBlank)
                 ?: throw IllegalStateException("Choose the receiving counter first.")
-            remote.addFromCatalogAtCounter(activeBusiness!!.shopId, catalogId, counterId, quantity, priceKsh, unitCostKsh)
+            try {
+                remote.addFromCatalogAtCounter(activeBusiness!!.shopId, catalogId, counterId, quantity, priceKsh, unitCostKsh)
+            } catch (error: Exception) {
+                // Older deployed Supabase projects may not yet have the new
+                // counter-aware RPC. Preserve catalog intake through the legacy
+                // function instead of reducing the action to a generic failure.
+                val message = error.message.orEmpty()
+                val missingRpc = message.contains("function", ignoreCase = true) &&
+                    (message.contains("not found", ignoreCase = true) || message.contains("does not exist", ignoreCase = true)) ||
+                    message.contains("PGRST202", ignoreCase = true) || message.contains("404")
+                if (missingRpc) {
+                    remote.addFromCatalog(activeBusiness!!.shopId, catalogId, quantity, priceKsh, unitCostKsh)
+                } else {
+                    throw error
+                }
+            }
             syncBusiness(activeBusiness!!)
             true
         }

@@ -1147,20 +1147,26 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
         viewModelScope.launch {
             val counterId = _uiState.value.selectedCounterId
             if (counterId.isNullOrBlank()) { _uiState.update { it.copy(actionError = "Choose a receiving counter first.") }; return@launch }
-            val success = repository.addFromLibrary(code, quantity, priceKsh, unitCostKsh, counterId)
-            if (success) {
-                val item = products.value.firstOrNull { it.catalogCode == code }
-                _uiState.update {
-                    it.copy(
-                        selectedCatalogCode = null,
-                        stockMode = StockMode.MY_STOCK,
-                        notice = "✓ Added ${item?.name ?: "Product"} to your shop stock!"
-                    )
+            runCatching { repository.addFromLibrary(code, quantity, priceKsh, unitCostKsh, counterId) }
+                .onSuccess { success ->
+                    if (success) {
+                        val item = products.value.firstOrNull { it.catalogCode == code }
+                        _uiState.update {
+                            it.copy(
+                                selectedCatalogCode = null,
+                                stockMode = StockMode.MY_STOCK,
+                                actionError = null,
+                                notice = "✓ Added ${item?.name ?: "Product"} to your shop stock!"
+                            )
+                        }
+                        refreshCounterStock(counterId)
+                    } else {
+                        _uiState.update { it.copy(actionError = "This catalog item is not linked to the backend catalog. Refresh products and try again.") }
+                    }
                 }
-                refreshCounterStock(counterId)
-            } else {
-                _uiState.update { it.copy(actionError = "Could not add to stock.") }
-            }
+                .onFailure { error ->
+                    _uiState.update { it.copy(actionError = error.message ?: "Could not add to stock.") }
+                }
         }
     }
 
