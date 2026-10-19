@@ -277,28 +277,28 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
             Surface(
                 modifier = Modifier
                     .padding(horizontal = 12.dp, vertical = 8.dp)
-                    .clip(RoundedCornerShape(22.dp)),
-                shape = RoundedCornerShape(22.dp),
+                    .clip(RoundedCornerShape(26.dp)),
+                shape = RoundedCornerShape(26.dp),
                 color = MaterialTheme.colorScheme.surface,
                 tonalElevation = 5.dp,
                 shadowElevation = 4.dp
             ) {
 NavigationBar(
-                    modifier = Modifier.height(64.dp),
+                    modifier = Modifier.height(72.dp),
                     containerColor = Color.Transparent,
                     tonalElevation = 0.dp
                 ) {
                     NavigationBarItem(
                         selected = state.tab == PosTab.SCAN,
                         onClick = { viewModel.selectTab(PosTab.SCAN) },
-                        icon = { Icon(Icons.Default.ShoppingCart, contentDescription = "POS", modifier = Modifier.size(20.dp)) },
+                        icon = { Icon(Icons.Default.ShoppingCart, contentDescription = "POS", modifier = Modifier.size(21.dp)) },
                         label = { Text("POS / Sell", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.SCAN) FontWeight.Bold else FontWeight.Normal) },
                         modifier = Modifier.testTag("nav_pos")
                     )
                     NavigationBarItem(
                         selected = state.tab == PosTab.STOCK,
                         onClick = { viewModel.selectTab(PosTab.STOCK) },
-                        icon = { Icon(Icons.Default.Inventory2, contentDescription = "Stock", modifier = Modifier.size(20.dp)) },
+                        icon = { Icon(Icons.Default.Inventory2, contentDescription = "Stock", modifier = Modifier.size(21.dp)) },
                         label = { Text("Stock (${products.count { it.inMyStock }})", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.STOCK) FontWeight.Bold else FontWeight.Normal) },
                         modifier = Modifier.testTag("nav_stock")
                     )
@@ -770,7 +770,7 @@ private fun LeanTopBar(
     Surface(
         modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surface,
-        shadowElevation = 1.dp
+        shadowElevation = 2.dp
     ) {
         if (state.isSearchActive) {
             // Expanded search mode with instant outside-dismiss and close
@@ -845,23 +845,23 @@ private fun LeanTopBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                    .padding(horizontal = 16.dp, vertical = 11.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                     Box(
                         modifier = Modifier
-                            .size(10.dp)
+                            .size(11.dp)
                             .clip(CircleShape)
                             .background(Color(0xFF10B981))
                     )
                     Spacer(Modifier.width(8.dp))
                     Column(Modifier.weight(1f, fill = false)) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(
-                                text = businessName,
-                                fontSize = 16.sp,
+                        Text(
+                            text = businessName,
+                            fontSize = 17.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 maxLines = 1,
@@ -881,7 +881,7 @@ private fun LeanTopBar(
                             }
                         }
                         Text(
-                            text = if (unitsSold > 0) "${ksh(todaySalesKsh)} · $unitsSold sold" else "Tap 📷 to scan barcode",
+                            text = if (unitsSold > 0) "Today  ${ksh(todaySalesKsh)}  ·  $unitsSold sold" else "Ready for your next sale",
                             fontSize = 11.sp,
                             color = if (unitsSold > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             fontWeight = if (unitsSold > 0) FontWeight.SemiBold else FontWeight.Normal
@@ -940,13 +940,13 @@ private fun LeanTopBar(
                     // Barcode Scanner button
                     Surface(
                         onClick = onOpenScanner,
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(14.dp),
                         color = MaterialTheme.colorScheme.primaryContainer,
                         modifier = Modifier.testTag("top_scanner_button")
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                modifier = Modifier.padding(horizontal = 11.dp, vertical = 8.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.QrCodeScanner,
@@ -1885,17 +1885,17 @@ private fun ProductSellCard(
 
     Card(
         onClick = onClick,
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(10.dp)) {
+        Column(Modifier.padding(12.dp)) {
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(110.dp)
-                    .clip(RoundedCornerShape(10.dp))
+                    .height(122.dp)
+                    .clip(RoundedCornerShape(14.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant)
             ) {
                 ProductThumbnail(product, Modifier.fillMaxSize().padding(4.dp))

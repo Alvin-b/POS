@@ -28,11 +28,11 @@ fun LoginQrCard(payload: String) {
     val bitmap = remember(payload) { createLoginQr(payload) }
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
     ) {
         Column(
-            Modifier.fillMaxWidth().padding(16.dp),
+            Modifier.fillMaxWidth().padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -40,7 +40,7 @@ fun LoginQrCard(payload: String) {
             Image(
                 bitmap = bitmap.asImageBitmap(),
                 contentDescription = "Secure business sign-in QR code",
-                modifier = Modifier.size(190.dp)
+                modifier = Modifier.size(204.dp)
             )
             Text(
                 "Ask the business administrator to scan this code. The QR contains an opaque one-time request token.",
