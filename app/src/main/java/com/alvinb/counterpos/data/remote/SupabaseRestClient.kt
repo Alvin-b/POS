@@ -58,6 +58,14 @@ data class AdminBusiness(
     val counterCount: Long = 1
 )
 
+data class AdminAuditEvent(
+    val action: String,
+    val entityType: String,
+    val actorUserId: String?,
+    val metadata: String,
+    val createdAt: String
+)
+
 data class ServiceCounter(
     val id: String,
     val name: String,
@@ -477,6 +485,15 @@ class SupabaseRestClient(context: Context) {
                 .put("_email", email.trim())
                 .put("_role", role)
         )
+
+    suspend fun auditEvents(shopId: String): List<AdminAuditEvent> {
+        val rows = query("audit_events?shop_id=eq.$shopId&select=action,entity_type,actor_user_id,metadata,created_at&order=created_at.desc&limit=30")
+        return buildList {
+            for (index in 0 until rows.length()) rows.optJSONObject(index)?.let { row ->
+                add(AdminAuditEvent(row.optString("action"), row.optString("entity_type"), row.optString("actor_user_id").takeIf(String::isNotBlank), row.optJSONObject("metadata")?.toString() ?: "{}", row.optString("created_at")))
+            }
+        }
+    }
 
     private suspend fun authenticate(grantType: String, email: String, password: String): AuthSession =
         withContext(Dispatchers.IO) {

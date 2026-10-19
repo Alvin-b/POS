@@ -45,6 +45,13 @@ data class CounterPosUiState(
     val libraryCategory: String = "All",
     val selectedTableId: String? = null,
     val selectedCounterId: String? = null,
+    val selectedServingCounterId: String? = null,
+    val selectedServingCounterName: String? = null,
+    val selectedWaiterName: String = "Amina",
+    val availableWaiters: List<String> = listOf("Amina", "John", "Grace", "Peter", "Sarah"),
+    val reportFilter: String = "today",
+    val reportCounterFilter: String = "all",
+    val isRecordDispensationOpen: Boolean = false,
     val counterReport: List<CounterReportRow> = emptyList(),
     val isLoadingCounterReport: Boolean = false,
     val counterStockByProduct: Map<String, Int> = emptyMap(),
@@ -777,13 +784,96 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
 
     fun dismissSale() = _uiState.update { it.copy(selectedSaleCode = null, actionError = null) }
 
+    fun selectServingCounter(counterId: String, counterName: String) = _uiState.update {
+        it.copy(
+            selectedCounterId = counterId,
+            selectedServingCounterId = counterId,
+            selectedServingCounterName = counterName,
+            actionError = null
+        )
+    }
+
+    fun selectWaiter(waiterName: String) = _uiState.update {
+        it.copy(selectedWaiterName = waiterName)
+    }
+
+    fun setReportFilter(filter: String) = _uiState.update {
+        it.copy(reportFilter = filter)
+    }
+
+    fun setReportCounterFilter(filter: String) = _uiState.update {
+        it.copy(reportCounterFilter = filter)
+    }
+
+    fun openRecordDispensation() = _uiState.update {
+        it.copy(isRecordDispensationOpen = true, actionError = null)
+    }
+
+    fun dismissRecordDispensation() = _uiState.update {
+        it.copy(isRecordDispensationOpen = false, actionError = null)
+    }
+
+    fun recordDirectDispensation(
+        counterId: String,
+        counterName: String,
+        waiterName: String,
+        tableId: String?,
+        tableName: String?,
+        productCode: String,
+        quantity: Int,
+        unitName: String,
+        unitPriceKsh: Int
+    ) = viewModelScope.launch {
+        if (quantity < 1 || unitPriceKsh < 1) return@launch
+        try {
+            if (tableId != null) {
+                repository.sellToTable(
+                    tableId = tableId,
+                    code = productCode,
+                    quantity = quantity,
+                    unitName = unitName,
+                    unitPriceKsh = unitPriceKsh,
+                    selectedCounterId = counterId,
+                    counterName = counterName,
+                    waiterName = waiterName
+                )
+            } else {
+                repository.sellWithUnit(
+                    code = productCode,
+                    quantity = quantity,
+                    unitName = unitName,
+                    unitPriceKsh = unitPriceKsh,
+                    selectedCounterId = counterId,
+                    counterName = counterName,
+                    waiterName = waiterName,
+                    tableId = null,
+                    tableName = "Direct Walk-in"
+                )
+            }
+            refreshCounterStock(counterId)
+            _uiState.update {
+                it.copy(
+                    isRecordDispensationOpen = false,
+                    notice = "✓ Recorded $quantity × $unitName taken from $counterName by $waiterName"
+                )
+            }
+        } catch (e: Exception) {
+            _uiState.update { it.copy(actionError = e.message ?: "Could not record dispensation") }
+        }
+    }
+
     fun confirmSale() {
         val state = _uiState.value
         val code = state.selectedSaleCode ?: return
-        if (state.selectedCounterId.isNullOrBlank()) {
-            _uiState.update { it.copy(actionError = "Choose a serving counter first.") }
-            return
-        }
+        val counterId = state.selectedServingCounterId
+            ?: state.selectedCounterId
+            ?: serviceCounters.value.firstOrNull()?.id
+            ?: "counter_1"
+        val counterName = state.selectedServingCounterName
+            ?: serviceCounters.value.firstOrNull { it.id == counterId }?.name
+            ?: "Counter 1"
+        val waiterName = state.selectedWaiterName
+
         if (mutationInProgress) return
         mutationInProgress = true
 
@@ -797,7 +887,9 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                         quantity = state.saleQuantity,
                         unitName = state.selectedUnitName,
                         unitPriceKsh = state.selectedUnitPrice,
-                        selectedCounterId = state.selectedCounterId
+                        selectedCounterId = counterId,
+                        counterName = counterName,
+                        waiterName = waiterName
                     )
                 } else {
                     repository.sellWithUnit(
@@ -805,11 +897,15 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                         quantity = state.saleQuantity,
                         unitName = state.selectedUnitName,
                         unitPriceKsh = state.selectedUnitPrice,
-                        selectedCounterId = state.selectedCounterId
+                        selectedCounterId = counterId,
+                        counterName = counterName,
+                        waiterName = waiterName,
+                        tableId = null,
+                        tableName = "Direct Sale"
                     )
                 }
                 if (success) {
-                    refreshCounterStock(state.selectedCounterId)
+                    refreshCounterStock(counterId)
                     val product = products.value.firstOrNull { it.catalogCode == code }
                     val total = state.selectedUnitPrice * state.saleQuantity
                     _uiState.update {
@@ -818,9 +914,9 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                             saleQuantity = 1,
                             actionError = null,
                             notice = if (tableId != null) {
-                                "✓ Added ${state.saleQuantity} × ${product?.name ?: ""} to table order · KSh $total"
+                                "✓ Added ${state.saleQuantity} × ${product?.name ?: ""} to table from $counterName · KSh $total"
                             } else {
-                                "✓ Sold ${state.saleQuantity}x ${product?.name ?: ""} (${state.selectedUnitName}) for KSh $total"
+                                "✓ Sold ${state.saleQuantity} × ${product?.name ?: ""} from $counterName (Waiter: $waiterName) · KSh $total"
                             }
                         )
                     }

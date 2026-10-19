@@ -16,5 +16,10 @@ data class SaleEntity(
     val createdAt: Long,
     val undone: Boolean = false,
     val photoOverrideUri: String? = null,
-    val remoteId: String? = null
+    val remoteId: String? = null,
+    val counterId: String? = null,
+    val counterName: String? = null,
+    val waiterName: String? = null,
+    val tableId: String? = null,
+    val tableName: String? = null
 )

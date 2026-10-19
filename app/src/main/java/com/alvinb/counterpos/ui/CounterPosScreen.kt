@@ -2,6 +2,7 @@ package com.alvinb.counterpos.ui
 
 import android.app.DatePickerDialog
 import android.content.Intent
+import android.widget.Toast
 import android.graphics.pdf.PdfDocument
 import android.graphics.Paint
 import android.net.Uri
@@ -118,6 +119,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.SaleUnit
@@ -375,9 +377,20 @@ NavigationBar(
                 )
                 PosTab.REPORTS -> CounterReportScreen(
                     modifier = Modifier.fillMaxSize().padding(padding),
-                    rows = state.counterReport,
+                    counters = serviceCounters,
+                    sales = sales,
+                    remoteRows = state.counterReport,
                     isLoading = state.isLoadingCounterReport,
-                    onRefresh = { viewModel.loadCounterReport(todayStartIso(), nowIso()) }
+                    reportFilter = state.reportFilter,
+                    reportCounterFilter = state.reportCounterFilter,
+                    onSetReportFilter = viewModel::setReportFilter,
+                    onSetReportCounterFilter = viewModel::setReportCounterFilter,
+                    onRefresh = { viewModel.loadCounterReport(todayStartIso(), nowIso()) },
+                    onOpenRecordDispensation = viewModel::openRecordDispensation,
+                    onQuickDispenseForCounter = { counter ->
+                        viewModel.selectServingCounter(counter.id, counter.name)
+                        viewModel.openRecordDispensation()
+                    }
                 )
                 PosTab.TABLES -> TablesScreen(
                     tables = diningTables,
@@ -396,9 +409,38 @@ NavigationBar(
         }
     }
 
+    // Modal: Record Counter Dispensation (Simple logging of drinks taken from a counter)
+    if (state.isRecordDispensationOpen) {
+        RecordDispensationBottomSheet(
+            serviceCounters = serviceCounters,
+            initialCounterId = state.selectedServingCounterId ?: state.selectedCounterId ?: serviceCounters.firstOrNull()?.id,
+            diningTables = diningTables,
+            products = products.filter { it.inMyStock && it.stockQuantity > 0 },
+            availableWaiters = state.availableWaiters,
+            initialWaiter = state.selectedWaiterName,
+            initialTableId = state.selectedTableId,
+            error = state.actionError,
+            onDismiss = viewModel::dismissRecordDispensation,
+            onRecord = { counterId, counterName, waiterName, tableId, tableName, productCode, quantity, unitName, unitPriceKsh ->
+                viewModel.recordDirectDispensation(
+                    counterId = counterId,
+                    counterName = counterName,
+                    waiterName = waiterName,
+                    tableId = tableId,
+                    tableName = tableName,
+                    productCode = productCode,
+                    quantity = quantity,
+                    unitName = unitName,
+                    unitPriceKsh = unitPriceKsh
+                )
+            }
+        )
+    }
+
     // Modal: Sell Product with Units of Sale (e.g. Bottle, Glass, Cup)
     state.selectedSaleCode?.let { code ->
         products.firstOrNull { it.catalogCode == code }?.let { product ->
+            val selectedTable = diningTables.firstOrNull { it.id == state.selectedTableId }
             ModalBottomSheet(
                 onDismissRequest = viewModel::dismissSale,
                 sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -409,6 +451,13 @@ NavigationBar(
                     selectedUnitPrice = state.selectedUnitPrice,
                     quantity = state.saleQuantity,
                     error = state.actionError,
+                    serviceCounters = serviceCounters,
+                    selectedCounterId = state.selectedServingCounterId ?: state.selectedCounterId ?: serviceCounters.firstOrNull()?.id,
+                    onSelectCounter = { id, name -> viewModel.selectServingCounter(id, name) },
+                    availableWaiters = state.availableWaiters,
+                    selectedWaiter = state.selectedWaiterName,
+                    onSelectWaiter = viewModel::selectWaiter,
+                    selectedTableName = selectedTable?.name,
                     onSelectUnit = viewModel::selectSaleUnit,
                     onQuantityChange = viewModel::adjustSaleQuantity,
                     onConfirm = viewModel::confirmSale
@@ -1203,28 +1252,174 @@ private fun FullscreenStockScreen(
     }
 }
 
+private data class CounterProductSummary(
+    val productName: String,
+    val unitName: String,
+    val totalQuantity: Int,
+    val totalKsh: Long
+)
+
+private data class CounterWaiterSummary(
+    val waiterName: String,
+    val itemsServed: Int,
+    val totalKsh: Long,
+    val tablesServed: List<String>
+)
+
+private data class ServiceCounterReportData(
+    val counterId: String,
+    val counterName: String,
+    val totalItems: Int,
+    val totalKsh: Long,
+    val salesCount: Int,
+    val products: List<CounterProductSummary>,
+    val waiters: List<CounterWaiterSummary>
+)
+
 /**
- * Sales History Screen
+ * Counter & Waiter Report Screen
+ * Tracks drinks taken from each counter (Counter 1, Counter 2, Counter 3, Counter 4)
+ * and which rotating waiters served clients/tables.
  */
 @Composable
 private fun CounterReportScreen(
     modifier: Modifier,
-    rows: List<com.alvinb.counterpos.data.remote.CounterReportRow>,
+    counters: List<ServiceCounter>,
+    sales: List<SaleEntity>,
+    remoteRows: List<com.alvinb.counterpos.data.remote.CounterReportRow>,
     isLoading: Boolean,
-    onRefresh: () -> Unit
+    reportFilter: String,
+    reportCounterFilter: String,
+    onSetReportFilter: (String) -> Unit,
+    onSetReportCounterFilter: (String) -> Unit,
+    onRefresh: () -> Unit,
+    onOpenRecordDispensation: () -> Unit,
+    onQuickDispenseForCounter: (ServiceCounter) -> Unit
 ) {
-    val totalUnits = rows.sumOf { it.units }
-    val totalRevenue = rows.sumOf { it.revenueKsh }
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val todayStart = remember { startOfReportDay(System.currentTimeMillis()) }
+
+    val effectiveCounters = remember(counters) {
+        if (counters.isNotEmpty()) counters
+        else listOf(
+            ServiceCounter("counter_1", "Counter 1"),
+            ServiceCounter("counter_2", "Counter 2"),
+            ServiceCounter("counter_3", "Counter 3"),
+            ServiceCounter("counter_4", "Counter 4")
+        )
+    }
+
+    val counterReports = remember(effectiveCounters, sales, remoteRows, reportFilter) {
+        val effectiveSales = if (reportFilter == "today") {
+            sales.filter { !it.undone && it.createdAt >= todayStart }
+        } else {
+            sales.filter { !it.undone }
+        }
+
+        effectiveCounters.map { counter ->
+            val matchingSales = effectiveSales.filter { sale ->
+                sale.counterId == counter.id ||
+                sale.counterName.equals(counter.name, ignoreCase = true) ||
+                (counter.id == "counter_1" && sale.counterId.isNullOrBlank())
+            }
+
+            val productsMap = matchingSales.groupBy { it.productName to it.unitName }
+                .map { (key, group) ->
+                    CounterProductSummary(
+                        productName = key.first,
+                        unitName = key.second,
+                        totalQuantity = group.sumOf { it.quantity },
+                        totalKsh = group.sumOf { it.totalKsh.toLong() }
+                    )
+                }.sortedByDescending { it.totalQuantity }
+
+            val waitersMap = matchingSales.groupBy { it.waiterName?.takeIf(String::isNotBlank) ?: "Amina" }
+                .map { (waiter, group) ->
+                    val tables = group.mapNotNull { it.tableName?.takeIf(String::isNotBlank) }.distinct()
+                    CounterWaiterSummary(
+                        waiterName = waiter,
+                        itemsServed = group.sumOf { it.quantity },
+                        totalKsh = group.sumOf { it.totalKsh.toLong() },
+                        tablesServed = tables
+                    )
+                }.sortedByDescending { it.itemsServed }
+
+            val localItems = matchingSales.sumOf { it.quantity }
+            val localKsh = matchingSales.sumOf { it.totalKsh.toLong() }
+            val localSalesCount = matchingSales.size
+
+            val remoteMatch = remoteRows.firstOrNull {
+                it.counterId == counter.id || it.counterName.equals(counter.name, ignoreCase = true)
+            }
+            val finalItems = if (localItems > 0) localItems else (remoteMatch?.units?.toInt() ?: 0)
+            val finalKsh = if (localKsh > 0L) localKsh else (remoteMatch?.revenueKsh ?: 0L)
+            val finalSalesCount = if (localSalesCount > 0) localSalesCount else (remoteMatch?.saleCount?.toInt() ?: 0)
+
+            ServiceCounterReportData(
+                counterId = counter.id,
+                counterName = counter.name,
+                totalItems = finalItems,
+                totalKsh = finalKsh,
+                salesCount = finalSalesCount,
+                products = productsMap,
+                waiters = waitersMap
+            )
+        }
+    }
+
+    val visibleReports = remember(counterReports, reportCounterFilter) {
+        if (reportCounterFilter == "all") counterReports
+        else counterReports.filter { it.counterId == reportCounterFilter }
+    }
+
+    val totalClubUnits = counterReports.sumOf { it.totalItems }
+    val totalClubRevenue = counterReports.sumOf { it.totalKsh }
+    val activeWaitersCount = counterReports.flatMap { it.waiters }.map { it.waiterName }.distinct().size
+
+    fun copyShareableReport() {
+        val dateLabel = if (reportFilter == "today") "Today (${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date())})" else "All-Time"
+        val sb = StringBuilder()
+        sb.appendLine("🍹 CLUB MULTI-COUNTER DISPENSATION REPORT")
+        sb.appendLine("Period: $dateLabel")
+        sb.appendLine("Total Drinks Dispensed: $totalClubUnits")
+        sb.appendLine("Total Revenue: ${kshLong(totalClubRevenue)}")
+        sb.appendLine("Active Counters: ${counterReports.size} | Rotating Waiters: $activeWaitersCount")
+        sb.appendLine("========================================")
+        counterReports.forEach { c ->
+            sb.appendLine("\n📍 ${c.counterName.uppercase()}:")
+            sb.appendLine("Total: ${c.totalItems} products taken · ${kshLong(c.totalKsh)}")
+            if (c.products.isNotEmpty()) {
+                sb.appendLine("Products Taken:")
+                c.products.forEach { p ->
+                    sb.appendLine("  • ${p.productName} (${p.unitName}): ${p.totalQuantity} taken · ${kshLong(p.totalKsh)}")
+                }
+            } else {
+                sb.appendLine("  (No products dispensed yet)")
+            }
+            if (c.waiters.isNotEmpty()) {
+                sb.appendLine("Waiters Serving from this counter:")
+                c.waiters.forEach { w ->
+                    val tablesText = if (w.tablesServed.isNotEmpty()) " (Served: ${w.tablesServed.joinToString(", ")})" else ""
+                    sb.appendLine("  👤 ${w.waiterName}: ${w.itemsServed} drinks · ${kshLong(w.totalKsh)}$tablesText")
+                }
+            }
+        }
+        clipboard.setText(AnnotatedString(sb.toString()))
+        Toast.makeText(context, "Counter report copied to clipboard", Toast.LENGTH_SHORT).show()
+    }
+
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        // Title & Refresh
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("Counter report", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                    Text("Today · drinks taken from each source counter", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Counter & Waiter Report", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Text("Drinks taken per counter & rotating waiter tracking", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = onRefresh, enabled = !isLoading) {
                     if (isLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -1232,23 +1427,227 @@ private fun CounterReportScreen(
                 }
             }
         }
+
+        // Quick Actions Bar: Record Dispensation + Share Summary
         item {
-            Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column { Text("Items served", fontSize = 11.sp); Text("$totalUnits", fontSize = 23.sp, fontWeight = FontWeight.Bold) }
-                    Column(horizontalAlignment = Alignment.End) { Text("Total revenue", fontSize = 11.sp); Text(kshLong(totalRevenue), fontSize = 23.sp, fontWeight = FontWeight.Bold) }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = onOpenRecordDispensation,
+                    modifier = Modifier.weight(1.3f)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Record Dispensation", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
+                OutlinedButton(
+                    onClick = { copyShareableReport() },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Share", fontSize = 13.sp)
                 }
             }
         }
-        if (!isLoading && rows.isEmpty()) item { Text("No counter data for today yet.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        items(rows, key = { it.counterId ?: "unassigned" }) { row ->
-            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))) {
-                Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(row.counterName, fontWeight = FontWeight.Bold)
-                        Text("${row.saleCount} sales · ${row.units} items served", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+        // Overall Club Metric Summary Card
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+            ) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column {
+                            Text("Total products taken", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Text("$totalClubUnits drinks", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("Total club amount", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Text(kshLong(totalClubRevenue), fontSize = 24.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        }
                     }
-                    Text(kshLong(row.revenueKsh), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("${counterReports.size} active counters", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f))
+                        Text("$activeWaitersCount rotating waiters recorded", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f))
+                    }
+                }
+            }
+        }
+
+        // Period & Counter Filters
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf("today" to "Today", "all" to "All-Time").forEach { (filterVal, label) ->
+                        FilterChip(
+                            selected = reportFilter == filterVal,
+                            onClick = { onSetReportFilter(filterVal) },
+                            label = { Text(label, fontSize = 12.sp) }
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    FilterChip(
+                        selected = reportCounterFilter == "all",
+                        onClick = { onSetReportCounterFilter("all") },
+                        label = { Text("All Counters (${counterReports.size})", fontSize = 12.sp) }
+                    )
+                    effectiveCounters.forEach { counter ->
+                        FilterChip(
+                            selected = reportCounterFilter == counter.id,
+                            onClick = { onSetReportCounterFilter(counter.id) },
+                            label = { Text(counter.name, fontSize = 12.sp) }
+                        )
+                    }
+                }
+            }
+        }
+
+        // Section label
+        item {
+            Text(
+                "Counter Performance & Waiter Activity",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+
+        // List of Per-Counter Cards
+        items(visibleReports, key = { it.counterId }) { counterData ->
+            val counterObj = effectiveCounters.firstOrNull { it.id == counterData.counterId } ?: ServiceCounter(counterData.counterId, counterData.counterName)
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), RoundedCornerShape(14.dp))
+            ) {
+                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    // Counter Header
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.LocalDrink, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column {
+                                Text(counterData.counterName, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                Text("${counterData.salesCount} sale events", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(kshLong(counterData.totalKsh), fontWeight = FontWeight.Bold, fontSize = 17.sp, color = MaterialTheme.colorScheme.primary)
+                            Text("${counterData.totalItems} products taken", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+
+                    // Quick Dispense Button for this counter
+                    OutlinedButton(
+                        onClick = { onQuickDispenseForCounter(counterObj) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Log drink taken from ${counterData.counterName}", fontSize = 12.sp)
+                    }
+
+                    // Products Breakdown
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                "PRODUCTS TAKEN FROM ${counterData.counterName.uppercase()}",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            if (counterData.products.isEmpty()) {
+                                Text("No drinks logged from this counter yet today.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            } else {
+                                counterData.products.forEach { prod ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            "• ${prod.productName} (${prod.unitName})",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Text("${prod.totalQuantity} taken", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            Text(kshLong(prod.totalKsh), fontSize = 12.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Waiter Breakdown for this counter
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                "ROTATING WAITERS SERVING FROM THIS COUNTER",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                            if (counterData.waiters.isEmpty()) {
+                                Text("No waiter servings logged from this counter yet.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            } else {
+                                counterData.waiters.forEach { waiter ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text("👤 Waiter ${waiter.waiterName}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            val tablesText = if (waiter.tablesServed.isNotEmpty()) {
+                                                "Served: ${waiter.tablesServed.joinToString(", ")}"
+                                            } else {
+                                                "Walk-in direct clients"
+                                            }
+                                            Text(tablesText, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            Text("${waiter.itemsServed} drinks", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            Text(kshLong(waiter.totalKsh), fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1736,6 +2135,13 @@ private fun SaleWithUnitsSheet(
     selectedUnitPrice: Int,
     quantity: Int,
     error: String?,
+    serviceCounters: List<ServiceCounter> = emptyList(),
+    selectedCounterId: String? = null,
+    onSelectCounter: ((String, String) -> Unit)? = null,
+    availableWaiters: List<String> = emptyList(),
+    selectedWaiter: String = "Amina",
+    onSelectWaiter: ((String) -> Unit)? = null,
+    selectedTableName: String? = null,
     onSelectUnit: (SaleUnit) -> Unit,
     onQuantityChange: (Int) -> Unit,
     onConfirm: () -> Unit
@@ -1773,6 +2179,76 @@ private fun SaleWithUnitsSheet(
         }
 
         Spacer(Modifier.height(14.dp))
+
+        // Table banner if table sale
+        if (!selectedTableName.isNullOrBlank()) {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+            ) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.TableRestaurant, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Serving Table: $selectedTableName", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+            }
+        }
+
+        // Source Counter Selector
+        if (serviceCounters.isNotEmpty()) {
+            Text(
+                "Source Counter (where drink is taken):",
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp, bottom = 12.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                serviceCounters.forEach { counter ->
+                    val isCounterSelected = counter.id == selectedCounterId
+                    FilterChip(
+                        selected = isCounterSelected,
+                        onClick = { onSelectCounter?.invoke(counter.id, counter.name) },
+                        label = { Text(counter.name) },
+                        leadingIcon = if (isCounterSelected) {
+                            { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                        } else null
+                    )
+                }
+            }
+        }
+
+        // Serving Waiter Selector
+        if (availableWaiters.isNotEmpty()) {
+            Text(
+                "Serving Waiter:",
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp, bottom = 12.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                availableWaiters.forEach { waiter ->
+                    val isWaiterSelected = waiter.equals(selectedWaiter, ignoreCase = true)
+                    FilterChip(
+                        selected = isWaiterSelected,
+                        onClick = { onSelectWaiter?.invoke(waiter) },
+                        label = { Text(waiter) }
+                    )
+                }
+            }
+        }
 
         // Unit of Sale Selector (Bottle, Glass, Cup, etc.)
         Text(
@@ -1871,7 +2347,242 @@ private fun SaleWithUnitsSheet(
                 .fillMaxWidth()
                 .padding(bottom = 20.dp)
         ) {
-            Text("Complete Sale · ${ksh(total)}", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            val label = if (!selectedTableName.isNullOrBlank()) "Add to $selectedTableName check · ${ksh(total)}" else "Complete Sale · ${ksh(total)}"
+            Text(label, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+/**
+ * Record Dispensation Bottom Sheet:
+ * Provides a simple, fast interface for waiters or cashiers to record
+ * drinks taken from a specific counter (Counter 1, Counter 2, etc.) to serve a table or client.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RecordDispensationBottomSheet(
+    serviceCounters: List<ServiceCounter>,
+    initialCounterId: String?,
+    diningTables: List<DiningTableEntity>,
+    products: List<ProductEntity>,
+    availableWaiters: List<String>,
+    initialWaiter: String,
+    initialTableId: String?,
+    error: String?,
+    onDismiss: () -> Unit,
+    onRecord: (counterId: String, counterName: String, waiterName: String, tableId: String?, tableName: String?, productCode: String, quantity: Int, unitName: String, unitPriceKsh: Int) -> Unit
+) {
+    val counters = if (serviceCounters.isNotEmpty()) serviceCounters else listOf(
+        ServiceCounter("counter_1", "Counter 1"),
+        ServiceCounter("counter_2", "Counter 2"),
+        ServiceCounter("counter_3", "Counter 3"),
+        ServiceCounter("counter_4", "Counter 4")
+    )
+    var selectedCounterId by remember(initialCounterId) { mutableStateOf(initialCounterId ?: counters.first().id) }
+    var selectedWaiter by remember(initialWaiter) { mutableStateOf(initialWaiter.ifBlank { "Amina" }) }
+    var destinationMode by remember { mutableStateOf(if (initialTableId != null) "table" else "walk_in") }
+    var selectedTableId by remember(initialTableId) { mutableStateOf(initialTableId ?: diningTables.firstOrNull()?.id) }
+    var selectedProductCode by remember(products) { mutableStateOf(products.firstOrNull()?.catalogCode.orEmpty()) }
+    var quantity by remember { mutableStateOf(1) }
+
+    val selectedProduct = products.firstOrNull { it.catalogCode == selectedProductCode } ?: products.firstOrNull()
+    val units = remember(selectedProduct) {
+        if (selectedProduct != null) parseSaleUnits(selectedProduct.salesUnitsJson, selectedProduct.sellingPriceKsh)
+        else emptyList()
+    }
+    var selectedUnit by remember(units) { mutableStateOf(units.firstOrNull() ?: SaleUnit("Bottle", selectedProduct?.sellingPriceKsh ?: 300)) }
+
+    val resolvedCounter = counters.firstOrNull { it.id == selectedCounterId } ?: counters.first()
+    val resolvedTable = if (destinationMode == "table") diningTables.firstOrNull { it.id == selectedTableId } else null
+    val totalAmount = selectedUnit.priceKsh * quantity
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column {
+                    Text("Record Drink Dispensation", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("Log drinks taken from counter by a rotating waiter", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Close")
+                }
+            }
+
+            // 1. Source Counter
+            Text("1. Source Counter (Where drink is taken):", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                counters.forEach { counter ->
+                    FilterChip(
+                        selected = counter.id == selectedCounterId,
+                        onClick = { selectedCounterId = counter.id },
+                        label = { Text(counter.name) },
+                        leadingIcon = if (counter.id == selectedCounterId) {
+                            { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                        } else null
+                    )
+                }
+            }
+
+            // 2. Serving Waiter
+            Text("2. Serving Waiter:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                availableWaiters.forEach { waiter ->
+                    FilterChip(
+                        selected = waiter.equals(selectedWaiter, ignoreCase = true),
+                        onClick = { selectedWaiter = waiter },
+                        label = { Text(waiter) }
+                    )
+                }
+            }
+
+            // 3. Destination (Table vs Direct Walk-in)
+            Text("3. Served Destination:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = destinationMode == "table",
+                    onClick = { destinationMode = "table" },
+                    label = { Text("Table Check") }
+                )
+                FilterChip(
+                    selected = destinationMode == "walk_in",
+                    onClick = { destinationMode = "walk_in" },
+                    label = { Text("Direct Walk-in / Bar") }
+                )
+            }
+            if (destinationMode == "table") {
+                if (diningTables.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        diningTables.forEach { table ->
+                            FilterChip(
+                                selected = table.id == selectedTableId,
+                                onClick = { selectedTableId = table.id },
+                                label = { Text(table.name) }
+                            )
+                        }
+                    }
+                } else {
+                    Text("No dining tables set up yet. Will record as Table 1.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+
+            // 4. Product to Dispense
+            Text("4. Select Product:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            if (products.isEmpty()) {
+                Text("No in-stock products available. Please add products to stock first.", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    products.forEach { prod ->
+                        FilterChip(
+                            selected = prod.catalogCode == selectedProductCode,
+                            onClick = { selectedProductCode = prod.catalogCode },
+                            label = { Text("${prod.name} (${prod.stockQuantity})") }
+                        )
+                    }
+                }
+            }
+
+            // 5. Unit of Sale
+            if (units.isNotEmpty()) {
+                Text("5. Unit of Sale:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    units.forEach { unit ->
+                        FilterChip(
+                            selected = unit.name.equals(selectedUnit.name, ignoreCase = true),
+                            onClick = { selectedUnit = unit },
+                            label = { Text("${unit.name} · ${ksh(unit.priceKsh)}") }
+                        )
+                    }
+                }
+            }
+
+            // 6. Quantity Stepper
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Quantity to dispense", fontWeight = FontWeight.Medium)
+                QuantityStepperControl(quantity = quantity, onChange = { if (it in 1..99) quantity = it })
+            }
+
+            // Summary Card
+            val destinationName = if (destinationMode == "table") resolvedTable?.name ?: "Table" else "Walk-in Client"
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        "$quantity × ${selectedProduct?.name ?: "Drink"} (${selectedUnit.name})",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                    Text(
+                        "Taken from ${resolvedCounter.name} by Waiter $selectedWaiter → Serving $destinationName",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        "Total: ${ksh(totalAmount)}",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+
+            if (!error.isNullOrBlank()) {
+                Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+            }
+
+            // Action Button
+            Button(
+                onClick = {
+                    val prodCode = selectedProduct?.catalogCode ?: return@Button
+                    val tId = if (destinationMode == "table") (resolvedTable?.id ?: "table_1") else null
+                    val tName = if (destinationMode == "table") (resolvedTable?.name ?: "Table 1") else "Direct Walk-in"
+                    onRecord(
+                        resolvedCounter.id,
+                        resolvedCounter.name,
+                        selectedWaiter,
+                        tId,
+                        tName,
+                        prodCode,
+                        quantity,
+                        selectedUnit.name,
+                        selectedUnit.priceKsh
+                    )
+                },
+                enabled = selectedProduct != null,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp)
+            ) {
+                Text("Record Dispensation · ${ksh(totalAmount)}", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            }
         }
     }
 }

@@ -2,7 +2,6 @@ package com.alvinb.counterpos.ui
 
 import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -21,8 +20,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -51,6 +48,16 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.ui.draw.clip
+import com.alvinb.counterpos.data.remote.AdminAuditEvent
 import com.alvinb.counterpos.data.remote.AdminBusiness
 import com.alvinb.counterpos.ui.scanner.BarcodeScannerScreen
 import com.alvinb.counterpos.ui.scanner.ScannerMode
@@ -87,7 +94,6 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                 onQrSignIn = viewModel::signInWithQrRequested,
                 onScanAccessQr = { viewModel.openScanner(ScannerMode.ADMIN_QR) },
                 qrPayload = state.loginQrPayload,
-                isQrPolling = state.isQrPolling,
                 onClearError = viewModel::clearStartupError
             )
             session.isPlatformAdmin -> SuperadminDashboardScreen(
@@ -97,7 +103,7 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                 onSignOut = viewModel::signOut,
                 onClearError = viewModel::clearStartupError
             )
-            shouldShowEmployeeAccessLocked(session.activeBusiness?.employmentStatus) -> EmployeeAccessBlockedScreen(session.activeBusiness, viewModel::signOut)
+            session.activeBusiness?.employmentStatus != "active" -> EmployeeAccessBlockedScreen(session.activeBusiness, viewModel::signOut)
             session.activeBusiness != null && state.isAccessLocked -> WorkingHoursLockedScreen(state.accessLockMessage.orEmpty(), viewModel::refreshAccessNow, viewModel::signOut)
             session.activeBusiness != null -> CounterPosWorkspace(viewModel)
             session.memberships.any { it.status == "active" && it.employmentStatus == "active" } -> BusinessPickerScreen(
@@ -135,12 +141,12 @@ private fun AuthScreen(
     onQrSignIn: () -> Unit,
     onScanAccessQr: () -> Unit,
     qrPayload: String?,
-    isQrPolling: Boolean,
     onClearError: () -> Unit
 ) {
     var credential by remember { mutableStateOf("") }
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
+
     fun pasteFromClipboard() {
         val clipText = clipboardManager.getText()?.text
         val textToPaste = if (!clipText.isNullOrBlank()) {
@@ -165,12 +171,7 @@ private fun AuthScreen(
         Text("Counter POS", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         Text("Secure business point of sale", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
-        if (qrPayload != null) {
-            LoginQrCard(payload = qrPayload)
-            OutlinedButton(onClick = onQrSignIn, enabled = !isQrPolling, modifier = Modifier.fillMaxWidth()) {
-                Text("Refresh QR")
-            }
-        }
+        if (qrPayload != null) LoginQrCard(payload = qrPayload)
         else Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (error.isNullOrBlank()) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.errorContainer)) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(if (error.isNullOrBlank()) "Preparing secure QR sign-in…" else "Secure QR sign-in unavailable", fontWeight = FontWeight.SemiBold)
@@ -182,7 +183,7 @@ private fun AuthScreen(
         Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Sign in", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                Text("Enter your access passkey. The app opens the workspace and features allowed for your account.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Enter your business or employee passkey, or the current Superadmin token. Access opens automatically for your account.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(
                     value = credential,
                     onValueChange = { credential = it; onClearError() },
@@ -230,12 +231,7 @@ private fun AuthScreen(
                         modifier = Modifier.weight(1f)
                     ) { Text("Continue") }
                 }
-                if (isQrPolling) {
-                    Text("QR pairing is active. An authorized administrator can scan this code; this phone will open the business automatically.", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
-                }
-                OutlinedButton(onClick = onQrSignIn, enabled = !isQrPolling, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (isQrPolling) "Waiting for QR approval…" else "Continue QR sign-in")
-                }
+                OutlinedButton(onClick = onQrSignIn, modifier = Modifier.fillMaxWidth()) { Text("Sign in with QR code") }
                 OutlinedButton(onClick = onScanAccessQr, modifier = Modifier.fillMaxWidth()) { Text("Scan access pass QR") }
                 if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 if (!notice.isNullOrBlank()) Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
@@ -321,201 +317,5 @@ private fun BusinessAccessBlockedScreen(
         }
         Spacer(Modifier.height(24.dp))
         Button(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
-    }
-}
-
-@Composable
-private fun AdminConsoleScreen(
-    viewModel: CounterPosViewModel,
-    email: String,
-    error: String?,
-    onSignOut: () -> Unit,
-    onClearError: () -> Unit
-) {
-    val businesses by viewModel.adminBusinesses.collectAsStateWithLifecycle()
-    val state by viewModel.uiState.collectAsStateWithLifecycle()
-    var businessName by remember { mutableStateOf("") }
-    var ownerEmail by remember { mutableStateOf("") }
-    var reason by remember { mutableStateOf("") }
-    var businessType by remember { mutableStateOf("big_club") }
-    var businessSize by remember { mutableStateOf("medium") }
-    var inventoryMode by remember { mutableStateOf("shared") }
-    var counterCount by remember { mutableStateOf("1") }
-
-    LaunchedEffect(Unit) { viewModel.loadAdminBusinesses() }
-
-    if (state.isScannerOpen) {
-        BarcodeScannerScreen(
-            mode = ScannerMode.ADMIN_QR,
-            products = emptyList(),
-            onClose = viewModel::closeScanner,
-            onProductScannedForSale = {},
-            onProductScannedForStock = {},
-            onProductScannedForTable = {},
-            onAdminQrCodeScanned = viewModel::handleAdminQrCode,
-            onBarcodeAssigned = {},
-            onBarcodeNotRecognized = viewModel::handleAdminQrCode
-        )
-        return
-    }
-
-    Scaffold { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            item {
-                Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Column {
-                        Text("Platform Admin", fontSize = 24.sp, fontWeight = FontWeight.Bold)
-                        Text(email, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    TextButton(onClick = onSignOut) { Text("Sign out") }
-                }
-            }
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        AdminMetric("Businesses", businesses.size.toString())
-                        AdminMetric("Active", businesses.count { it.status == "active" }.toString())
-                        AdminMetric("Pending owners", businesses.count { it.ownerEmail == "Pending owner enrollment" }.toString())
-                    }
-                }
-            }
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Register a client business", fontWeight = FontWeight.SemiBold)
-                        Text("Create the business profile first. You can enroll its owner later with a secure QR code or passkey.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        OutlinedButton(onClick = { viewModel.openScanner(ScannerMode.ADMIN_QR) }, modifier = Modifier.fillMaxWidth()) {
-                            Text("Scan business QR")
-                        }
-                        OutlinedTextField(value = businessName, onValueChange = { businessName = it; onClearError() }, label = { Text("Business name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(value = ownerEmail, onValueChange = { ownerEmail = it; onClearError() }, label = { Text("Owner email (optional)") }, supportingText = { Text("Leave blank if the owner will enroll later.") }, singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
-                        Text("Business type", fontWeight = FontWeight.Medium, fontSize = 13.sp)
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { businessType = "big_club" }, modifier = Modifier.weight(1f)) { Text(if (businessType == "big_club") "✓ Bar / Club" else "Bar / Club") }
-                            OutlinedButton(onClick = { businessType = "counter_seller" }, modifier = Modifier.weight(1f)) { Text(if (businessType == "counter_seller") "✓ Liquor Store" else "Liquor Store") }
-                        }
-                        Text(if (businessType == "big_club") "Tables and working-hours controls enabled." else "Inventory and staff controls; table and working-hours screens disabled.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("Inventory setup", fontWeight = FontWeight.Medium, fontSize = 13.sp)
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { inventoryMode = "shared" }, modifier = Modifier.weight(1f)) {
-                                Text(if (inventoryMode == "shared") "✓ Shared stock" else "Shared stock")
-                            }
-                            OutlinedButton(onClick = { inventoryMode = "per_counter" }, modifier = Modifier.weight(1f)) {
-                                Text(if (inventoryMode == "per_counter") "✓ Per-counter" else "Per-counter")
-                            }
-                        }
-                        Text("Shared: one stock balance for the whole business. Per-counter: each counter has its own stock and transfers.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        OutlinedTextField(value = counterCount, onValueChange = { counterCount = it.filter(Char::isDigit).take(2) }, label = { Text("Number of counters") }, singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                        OutlinedTextField(value = reason, onValueChange = { reason = it }, label = { Text("Lifecycle reason (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-                        Button(
-                            onClick = {
-                                viewModel.createBusinessForOwner(businessName, ownerEmail, businessType, businessSize, inventoryMode, counterCount.toIntOrNull()?.coerceIn(1, 50) ?: 1)
-                                businessName = ""
-                                ownerEmail = ""
-                            },
-                            enabled = businessName.trim().isNotBlank(),
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("Create business profile") }
-                    }
-                }
-            }
-            item { Text("Client businesses (${businesses.size})", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp)) }
-            items(businesses, key = { it.shopId }) { business ->
-                AdminBusinessCard(
-                    business = business,
-                    reason = reason,
-                    selected = state.adminSelectedBusinessId == business.shopId,
-                    onSelect = { viewModel.selectAdminBusiness(business.shopId) },
-                    onScanUser = { role -> viewModel.openAdminEnrollmentScanner(business.shopId, role) },
-                    onStatusChange = viewModel::setBusinessStatus
-                )
-            }
-            if (businesses.isEmpty()) item { Text("No businesses returned yet.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        }
-    }
-}
-
-@Composable
-private fun AdminMetric(label: String, value: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, fontSize = 21.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-        Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-private fun AdminBusinessCard(
-    business: AdminBusiness,
-    reason: String,
-    selected: Boolean,
-    onSelect: () -> Unit,
-    onScanUser: (String) -> Unit,
-    onStatusChange: (String, String, String?) -> Unit
-) {
-    var enrollmentRole by remember(business.shopId) { mutableStateOf("owner") }
-    var enrollmentRoleMenuExpanded by remember(business.shopId) { mutableStateOf(false) }
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(business.shopName, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                Text(business.status.uppercase(), color = when (business.status) {
-                    "active" -> MaterialTheme.colorScheme.primary
-                    "suspended" -> MaterialTheme.colorScheme.error
-                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                }, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            }
-            Text("Owner: ${business.ownerEmail}", fontSize = 12.sp)
-            Text("${business.memberCount} staff · ${business.productCount} products · ${business.stockUnits} units", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("${if (business.counterInventoryMode == "per_counter") "Separate stock" else "Shared stock"} · ${business.counterCount} counters", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (!business.lifecycleReason.isNullOrBlank()) Text("Reason: ${business.lifecycleReason}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedButton(onClick = onSelect, modifier = Modifier.fillMaxWidth()) {
-                Text(if (selected) "Business profile open" else "Open business profile")
-            }
-            if (selected) {
-                Text("On the phone to enroll, tap ‘Sign in with QR code’ and keep its QR visible. Scan it here to add that phone to this business.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(Modifier.weight(1f)) {
-                        OutlinedButton(
-                            onClick = { enrollmentRoleMenuExpanded = true },
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text(enrollmentRole.replace('_', ' ').replaceFirstChar { it.uppercase() }) }
-                        DropdownMenu(
-                            expanded = enrollmentRoleMenuExpanded,
-                            onDismissRequest = { enrollmentRoleMenuExpanded = false }
-                        ) {
-                            listOf("owner", "manager", "inventory_clerk", "cashier").forEach { role ->
-                                DropdownMenuItem(
-                                    text = { Text(role.replace('_', ' ').replaceFirstChar { it.uppercase() }) },
-                                    onClick = {
-                                        enrollmentRole = role
-                                        enrollmentRoleMenuExpanded = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-                    Button(
-                        onClick = { onScanUser(enrollmentRole) },
-                        enabled = business.status == "active",
-                        modifier = Modifier.weight(1f)
-                    ) { Text("Scan phone QR") }
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (business.status != "active") {
-                    Button(onClick = { onStatusChange(business.shopId, "active", reason.ifBlank { "Reopened by platform administrator" }) }) { Text("Reopen") }
-                }
-                if (business.status == "active") {
-                    OutlinedButton(onClick = { onStatusChange(business.shopId, "suspended", reason.ifBlank { "Suspended by platform administrator" }) }) { Text("Suspend") }
-                }
-                if (business.status != "closed") {
-                    OutlinedButton(onClick = { onStatusChange(business.shopId, "closed", reason.ifBlank { "Closed by platform administrator" }) }) { Text("Close") }
-                }
-            }
-        }
     }
 }

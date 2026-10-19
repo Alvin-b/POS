@@ -9,6 +9,7 @@ import com.alvinb.counterpos.data.local.entity.SaleUnit
 import com.alvinb.counterpos.data.local.entity.TableOrderEntity
 import com.alvinb.counterpos.data.local.entity.serializeSaleUnits
 import com.alvinb.counterpos.data.remote.AccountSnapshot
+import com.alvinb.counterpos.data.remote.AdminAuditEvent
 import com.alvinb.counterpos.data.remote.AdminBusiness
 import com.alvinb.counterpos.data.remote.AuthSession
 import com.alvinb.counterpos.data.remote.BusinessMembership
@@ -40,9 +41,9 @@ data class SessionSnapshot(
     val error: String? = null
 )
 
-data class AdminBusinessCreationResult(
-    val createdShopId: String?,
-    val businesses: List<AdminBusiness>
+data class AdminCreateBusinessResult(
+    val businesses: List<AdminBusiness>,
+    val createdShopId: String?
 )
 
 class CounterPosRepository(
@@ -50,19 +51,17 @@ class CounterPosRepository(
     private val assets: AssetManager,
     private val remote: SupabaseRestClient
 ) {
-    data class AccessChallenge(
-        val token: String,
-        val expiresAtMillis: Long
-    )
-    data class ApprovedAccess(
-        val session: SessionSnapshot,
-        val businessId: String?
-    )
     val products: Flow<List<ProductEntity>> = dao.observeProducts()
     val sales: Flow<List<SaleEntity>> = dao.observeSales()
     val diningTables: Flow<List<DiningTableEntity>> = dao.observeDiningTables()
     val tableOrders: Flow<List<TableOrderEntity>> = dao.observeTableOrders()
-    private val _serviceCounters = MutableStateFlow<List<ServiceCounter>>(emptyList())
+    private val defaultCounters = listOf(
+        ServiceCounter("counter_1", "Counter 1"),
+        ServiceCounter("counter_2", "Counter 2"),
+        ServiceCounter("counter_3", "Counter 3"),
+        ServiceCounter("counter_4", "Counter 4")
+    )
+    private val _serviceCounters = MutableStateFlow<List<ServiceCounter>>(defaultCounters)
     val serviceCounters = _serviceCounters.asStateFlow()
 
     private val _session = MutableStateFlow(SessionSnapshot())
@@ -102,28 +101,16 @@ class CounterPosRepository(
         remote.createAccessPass(shop.shopId, role)
     }
 
-    suspend fun createAdminBusinessAccessPass(shopId: String, role: String): JSONObject = withContext(Dispatchers.IO) {
-        require(_session.value.isPlatformAdmin) { "Only a platform administrator can issue a client business passkey." }
-        require(role in setOf("owner", "manager", "inventory_clerk", "cashier")) { "Invalid business role." }
-        remote.createAccessPass(shopId, role)
-    }
-
-    suspend fun createAccessChallenge(): AccessChallenge = withContext(Dispatchers.IO) {
-        val response = remote.createAccessChallenge()
-        val token = response.optString("token").takeIf(String::isNotBlank)
+    suspend fun createAccessChallenge(): String = withContext(Dispatchers.IO) {
+        remote.createAccessChallenge().optString("token").takeIf(String::isNotBlank)
             ?: throw IllegalStateException("Could not create QR sign-in request.")
-        val lifetimeSeconds = response.optLong("expires_in_seconds", 600L).coerceAtLeast(30L)
-        AccessChallenge(token, System.currentTimeMillis() + lifetimeSeconds * 1_000L)
     }
 
-    suspend fun pollAccessChallenge(token: String): ApprovedAccess? = withContext(Dispatchers.IO) {
+    suspend fun pollAccessChallenge(token: String): SessionSnapshot? = withContext(Dispatchers.IO) {
         val result = remote.pollAccessChallenge(token)
         if (result.optString("status") != "approved") return@withContext null
         remote.signIn(result.optString("email"), result.optString("password"))
-        ApprovedAccess(
-            session = loadAccount(autoSelectFirstBusiness = true),
-            businessId = result.optString("business_id").takeIf(String::isNotBlank)
-        )
+        loadAccount(autoSelectFirstBusiness = true)
     }
 
     suspend fun approveAccessChallenge(token: String, role: String = "cashier") = withContext(Dispatchers.IO) {
@@ -234,8 +221,19 @@ class CounterPosRepository(
         remote.counterSalesReport(activeBusiness!!.shopId, fromIso, toIso)
     }
 
+    suspend fun adminAuditEvents(shopId: String): List<AdminAuditEvent> = remote.auditEvents(shopId)
+
+    suspend fun adminCreateAccessPass(shopId: String, role: String): JSONObject =
+        remote.createAccessPass(shopId, role)
+
     suspend fun createServiceCounter(name: String): ServiceCounter = withActiveBusiness {
-        remote.createServiceCounter(activeBusiness!!.shopId, name).also { _serviceCounters.value = _serviceCounters.value + it }
+        try {
+            remote.createServiceCounter(activeBusiness!!.shopId, name).also { _serviceCounters.value = _serviceCounters.value + it }
+        } catch (_: Exception) {
+            val local = ServiceCounter("counter_${System.currentTimeMillis()}", name.trim())
+            _serviceCounters.value = _serviceCounters.value + local
+            local
+        }
     }
 
     suspend fun loadCounterStock(counterId: String): Map<String, Int> = withActiveBusiness {
@@ -258,18 +256,39 @@ class CounterPosRepository(
         return remote.adminBusinesses()
     }
 
+    suspend fun createAdminBusinessAccessPass(shopId: String, role: String): JSONObject = withContext(Dispatchers.IO) {
+        require(account?.isPlatformAdmin == true) { "Only a platform administrator can issue an access pass." }
+        remote.createAccessPass(shopId, role)
+    }
+
     suspend fun adminCreateBusiness(
         name: String,
         ownerEmail: String,
-        businessType: String,
-        businessSize: String,
+        businessType: String = "big_club",
+        businessSize: String = "medium",
+        inventoryMode: String = "shared",
+        counterCount: Int = 1
+    ): AdminCreateBusinessResult = withContext(Dispatchers.IO) {
+        val created = remote.adminCreateBusiness(
+            name,
+            ownerEmail.takeIf { it.isNotBlank() },
+            businessType,
+            businessSize,
+            inventoryMode,
+            counterCount
+        )
+        val createdShopId = created.optString("shop_id").ifBlank { created.optString("id") }.takeIf { it.isNotBlank() }
+        val businesses = remote.adminBusinesses()
+        AdminCreateBusinessResult(businesses, createdShopId)
+    }
+
+    suspend fun adminCreateBusiness(
+        name: String,
+        ownerEmail: String,
         inventoryMode: String,
         counterCount: Int
-    ): AdminBusinessCreationResult {
-        val createdRow = remote.adminCreateBusiness(name, ownerEmail.takeIf { it.isNotBlank() }, businessType, businessSize, inventoryMode, counterCount)
-        val createdShopId = createdRow.optString("id").takeIf(String::isNotBlank)
-        return AdminBusinessCreationResult(createdShopId, remote.adminBusinesses())
-    }
+    ): AdminCreateBusinessResult =
+        adminCreateBusiness(name, ownerEmail, "big_club", "medium", inventoryMode, counterCount)
 
     suspend fun addMemberByEmail(shopId: String, email: String, role: String): List<AdminBusiness> {
         require(role in setOf("manager", "inventory_clerk", "cashier")) { "Choose a valid staff role." }
@@ -321,7 +340,17 @@ class CounterPosRepository(
     private suspend fun syncBusiness(membership: BusinessMembership) {
         dao.clearTenantCache()
         seedCatalogIfEmpty()
-        val counters = remote.serviceCounters(membership.shopId)
+        val remoteCounters = runCatching { remote.serviceCounters(membership.shopId) }.getOrDefault(emptyList())
+        val counters = if (remoteCounters.isNotEmpty()) {
+            remoteCounters
+        } else {
+            listOf(
+                ServiceCounter("counter_1", "Counter 1"),
+                ServiceCounter("counter_2", "Counter 2"),
+                ServiceCounter("counter_3", "Counter 3"),
+                ServiceCounter("counter_4", "Counter 4")
+            )
+        }
         _serviceCounters.value = counters
 
         // Remote catalog rows augment the bundled image fallback. The remote
@@ -396,6 +425,8 @@ class CounterPosRepository(
             for (index in 0 until rows.length()) {
                 rows.optJSONObject(index)?.let { row ->
                     val remoteId = row.optString("id")
+                    val cId = row.optNullableString("counter_id")
+                    val cName = counters.firstOrNull { it.id == cId }?.name ?: row.optNullableString("counter_name") ?: "Counter 1"
                     add(
                         SaleEntity(
                             id = stableLocalId(remoteId),
@@ -408,7 +439,12 @@ class CounterPosRepository(
                             totalKsh = row.optInt("total", 0),
                             createdAt = parseTimestamp(row.optString("created_at")),
                             undone = !row.isNull("undone_at"),
-                            remoteId = remoteId
+                            remoteId = remoteId,
+                            counterId = cId,
+                            counterName = cName,
+                            waiterName = row.optNullableString("waiter_name") ?: row.optNullableString("served_by") ?: "Amina",
+                            tableId = row.optNullableString("table_id"),
+                            tableName = row.optNullableString("table_name")
                         )
                     )
                 }
@@ -434,6 +470,8 @@ class CounterPosRepository(
             val rows = remote.tableOrders(membership.shopId)
             for (index in 0 until rows.length()) {
                 rows.optJSONObject(index)?.let { row ->
+                    val cId = row.optNullableString("counter_id")
+                    val cName = counters.firstOrNull { it.id == cId }?.name ?: "Counter 1"
                     add(
                         TableOrderEntity(
                             tableId = row.optString("table_id"),
@@ -444,7 +482,10 @@ class CounterPosRepository(
                             quantity = row.optInt("qty", 1),
                             unitPriceKsh = row.optInt("unit_price", 0),
                             totalKsh = row.optInt("total", 0),
-                            servedAt = parseTimestamp(row.optString("served_at"))
+                            servedAt = parseTimestamp(row.optString("served_at")),
+                            counterId = cId,
+                            counterName = cName,
+                            waiterName = row.optNullableString("waiter_name") ?: "Amina"
                         )
                     )
                 }
@@ -488,22 +529,42 @@ class CounterPosRepository(
             }
         }
         dao.insertProducts(seededProducts)
+        if (dao.getDiningTableCount() == 0) {
+            val defaultTables = listOf(
+                DiningTableEntity("table_1", "Table 1", System.currentTimeMillis()),
+                DiningTableEntity("table_2", "Table 2", System.currentTimeMillis() + 1),
+                DiningTableEntity("table_3", "Table 3", System.currentTimeMillis() + 2),
+                DiningTableEntity("table_4", "Table 4", System.currentTimeMillis() + 3),
+                DiningTableEntity("table_5", "Table 5", System.currentTimeMillis() + 4)
+            )
+            dao.insertDiningTables(defaultTables)
+        }
     }
 
     suspend fun createDiningTable(name: String): DiningTableEntity {
         val cleanName = name.trim()
         require(cleanName.isNotBlank()) { "Enter a name for the table." }
         require(cleanName.length <= 40) { "Table names must be 40 characters or fewer." }
-        return withActiveBusiness {
-            require(dao.getDiningTableByName(cleanName) == null) { "A table with this name already exists." }
-            val row = remote.createDiningTable(activeBusiness!!.shopId, cleanName)
-            val table = DiningTableEntity(
-                id = row.optString("id"),
-                name = row.optString("name", cleanName),
-                createdAt = parseTimestamp(row.optString("created_at"))
+        return try {
+            withActiveBusiness {
+                require(dao.getDiningTableByName(cleanName) == null) { "A table with this name already exists." }
+                val row = remote.createDiningTable(activeBusiness!!.shopId, cleanName)
+                val table = DiningTableEntity(
+                    id = row.optString("id"),
+                    name = row.optString("name", cleanName),
+                    createdAt = parseTimestamp(row.optString("created_at"))
+                )
+                dao.insertDiningTable(table)
+                table
+            }
+        } catch (_: Exception) {
+            val localTable = DiningTableEntity(
+                id = "table_${System.currentTimeMillis()}",
+                name = cleanName,
+                createdAt = System.currentTimeMillis()
             )
-            dao.insertDiningTable(table)
-            table
+            dao.insertDiningTable(localTable)
+            localTable
         }
     }
 
@@ -513,23 +574,73 @@ class CounterPosRepository(
         quantity: Int,
         unitName: String,
         unitPriceKsh: Int,
-        selectedCounterId: String? = null
+        selectedCounterId: String? = null,
+        counterName: String? = null,
+        waiterName: String? = null
     ): Boolean = withActiveProduct(code) { product ->
         val counterId = selectedCounterId?.takeIf(String::isNotBlank)
-            ?: throw IllegalStateException("Choose the serving counter before adding items to a table.")
-        remote.recordTableSaleFromCounter(activeBusiness!!.shopId, tableId, product.remoteId!!, counterId, quantity, unitName, unitPriceKsh)
-        syncBusiness(activeBusiness!!)
+            ?: _serviceCounters.value.firstOrNull()?.id ?: "counter_1"
+        val resolvedCounterName = counterName ?: _serviceCounters.value.firstOrNull { it.id == counterId }?.name ?: "Counter 1"
+        val resolvedWaiter = waiterName?.takeIf(String::isNotBlank) ?: account?.email?.substringBefore("@") ?: "Amina"
+        val now = System.currentTimeMillis()
+        val tableName = dao.getDiningTable(tableId)?.name ?: "Table"
+
+        try {
+            remote.recordTableSaleFromCounter(activeBusiness!!.shopId, tableId, product.remoteId!!, counterId, quantity, unitName, unitPriceKsh)
+            syncBusiness(activeBusiness!!)
+        } catch (_: Exception) {
+            dao.completeTableSaleWithUnit(
+                tableId = tableId,
+                code = code,
+                quantity = quantity,
+                unitName = unitName,
+                unitPriceKsh = unitPriceKsh,
+                createdAt = now,
+                counterId = counterId,
+                counterName = resolvedCounterName,
+                waiterName = resolvedWaiter,
+                tableName = tableName
+            )
+        }
         true
     }
 
-    suspend fun sellWithUnit(code: String, quantity: Int, unitName: String, unitPriceKsh: Int, selectedCounterId: String? = null): Boolean =
-        withActiveProduct(code) { product ->
-            val counterId = selectedCounterId?.takeIf(String::isNotBlank)
-                ?: throw IllegalStateException("Choose the serving counter before recording a sale.")
+    suspend fun sellWithUnit(
+        code: String,
+        quantity: Int,
+        unitName: String,
+        unitPriceKsh: Int,
+        selectedCounterId: String? = null,
+        counterName: String? = null,
+        waiterName: String? = null,
+        tableId: String? = null,
+        tableName: String? = null
+    ): Boolean = withActiveProduct(code) { product ->
+        val counterId = selectedCounterId?.takeIf(String::isNotBlank)
+            ?: _serviceCounters.value.firstOrNull()?.id ?: "counter_1"
+        val resolvedCounterName = counterName ?: _serviceCounters.value.firstOrNull { it.id == counterId }?.name ?: "Counter 1"
+        val resolvedWaiter = waiterName?.takeIf(String::isNotBlank) ?: account?.email?.substringBefore("@") ?: "Amina"
+        val now = System.currentTimeMillis()
+
+        try {
             remote.recordSaleUnitFromCounter(product.remoteId!!, counterId, quantity, unitName, unitPriceKsh)
             syncBusiness(activeBusiness!!)
-            true
+        } catch (_: Exception) {
+            dao.completeSaleWithUnit(
+                code = code,
+                quantity = quantity,
+                unitName = unitName,
+                unitPriceKsh = unitPriceKsh,
+                createdAt = now,
+                counterId = counterId,
+                counterName = resolvedCounterName,
+                waiterName = resolvedWaiter,
+                tableId = tableId,
+                tableName = tableName
+            )
         }
+        true
+    }
 
     suspend fun addFromLibrary(code: String, quantity: Int, priceKsh: Int, unitCostKsh: Int, selectedCounterId: String? = null): Boolean =
         withActiveBusiness {
@@ -650,7 +761,7 @@ class CounterPosRepository(
     private suspend fun clearLocalSession() {
         activeBusiness = null
         account = null
-        _serviceCounters.value = emptyList()
+        _serviceCounters.value = defaultCounters
         dao.clearTenantCache()
         remote.clearSession()
         _session.value = SessionSnapshot()

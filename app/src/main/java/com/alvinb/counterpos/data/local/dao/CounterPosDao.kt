@@ -20,6 +20,8 @@ interface CounterPosDao {
     suspend fun getDiningTable(id: String): DiningTableEntity?
     @Query("SELECT * FROM dining_tables WHERE name = :name COLLATE NOCASE LIMIT 1")
     suspend fun getDiningTableByName(name: String): DiningTableEntity?
+    @Query("SELECT COUNT(*) FROM dining_tables")
+    suspend fun getDiningTableCount(): Int
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertDiningTable(table: DiningTableEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -118,19 +120,20 @@ interface CounterPosDao {
         quantity: Int,
         unitName: String,
         unitPriceKsh: Int,
-        createdAt: Long
+        createdAt: Long,
+        counterId: String? = null,
+        counterName: String? = null,
+        waiterName: String? = null,
+        tableId: String? = null,
+        tableName: String? = null
     ): Boolean {
         if (quantity < 1 || unitPriceKsh < 1) return false
         val product = getProductByCode(code) ?: return false
         if (!product.inMyStock) return false
 
-        // For bottle or primary unit, decrement shelf stock by quantity (if stock available).
-        // If selling smaller units like cup or glass, decrement 1 bottle if quantity exceeds,
-        // or decrement 1 bottle per cup/glass sold if tracking per serving, or decrement minimum 1 if bottle unit.
         val shouldDecrement = if (unitName.equals("Bottle", ignoreCase = true) || unitName.equals("Can", ignoreCase = true)) {
             quantity
         } else {
-            // For cup/glass, decrement 1 unit from stock if available, or allow sales if stocked
             if (product.stockQuantity >= 1) 1 else 0
         }
         if (shouldDecrement > 0 && product.stockQuantity >= shouldDecrement) {
@@ -147,7 +150,12 @@ interface CounterPosDao {
                 unitPriceKsh = unitPriceKsh,
                 totalKsh = unitPriceKsh * quantity,
                 createdAt = createdAt,
-                photoOverrideUri = product.photoOverrideUri
+                photoOverrideUri = product.photoOverrideUri,
+                counterId = counterId,
+                counterName = counterName,
+                waiterName = waiterName,
+                tableId = tableId,
+                tableName = tableName
             )
         )
         return true
@@ -160,14 +168,20 @@ interface CounterPosDao {
         quantity: Int,
         unitName: String,
         unitPriceKsh: Int,
-        createdAt: Long
+        createdAt: Long,
+        counterId: String? = null,
+        counterName: String? = null,
+        waiterName: String? = null,
+        tableName: String? = null
     ): Boolean {
-        if (getDiningTable(tableId) == null || quantity < 1 || unitPriceKsh < 1) return false
+        val diningTable = getDiningTable(tableId) ?: return false
+        if (quantity < 1 || unitPriceKsh < 1) return false
         val product = getProductByCode(code) ?: return false
         if (!product.inMyStock || product.stockQuantity < 1) return false
         val stockToDeduct = if (unitName.equals("Bottle", true) || unitName.equals("Can", true)) quantity else 1
         if (product.stockQuantity < stockToDeduct || decrementStock(code, stockToDeduct) != 1) return false
         val total = unitPriceKsh * quantity
+        val actualTableName = tableName ?: diningTable.name
         val saleId = insertSale(
             SaleEntity(
                 catalogCode = product.catalogCode,
@@ -178,7 +192,12 @@ interface CounterPosDao {
                 unitPriceKsh = unitPriceKsh,
                 totalKsh = total,
                 createdAt = createdAt,
-                photoOverrideUri = product.photoOverrideUri
+                photoOverrideUri = product.photoOverrideUri,
+                counterId = counterId,
+                counterName = counterName,
+                waiterName = waiterName,
+                tableId = tableId,
+                tableName = actualTableName
             )
         )
         if (saleId <= 0L) return false
@@ -192,7 +211,10 @@ interface CounterPosDao {
                 quantity = quantity,
                 unitPriceKsh = unitPriceKsh,
                 totalKsh = total,
-                servedAt = createdAt
+                servedAt = createdAt,
+                counterId = counterId,
+                counterName = counterName,
+                waiterName = waiterName
             )
         )
         return true
