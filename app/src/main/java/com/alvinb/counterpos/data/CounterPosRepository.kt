@@ -728,24 +728,61 @@ class CounterPosRepository(
 
     suspend fun addFromLibrary(code: String, quantity: Int, priceKsh: Int, unitCostKsh: Int, selectedCounterId: String? = null): Boolean =
         withActiveBusiness {
-            val catalogId = dao.getProductByCode(code)?.remoteId
-                ?: throw IllegalStateException("This catalog item is not linked to the Supabase catalog. Refresh the product list and try again.")
+            val catalogProduct = dao.getProductByCode(code)
+                ?: throw IllegalStateException("Catalog product not found on this device. Refresh the product list and try again.")
             val counterId = selectedCounterId?.takeIf(String::isNotBlank)
                 ?: throw IllegalStateException("Choose the receiving counter first.")
-            try {
-                remote.addFromCatalogAtCounter(activeBusiness!!.shopId, catalogId, counterId, quantity, priceKsh, unitCostKsh)
-            } catch (error: Exception) {
-                // Older deployed Supabase projects may not yet have the new
-                // counter-aware RPC. Preserve catalog intake through the legacy
-                // function instead of reducing the action to a generic failure.
-                val message = error.message.orEmpty()
-                val missingRpc = message.contains("function", ignoreCase = true) &&
-                    (message.contains("not found", ignoreCase = true) || message.contains("does not exist", ignoreCase = true)) ||
-                    message.contains("PGRST202", ignoreCase = true) || message.contains("404")
-                if (missingRpc) {
-                    remote.addFromCatalog(activeBusiness!!.shopId, catalogId, quantity, priceKsh, unitCostKsh)
-                } else {
-                    throw error
+            val catalogId = catalogProduct.remoteId
+            if (catalogId.isNullOrBlank()) {
+                // Some products are bundled in the APK and do not exist in the
+                // Supabase catalog. Register them directly in this business so
+                // they can still be stocked and sold.
+                try {
+                    remote.registerProductAtCounter(
+                        shopId = activeBusiness!!.shopId,
+                        code = catalogProduct.catalogCode,
+                        name = catalogProduct.name,
+                        category = catalogProduct.category,
+                        price = priceKsh,
+                        quantity = quantity,
+                        unitCost = unitCostKsh,
+                        brand = catalogProduct.brand,
+                        size = catalogProduct.size,
+                        counterId = counterId
+                    )
+                } catch (error: Exception) {
+                    val message = error.message.orEmpty()
+                    val missingRpc = message.contains("function", ignoreCase = true) &&
+                        (message.contains("not found", ignoreCase = true) || message.contains("does not exist", ignoreCase = true)) ||
+                        message.contains("PGRST202", ignoreCase = true) || message.contains("404")
+                    if (missingRpc) {
+                        remote.registerProduct(
+                            shopId = activeBusiness!!.shopId,
+                            code = catalogProduct.catalogCode,
+                            name = catalogProduct.name,
+                            category = catalogProduct.category,
+                            price = priceKsh,
+                            quantity = quantity,
+                            unitCost = unitCostKsh,
+                            brand = catalogProduct.brand,
+                            size = catalogProduct.size
+                        )
+                    } else {
+                        throw error
+                    }
+                }
+            } else {
+                try {
+                    remote.addFromCatalogAtCounter(activeBusiness!!.shopId, catalogId, counterId, quantity, priceKsh, unitCostKsh)
+                } catch (error: Exception) {
+                    // Older deployed Supabase projects may not yet have the new
+                    // counter-aware RPC. Preserve catalog intake through legacy.
+                    val message = error.message.orEmpty()
+                    val missingRpc = message.contains("function", ignoreCase = true) &&
+                        (message.contains("not found", ignoreCase = true) || message.contains("does not exist", ignoreCase = true)) ||
+                        message.contains("PGRST202", ignoreCase = true) || message.contains("404")
+                    if (missingRpc) remote.addFromCatalog(activeBusiness!!.shopId, catalogId, quantity, priceKsh, unitCostKsh)
+                    else throw error
                 }
             }
             syncBusiness(activeBusiness!!)
