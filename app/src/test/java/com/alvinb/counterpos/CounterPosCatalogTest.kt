@@ -19,7 +19,7 @@ class CounterPosCatalogTest {
         val json = context.assets.open("counterpos_catalog.json").bufferedReader().use { it.readText() }
         val catalog = JSONArray(json)
 
-        assertEquals(284, catalog.length())
+        assertEquals(306, catalog.length())
         var stockedProducts = 0
         var libraryProducts = 0
         var openingUnits = 0
@@ -39,7 +39,7 @@ class CounterPosCatalogTest {
         }
 
         assertEquals(19, stockedProducts)
-        assertEquals(265, libraryProducts)
+        assertEquals(287, libraryProducts)
         assertEquals(316, openingUnits)
     }
 }

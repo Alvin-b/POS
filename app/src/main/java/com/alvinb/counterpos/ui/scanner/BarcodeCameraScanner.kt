@@ -418,7 +418,8 @@ private fun CameraScannerView(
                     color = when (mode) {
                         ScannerMode.SELL, ScannerMode.TABLE_ADD -> Color(0xFF0F766E).copy(alpha = 0.9f)
                         ScannerMode.ADMIN_QR -> Color(0xFF4338CA).copy(alpha = 0.9f)
-                        else -> Color(0xFFB45309).copy(alpha = 0.9f)
+                        ScannerMode.ASSIGN_BARCODE -> Color(0xFF2563EB).copy(alpha = 0.9f)
+                        else -> Color(0xFF0F766E).copy(alpha = 0.9f)
                     },
                     shape = RoundedCornerShape(20.dp)
                 ) {
@@ -428,17 +429,23 @@ private fun CameraScannerView(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Icon(
-                            imageVector = if (mode == ScannerMode.TAKE_STOCK) Icons.Default.Inventory2 else Icons.Default.ShoppingCart,
+                            imageVector = when (mode) {
+                                ScannerMode.TAKE_STOCK -> Icons.Default.Inventory2
+                                ScannerMode.ADMIN_QR -> Icons.Default.QrCodeScanner
+                                ScannerMode.ASSIGN_BARCODE -> Icons.Default.QrCodeScanner
+                                else -> Icons.Default.ShoppingCart
+                            },
                             contentDescription = null,
                             tint = Color.White,
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
                             text = when (mode) {
-                                ScannerMode.SELL -> "SELLING / REGISTER"
+                                ScannerMode.SELL -> "FIND PRODUCT TO SELL"
                                 ScannerMode.TABLE_ADD -> "ADD TO TABLE BILL"
                                 ScannerMode.ADMIN_QR -> "ADMIN ENROLLMENT QR"
-                                else -> "TAKING STOCK / RECEIVE"
+                                ScannerMode.ASSIGN_BARCODE -> "LINK PRODUCT BARCODE"
+                                else -> "FIND PRODUCT TO RESTOCK"
                             },
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
@@ -537,7 +544,7 @@ private fun CameraScannerView(
                         Surface(
                             modifier = Modifier.size(36.dp),
                             shape = CircleShape,
-                            color = if (item != null) Color(0xFF10B981) else Color(0xFFF59E0B)
+                            color = if (item != null) Color(0xFF10B981) else Color(0xFF6B7280)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
@@ -565,7 +572,7 @@ private fun CameraScannerView(
                                         "Stock: ${item.stockQuantity} units · Size: ${item.size}"
                                     }
                                 } else {
-                                    "Barcode detected · Tap below to register or restock"
+                                    "Barcode detected ($barcode)"
                                 },
                                 fontSize = 12.sp,
                                 color = Color(0xFFE5E7EB)
@@ -575,7 +582,7 @@ private fun CameraScannerView(
                         if (item != null && mode == ScannerMode.TAKE_STOCK) {
                             Button(
                                 onClick = { onProductScannedForStock(item) },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF59E0B)),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F766E)),
                                 shape = RoundedCornerShape(8.dp)
                             ) {
                                 Text("Restock", fontSize = 12.sp)

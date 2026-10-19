@@ -239,7 +239,13 @@ internal fun TablesScreen(
                             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
                                     Text(line.productName, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text("${line.quantity} × ${line.unitName} · ${ksh(line.unitPriceKsh)} each · ${time(line.servedAt)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    val counterLabel = line.counterName?.takeIf { it.isNotBlank() } ?: "Counter 1"
+                                    val waiterLabel = line.waiterName?.takeIf { it.isNotBlank() } ?: "Amina"
+                                    Text(
+                                        "${line.quantity} × ${line.unitName} · ${ksh(line.unitPriceKsh)} · $counterLabel · Waiter: $waiterLabel · ${time(line.servedAt)}",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
                                 Text(ksh(line.totalKsh), fontWeight = FontWeight.Bold)
                             }

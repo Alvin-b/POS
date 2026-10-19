@@ -1,6 +1,8 @@
 package com.alvinb.counterpos.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -8,12 +10,20 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -29,6 +39,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
@@ -191,6 +202,7 @@ private fun AdminConsoleScreen(
     var reason by remember { mutableStateOf("") }
     var searchQuery by remember { mutableStateOf("") }
     var statusFilter by remember { mutableStateOf("all") }
+    var adminView by remember { mutableStateOf("Businesses") }
 
     LaunchedEffect(Unit) { viewModel.loadAdminBusinesses() }
 
@@ -218,28 +230,51 @@ private fun AdminConsoleScreen(
             (searchQuery.isBlank() || business.shopName.contains(searchQuery, ignoreCase = true) || business.ownerEmail.contains(searchQuery, ignoreCase = true))
     }
 
-    Scaffold { padding ->
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
+            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             item {
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    shape = RoundedCornerShape(14.dp),
+                    tonalElevation = 1.dp
                 ) {
-                    Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Column {
-                            Text("Platform admin", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                            Text("${businesses.size} businesses", fontSize = 13.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f))
-                            Text(email, fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f), modifier = Modifier.padding(top = 8.dp))
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(10.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Control Center", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                            Text("Platform administration", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Column(horizontalAlignment = Alignment.End) {
-                            TextButton(onClick = { viewModel.loadAdminBusinesses(force = true) }, enabled = !state.isAdminLoading) { Text("Refresh") }
-                            TextButton(onClick = onSignOut) { Text("Sign out") }
-                        }
+                        TextButton(onClick = { viewModel.loadAdminBusinesses(force = true) }, enabled = !state.isAdminLoading) { Text("Refresh", fontSize = 12.sp) }
+                        TextButton(onClick = onSignOut) { Text("Exit", fontSize = 12.sp) }
                     }
                 }
+            }
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("Overview", "Businesses", "Onboarding", "Access").forEach { view ->
+                        FilterChip(
+                            selected = adminView == view,
+                            onClick = { adminView = view },
+                            label = { Text(view, fontSize = 12.sp) },
+                            shape = RoundedCornerShape(9.dp),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        )
+                    }
+                }
+            }
+            item {
+                Text(email, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (state.isAdminLoading) {
                 item { Text("Loading business directory…", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 4.dp)) }
@@ -260,24 +295,15 @@ private fun AdminConsoleScreen(
             }
             item {
                 AdminSectionLabel("Overview")
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    AdminSummaryCard(
-                        label = "Live",
-                        value = businesses.count { it.status == "active" && it.ownerEmail != "Pending owner enrollment" }.toString(),
-                        modifier = Modifier.weight(1f)
-                    )
-                    AdminSummaryCard(
-                        label = "Awaiting owner",
-                        value = businesses.count { it.status == "active" && it.ownerEmail == "Pending owner enrollment" }.toString(),
-                        muted = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
                 Card(modifier = Modifier.fillMaxWidth()) {
-                    Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        AdminMetric("Businesses", businesses.size.toString())
-                        AdminMetric("Suspended", businesses.count { it.status == "suspended" }.toString())
-                        AdminMetric("Closed", businesses.count { it.status == "closed" }.toString())
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Portfolio overview", fontWeight = FontWeight.SemiBold)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            AdminMetric("Businesses", businesses.size.toString())
+                            AdminMetric("Active", businesses.count { it.status == "active" }.toString())
+                            AdminMetric("Pending owners", businesses.count { it.ownerEmail == "Pending owner enrollment" }.toString())
+                            AdminMetric("Suspended", businesses.count { it.status == "suspended" }.toString())
+                        }
                     }
                 }
             }
@@ -292,9 +318,8 @@ private fun AdminConsoleScreen(
                         Text("Business setup profile", fontWeight = FontWeight.SemiBold)
                         Text("This profile determines the dashboard and features delivered to the owner app.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { businessType = "big_club" }, modifier = Modifier.weight(1f), colors = if (businessType == "big_club") androidx.compose.material3.ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer) else androidx.compose.material3.ButtonDefaults.outlinedButtonColors()) { Text("Club") }
-                            OutlinedButton(onClick = { businessType = "counter_seller" }, modifier = Modifier.weight(1f), colors = if (businessType == "counter_seller") androidx.compose.material3.ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer) else androidx.compose.material3.ButtonDefaults.outlinedButtonColors()) { Text("Liquor store") }
-                            OutlinedButton(onClick = { businessType = "garden" }, modifier = Modifier.weight(1f), colors = if (businessType == "garden") androidx.compose.material3.ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer) else androidx.compose.material3.ButtonDefaults.outlinedButtonColors()) { Text("Garden") }
+                            OutlinedButton(onClick = { businessType = "big_club" }, modifier = Modifier.weight(1f), colors = if (businessType == "big_club") androidx.compose.material3.ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer) else androidx.compose.material3.ButtonDefaults.outlinedButtonColors()) { Text("Big Club") }
+                            OutlinedButton(onClick = { businessType = "counter_seller" }, modifier = Modifier.weight(1f), colors = if (businessType == "counter_seller") androidx.compose.material3.ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer) else androidx.compose.material3.ButtonDefaults.outlinedButtonColors()) { Text("Counter Seller") }
                         }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf("small", "medium", "large").forEach { size ->
@@ -364,35 +389,6 @@ private fun AdminMetric(label: String, value: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(value, fontSize = 21.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-private fun AdminSummaryCard(
-    label: String,
-    value: String,
-    muted: Boolean = false,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier,
-        colors = CardDefaults.cardColors(
-            containerColor = if (muted) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primaryContainer
-        )
-    ) {
-        Column(Modifier.padding(14.dp)) {
-            Text(
-                label,
-                fontSize = 11.sp,
-                color = if (muted) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onPrimaryContainer
-            )
-            Text(
-                value,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                color = if (muted) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onPrimaryContainer
-            )
-        }
     }
 }
 

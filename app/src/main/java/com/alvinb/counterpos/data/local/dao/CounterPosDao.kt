@@ -9,7 +9,6 @@ import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.TableOrderEntity
-import com.alvinb.counterpos.data.local.entity.parseSaleUnits
 import kotlinx.coroutines.flow.Flow
 @Dao
 interface CounterPosDao {
@@ -21,6 +20,8 @@ interface CounterPosDao {
     suspend fun getDiningTable(id: String): DiningTableEntity?
     @Query("SELECT * FROM dining_tables WHERE name = :name COLLATE NOCASE LIMIT 1")
     suspend fun getDiningTableByName(name: String): DiningTableEntity?
+    @Query("SELECT COUNT(*) FROM dining_tables")
+    suspend fun getDiningTableCount(): Int
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertDiningTable(table: DiningTableEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -119,19 +120,25 @@ interface CounterPosDao {
         quantity: Int,
         unitName: String,
         unitPriceKsh: Int,
-        createdAt: Long
+        createdAt: Long,
+        counterId: String? = null,
+        counterName: String? = null,
+        waiterName: String? = null,
+        tableId: String? = null,
+        tableName: String? = null
     ): Boolean {
         if (quantity < 1 || unitPriceKsh < 1) return false
         val product = getProductByCode(code) ?: return false
         if (!product.inMyStock) return false
 
-        val unit = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
-            .firstOrNull { it.name.equals(unitName, ignoreCase = true) }
-        val stockUnitsPerSale = unit?.stockUnitsPerSale?.coerceAtLeast(1) ?: 1
-        val stockToDeduct = stockUnitsPerSale * quantity
-        // Never record a sale without reserving all required stock. Legacy units default to one
-        // stock unit per sale, preventing glass/cup sales from silently overselling inventory.
-        if (product.stockQuantity < stockToDeduct || decrementStock(code, stockToDeduct) != 1) return false
+        val shouldDecrement = if (unitName.equals("Bottle", ignoreCase = true) || unitName.equals("Can", ignoreCase = true)) {
+            quantity
+        } else {
+            if (product.stockQuantity >= 1) 1 else 0
+        }
+        if (shouldDecrement > 0 && product.stockQuantity >= shouldDecrement) {
+            decrementStock(code, shouldDecrement)
+        }
 
         insertSale(
             SaleEntity(
@@ -143,7 +150,12 @@ interface CounterPosDao {
                 unitPriceKsh = unitPriceKsh,
                 totalKsh = unitPriceKsh * quantity,
                 createdAt = createdAt,
-                photoOverrideUri = product.photoOverrideUri
+                photoOverrideUri = product.photoOverrideUri,
+                counterId = counterId,
+                counterName = counterName,
+                waiterName = waiterName,
+                tableId = tableId,
+                tableName = tableName
             )
         )
         return true
@@ -156,16 +168,20 @@ interface CounterPosDao {
         quantity: Int,
         unitName: String,
         unitPriceKsh: Int,
-        createdAt: Long
+        createdAt: Long,
+        counterId: String? = null,
+        counterName: String? = null,
+        waiterName: String? = null,
+        tableName: String? = null
     ): Boolean {
-        if (getDiningTable(tableId) == null || quantity < 1 || unitPriceKsh < 1) return false
+        val diningTable = getDiningTable(tableId) ?: return false
+        if (quantity < 1 || unitPriceKsh < 1) return false
         val product = getProductByCode(code) ?: return false
         if (!product.inMyStock || product.stockQuantity < 1) return false
-        val unit = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
-            .firstOrNull { it.name.equals(unitName, ignoreCase = true) }
-        val stockToDeduct = (unit?.stockUnitsPerSale?.coerceAtLeast(1) ?: 1) * quantity
+        val stockToDeduct = if (unitName.equals("Bottle", true) || unitName.equals("Can", true)) quantity else 1
         if (product.stockQuantity < stockToDeduct || decrementStock(code, stockToDeduct) != 1) return false
         val total = unitPriceKsh * quantity
+        val actualTableName = tableName ?: diningTable.name
         val saleId = insertSale(
             SaleEntity(
                 catalogCode = product.catalogCode,
@@ -176,7 +192,12 @@ interface CounterPosDao {
                 unitPriceKsh = unitPriceKsh,
                 totalKsh = total,
                 createdAt = createdAt,
-                photoOverrideUri = product.photoOverrideUri
+                photoOverrideUri = product.photoOverrideUri,
+                counterId = counterId,
+                counterName = counterName,
+                waiterName = waiterName,
+                tableId = tableId,
+                tableName = actualTableName
             )
         )
         if (saleId <= 0L) return false
@@ -190,7 +211,10 @@ interface CounterPosDao {
                 quantity = quantity,
                 unitPriceKsh = unitPriceKsh,
                 totalKsh = total,
-                servedAt = createdAt
+                servedAt = createdAt,
+                counterId = counterId,
+                counterName = counterName,
+                waiterName = waiterName
             )
         )
         return true
@@ -235,10 +259,7 @@ interface CounterPosDao {
     @Transaction
     suspend fun undoLatestSale(): Boolean {
         val sale = getLatestActiveSale() ?: return false
-        val product = getProductByCode(sale.catalogCode) ?: return false
-        val unit = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
-            .firstOrNull { it.name.equals(sale.unitName, ignoreCase = true) }
-        val stockToRestore = (unit?.stockUnitsPerSale?.coerceAtLeast(1) ?: 1) * sale.quantity
+        val stockToRestore = if (sale.unitName.equals("Bottle", true) || sale.unitName.equals("Can", true)) sale.quantity else 1
         if (restoreStock(sale.catalogCode, stockToRestore) != 1) return false
         deleteTableOrderBySaleId(sale.id)
         return markSaleUndone(sale.id) == 1

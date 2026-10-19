@@ -27,5 +27,8 @@ data class TableOrderEntity(
     val quantity: Int,
     val unitPriceKsh: Int,
     val totalKsh: Int,
-    val servedAt: Long
+    val servedAt: Long,
+    val counterId: String? = null,
+    val counterName: String? = null,
+    val waiterName: String? = null
 )

@@ -13,7 +13,7 @@ import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.TableOrderEntity
 @Database(
     entities = [ProductEntity::class, SaleEntity::class, DiningTableEntity::class, TableOrderEntity::class],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -38,6 +38,19 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sales ADD COLUMN counterId TEXT")
+                db.execSQL("ALTER TABLE sales ADD COLUMN counterName TEXT")
+                db.execSQL("ALTER TABLE sales ADD COLUMN waiterName TEXT")
+                db.execSQL("ALTER TABLE sales ADD COLUMN tableId TEXT")
+                db.execSQL("ALTER TABLE sales ADD COLUMN tableName TEXT")
+                db.execSQL("ALTER TABLE table_orders ADD COLUMN counterId TEXT")
+                db.execSQL("ALTER TABLE table_orders ADD COLUMN counterName TEXT")
+                db.execSQL("ALTER TABLE table_orders ADD COLUMN waiterName TEXT")
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -46,7 +59,7 @@ abstract class AppDatabase : RoomDatabase() {
                 context.applicationContext,
                 AppDatabase::class.java,
                 "counterpos.db"
-            ).addMigrations(MIGRATION_3_4, MIGRATION_4_5).fallbackToDestructiveMigration(dropAllTables = true).build().also { instance = it }
+            ).addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).fallbackToDestructiveMigration(dropAllTables = true).build().also { instance = it }
         }
     }
 }

@@ -1,11 +1,11 @@
 package com.alvinb.counterpos.ui
 
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -26,6 +26,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+data class EnrollmentCredential(
+    val businessId: String,
+    val businessName: String,
+    val role: String,
+    val passkey: String,
+    val qrPayload: String
+)
+
 @Composable
 fun EnrollmentCredentialCard(
     credential: EnrollmentCredential,
@@ -37,7 +45,11 @@ fun EnrollmentCredentialCard(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             Text(
                 if (credential.role == "owner") "Owner access pass ready" else "Staff access pass ready",
                 fontSize = 19.sp,
@@ -49,7 +61,11 @@ fun EnrollmentCredentialCard(
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSecondaryContainer
             )
-            Text("Send this passkey to the owner or employee. Their app displays the QR code for administrator approval.", fontSize = 12.sp, textAlign = TextAlign.Center)
+            Text(
+                "Send this passkey to the owner or employee. Their app displays the QR code for administrator approval.",
+                fontSize = 12.sp,
+                textAlign = TextAlign.Center
+            )
             Text("One-time passkey", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
             SelectionContainer {
                 Text(credential.passkey, fontSize = 22.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, textAlign = TextAlign.Center)
