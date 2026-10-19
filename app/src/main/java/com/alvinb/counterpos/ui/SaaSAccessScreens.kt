@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -45,6 +48,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -59,6 +63,7 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.ui.draw.clip
 import com.alvinb.counterpos.data.remote.AdminAuditEvent
 import com.alvinb.counterpos.data.remote.AdminBusiness
+import com.alvinb.counterpos.R
 import com.alvinb.counterpos.ui.scanner.BarcodeScannerScreen
 import com.alvinb.counterpos.ui.scanner.ScannerMode
 
@@ -164,23 +169,34 @@ private fun AuthScreen(
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 26.dp),
-        verticalArrangement = Arrangement.Center,
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(0.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Surface(
-            shape = RoundedCornerShape(22.dp),
+            shape = RoundedCornerShape(24.dp),
             color = MaterialTheme.colorScheme.primaryContainer,
-            modifier = Modifier.size(76.dp)
+            modifier = Modifier.size(78.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Text("CP", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                Image(
+                    painter = painterResource(R.drawable.ic_counterpos_logo),
+                    contentDescription = "Counter POS logo",
+                    modifier = Modifier.size(54.dp)
+                )
             }
         }
-        Spacer(Modifier.height(14.dp))
-        Text("Counter POS", fontSize = 30.sp, fontWeight = FontWeight.Bold)
-        Text("A calmer way to run your counter", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(13.dp))
+        Text("Counter POS", fontSize = 29.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.4).sp)
+        Text(
+            "A calmer way to run your counter",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 14.sp
+        )
+        Spacer(Modifier.height(22.dp))
         val qrExpired = error?.let { message ->
             message.contains("expired", ignoreCase = true) ||
                 message.contains("session expired", ignoreCase = true) ||
@@ -188,7 +204,12 @@ private fun AuthScreen(
                 message.contains("used", ignoreCase = true)
         } == true
         if (qrPayload != null && !qrExpired) LoginQrCard(payload = qrPayload)
-        else Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (error.isNullOrBlank()) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.errorContainer)) {
+        else Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = if (error.isNullOrBlank()) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.errorContainer),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(if (qrExpired) "QR code expired" else if (error.isNullOrBlank()) "Preparing secure QR sign-in…" else "Secure QR sign-in unavailable", fontWeight = FontWeight.SemiBold)
                 if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 12.sp)
@@ -196,7 +217,12 @@ private fun AuthScreen(
             }
         }
         Spacer(Modifier.height(12.dp))
-        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(22.dp)) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            shape = RoundedCornerShape(22.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Sign in to your workspace", fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Text("Enter your access passkey. The app opens the workspace and features allowed for your account.", color = MaterialTheme.colorScheme.onSurfaceVariant)

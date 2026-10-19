@@ -2,12 +2,15 @@ package com.alvinb.counterpos.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 private val CounterPosLight = lightColorScheme(
@@ -44,16 +47,27 @@ private val CounterPosTypography = Typography().run {
         headlineSmall = headlineSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.2).sp),
         titleLarge = titleLarge.copy(fontWeight = FontWeight.Bold),
         titleMedium = titleMedium.copy(fontWeight = FontWeight.SemiBold),
+        titleSmall = titleSmall.copy(fontWeight = FontWeight.SemiBold),
         bodyLarge = bodyLarge.copy(lineHeight = 24.sp),
+        bodyMedium = bodyMedium.copy(lineHeight = 21.sp),
         labelLarge = labelLarge.copy(fontWeight = FontWeight.Bold)
     )
 }
+
+private val CounterPosShapes = Shapes(
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(20.dp),
+    extraLarge = RoundedCornerShape(28.dp)
+)
 
 @Composable
 fun CounterPosTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = if (isSystemInDarkTheme()) CounterPosDark else CounterPosLight,
         typography = CounterPosTypography,
+        shapes = CounterPosShapes,
         content = content
     )
 }

@@ -84,6 +84,7 @@ internal fun TablesScreen(
     var productQuery by remember { mutableStateOf("") }
     val currentOrders = orders.filter { it.tableId == selectedTableId }
     val tableTotal = currentOrders.sumOf { it.totalKsh.toLong() }
+    val allTablesTotal = orders.sumOf { it.totalKsh.toLong() }
 
     LaunchedEffect(isCreatingTable, selectedTableId) {
         if (!isCreatingTable && selectedTableId != null) showCreateDialog = false
@@ -179,6 +180,25 @@ internal fun TablesScreen(
                     Text("Add table", modifier = Modifier.padding(start = 5.dp), fontWeight = FontWeight.Bold)
                 }
             }
+            if (tables.isNotEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("Running total", fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Text("Across ${tables.size} table${if (tables.size == 1) "" else "s"}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f))
+                        }
+                        Text(ksh(allTablesTotal), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
+                }
+            }
             if (!actionError.isNullOrBlank() && !showCreateDialog) {
                 Text(actionError, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
             }
@@ -199,7 +219,7 @@ internal fun TablesScreen(
                             modifier = Modifier.fillMaxWidth().clickable { onOpenTable(table) },
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                             shape = RoundedCornerShape(18.dp),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                         ) {
                             Row(Modifier.fillMaxWidth().padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.TableRestaurant, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(27.dp))
