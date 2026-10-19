@@ -582,13 +582,16 @@ class CounterPosRepository(
     }
 
     suspend fun seedCatalogIfEmpty() = withContext(Dispatchers.IO) {
-        if (dao.getProductCount() > 0) return@withContext
         val payload = assets.open("counterpos_catalog.json").bufferedReader().use { it.readText() }
         val array = JSONArray(payload)
         val seededProducts = buildList {
             for (index in 0 until array.length()) {
                 val item = array.getJSONObject(index)
                 val code = item.getString("catalogCode")
+                // Upsert only missing bundled entries. Never replace an existing
+                // tenant product because it may contain stock, price, or image
+                // changes made by the business owner.
+                if (dao.getProductByCode(code) != null) continue
                 val sellingPrice = item.optInt("sellingPriceKsh", 0)
                 add(
                     ProductEntity(
