@@ -174,7 +174,7 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                         loginQrExpiresAtMillis = challenge.expiresAtMillis,
                         isQrPolling = true,
                         startupError = null,
-                        notice = "QR ready. Scan it with the Superadmin phone; this phone will sign in automatically."
+                        notice = "QR ready. Ask an authorized administrator to scan it; this phone will sign in automatically."
                     )
                 }
                 pollAccessChallengeUntilApproved(challenge.token)
@@ -201,7 +201,7 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
             prepareQrChallenge()
             return@launch
         }
-        _uiState.update { it.copy(isQrPolling = true, startupError = null, notice = "Waiting for Superadmin approval…") }
+        _uiState.update { it.copy(isQrPolling = true, startupError = null, notice = "Waiting for administrator approval…") }
         pollAccessChallengeUntilApproved(token)
     }
 
