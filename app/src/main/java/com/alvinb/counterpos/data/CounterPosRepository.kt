@@ -535,7 +535,9 @@ class CounterPosRepository(
         dao.clearSales()
         dao.insertSales(sales)
         val tables = buildList {
-            val rows = remote.diningTables(membership.shopId)
+            // Tables are optional for liquor stores and older Supabase projects may
+            // not have the Tables migration yet. Do not block passkey/POS startup.
+            val rows = runCatching { remote.diningTables(membership.shopId) }.getOrDefault(JSONArray())
             for (index in 0 until rows.length()) {
                 rows.optJSONObject(index)?.let { row ->
                     add(
@@ -549,7 +551,7 @@ class CounterPosRepository(
             }
         }
         val orders = buildList {
-            val rows = remote.tableOrders(membership.shopId)
+            val rows = runCatching { remote.tableOrders(membership.shopId) }.getOrDefault(JSONArray())
             for (index in 0 until rows.length()) {
                 rows.optJSONObject(index)?.let { row ->
                     val cId = row.optNullableString("counter_id")

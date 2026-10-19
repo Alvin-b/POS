@@ -190,6 +190,8 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                 val message = error.message.orEmpty()
                 val friendly = if (message.contains("function was not found", ignoreCase = true) || message.contains("404")) {
                     "Secure QR sign-in is not deployed on this Supabase project. Deploy create-access-challenge, then tap Retry."
+                } else if (message.contains("dining_tables", ignoreCase = true) || message.contains("schema cache", ignoreCase = true)) {
+                    "QR sign-in cannot start because public.dining_tables is missing in Supabase. Apply supabase/migrations/202610190001_tables.sql, then refresh QR setup. Passkey sign-in is still available."
                 } else message.ifBlank { "Could not prepare QR sign-in" }
                 _uiState.update { it.copy(loginQrPayload = null, isQrPolling = false, startupError = friendly, notice = null) }
             }
