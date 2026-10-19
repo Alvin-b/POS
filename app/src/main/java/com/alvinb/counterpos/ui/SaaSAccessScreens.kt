@@ -96,6 +96,9 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                 qrPayload = state.loginQrPayload,
                 onClearError = viewModel::clearStartupError
             )
+            session.activeBusiness != null && !session.activeBusiness?.role.equals("owner", ignoreCase = true) && shouldShowEmployeeAccessLocked(session.activeBusiness?.employmentStatus) -> EmployeeAccessBlockedScreen(session.activeBusiness, viewModel::signOut)
+            session.activeBusiness != null && !session.activeBusiness?.role.equals("owner", ignoreCase = true) && state.isAccessLocked -> WorkingHoursLockedScreen(state.accessLockMessage.orEmpty(), viewModel::refreshAccessNow, viewModel::signOut)
+            session.activeBusiness != null -> CounterPosWorkspace(viewModel)
             session.isPlatformAdmin -> SuperadminDashboardScreen(
                 viewModel = viewModel,
                 email = session.email,
@@ -103,10 +106,7 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
                 onSignOut = viewModel::signOut,
                 onClearError = viewModel::clearStartupError
             )
-            session.activeBusiness?.employmentStatus != "active" -> EmployeeAccessBlockedScreen(session.activeBusiness, viewModel::signOut)
-            session.activeBusiness != null && state.isAccessLocked -> WorkingHoursLockedScreen(state.accessLockMessage.orEmpty(), viewModel::refreshAccessNow, viewModel::signOut)
-            session.activeBusiness != null -> CounterPosWorkspace(viewModel)
-            session.memberships.any { it.status == "active" && it.employmentStatus == "active" } -> BusinessPickerScreen(
+            session.memberships.any { it.status != "suspended" && it.status != "terminated" && it.status != "closed" && (it.role.equals("owner", ignoreCase = true) || !shouldShowEmployeeAccessLocked(it.employmentStatus)) } -> BusinessPickerScreen(
                 session = session,
                 onSelect = viewModel::selectBusiness,
                 onSignOut = viewModel::signOut
@@ -290,14 +290,30 @@ private fun BusinessPickerScreen(
     onSelect: (String) -> Unit,
     onSignOut: () -> Unit
 ) {
+    val activeMemberships = remember(session.memberships) {
+        val nonSuspended = session.memberships.filter {
+            it.status != "suspended" && it.status != "terminated" && it.status != "closed"
+        }
+        val privileged = nonSuspended.filter {
+            it.role.equals("owner", ignoreCase = true) || !shouldShowEmployeeAccessLocked(it.employmentStatus)
+        }
+        privileged.ifEmpty { nonSuspended }.ifEmpty { session.memberships }
+    }
+    LaunchedEffect(activeMemberships) {
+        if (activeMemberships.isNotEmpty()) {
+            val ownerMatch = activeMemberships.firstOrNull { it.role.equals("owner", ignoreCase = true) }
+            val target = ownerMatch ?: activeMemberships.first()
+            onSelect(target.shopId)
+        }
+    }
     Column(Modifier.fillMaxSize().padding(24.dp)) {
         Text("Choose a business", fontSize = 26.sp, fontWeight = FontWeight.Bold)
         Text("Select the active business for this device.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp, bottom = 16.dp))
-        session.memberships.filter { it.status == "active" && it.employmentStatus == "active" }.forEach { membership ->
+        activeMemberships.forEach { membership ->
             Card(onClick = { onSelect(membership.shopId) }, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
                 Column(Modifier.padding(16.dp)) {
                     Text(membership.shopName, fontWeight = FontWeight.SemiBold)
-                    Text("Role: ${membership.role}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Role: ${membership.role.replaceFirstChar { it.uppercase() }}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

@@ -27,6 +27,7 @@ data class BusinessMembership(
     val businessType: String = "big_club",
     val businessSize: String = "medium",
     val counterInventoryMode: String = "shared",
+    val counterCount: Int = 1,
     val featureFlags: Set<String> = setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics"),
     val currency: String,
     val lowStockThreshold: Int
@@ -192,6 +193,17 @@ class SupabaseRestClient(context: Context) {
             val rows = json.optJSONArray("memberships") ?: JSONArray()
             for (index in 0 until rows.length()) {
                 rows.optJSONObject(index)?.let { row ->
+                    val bType = row.optString("business_type", "big_club")
+                    val counterCount = row.optInt("counter_count", 1)
+                    val defaultFlags = if (bType == "counter_seller") {
+                        setOf("employee_management", "working_hours", "fifo_inventory", "sales_analytics")
+                    } else {
+                        setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics")
+                    }
+                    val rawFlags = row.optJSONObject("feature_flags")?.keys()?.asSequence()?.filter { key -> row.optJSONObject("feature_flags")?.optBoolean(key, false) == true }?.toSet()
+                    val resolvedFlags = if (rawFlags != null && rawFlags.isNotEmpty()) {
+                        if (bType == "counter_seller") rawFlags - "tables" else rawFlags
+                    } else defaultFlags
                     add(
                         BusinessMembership(
                             shopId = row.optString("shop_id"),
@@ -199,11 +211,11 @@ class SupabaseRestClient(context: Context) {
                             role = row.optString("role"),
                             status = row.optString("status", "active"),
                             employmentStatus = row.optString("employment_status", "active"),
-                            businessType = row.optString("business_type", "big_club"),
+                            businessType = bType,
                             businessSize = row.optString("business_size", "medium"),
                             counterInventoryMode = row.optString("counter_inventory_mode", "shared"),
-                            featureFlags = row.optJSONObject("feature_flags")?.keys()?.asSequence()?.filter { key -> row.optJSONObject("feature_flags")?.optBoolean(key, false) == true }?.toSet()
-                                ?: setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics"),
+                            counterCount = counterCount,
+                            featureFlags = resolvedFlags,
                             currency = row.optString("currency", "KES"),
                             lowStockThreshold = row.optInt("low_stock_threshold", 5)
                         )
@@ -530,10 +542,15 @@ class SupabaseRestClient(context: Context) {
 
     private suspend fun rpcObject(name: String, args: JSONObject): JSONObject {
         val body = request("/rest/v1/rpc/$name", "POST", args.toString(), true)
+        val trimmed = body.trim()
         return when {
-            body.trimStart().startsWith("[") -> parseArray(body).optJSONObject(0)
+            trimmed.startsWith("[") -> parseArray(trimmed).optJSONObject(0)
                 ?: throw IOException("RPC $name returned no row")
-            else -> parseObject(body)
+            trimmed.startsWith("{") -> parseObject(trimmed)
+            else -> {
+                val clean = trimmed.removeSurrounding("\"").trim()
+                JSONObject().put("shop_id", clean).put("id", clean)
+            }
         }
     }
 

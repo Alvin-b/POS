@@ -247,6 +247,10 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
             Column(Modifier.statusBarsPadding()) {
                 LeanTopBar(
                     state = state,
+                    businessName = session.activeBusiness?.shopName ?: "Counter POS",
+                    businessType = session.activeBusiness?.businessType ?: "big_club",
+                    isPlatformAdmin = session.isPlatformAdmin,
+                    onExitToAdmin = viewModel::exitToAdminPortal,
                     todaySalesKsh = summary.first,
                     unitsSold = summary.second,
                     onSearchToggle = { active -> viewModel.setSearchActive(active) },
@@ -258,7 +262,7 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
                     canManageTeam = role in setOf("owner", "manager") && "employee_management" in enabledFeatures,
                     onManageTeam = viewModel::openTeamPanel
                 )
-                if (!state.isSearchActive && serviceCounters.isNotEmpty()) {
+                if (!state.isSearchActive && serviceCounters.size > 1) {
                     CounterSelector(
                         counters = serviceCounters,
                         selectedCounterId = state.selectedCounterId,
@@ -742,6 +746,10 @@ private fun nowIso(): String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Loca
 @Composable
 private fun LeanTopBar(
     state: CounterPosUiState,
+    businessName: String = "Counter POS",
+    businessType: String = "big_club",
+    isPlatformAdmin: Boolean = false,
+    onExitToAdmin: () -> Unit = {},
     todaySalesKsh: Int,
     unitsSold: Int,
     onSearchToggle: (Boolean) -> Unit,
@@ -840,7 +848,7 @@ private fun LeanTopBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                     Box(
                         modifier = Modifier
                             .size(10.dp)
@@ -848,13 +856,29 @@ private fun LeanTopBar(
                             .background(Color(0xFF10B981))
                     )
                     Spacer(Modifier.width(8.dp))
-                    Column {
-                        Text(
-                            text = "Counter POS",
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
+                    Column(Modifier.weight(1f, fill = false)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = businessName,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (businessType == "counter_seller") MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.secondaryContainer
+                            ) {
+                                Text(
+                                    text = if (businessType == "counter_seller") "Liquor Store" else "Bar / Club",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (businessType == "counter_seller") MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
                         Text(
                             text = if (unitsSold > 0) "${ksh(todaySalesKsh)} · $unitsSold sold" else "Tap 📷 to scan barcode",
                             fontSize = 11.sp,
@@ -868,6 +892,19 @@ private fun LeanTopBar(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
+                    if (isPlatformAdmin) {
+                        IconButton(
+                            onClick = onExitToAdmin,
+                            modifier = Modifier.testTag("exit_to_admin_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Superadmin Portal",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
                     // Search icon button (avoids using so much static space!)
                     IconButton(
                         onClick = { onSearchToggle(true) },

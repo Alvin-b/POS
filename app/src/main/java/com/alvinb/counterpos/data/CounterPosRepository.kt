@@ -123,9 +123,17 @@ class CounterPosRepository(
         val result = remote.pollAccessChallenge(token)
         if (result.optString("status") != "approved") return@withContext null
         remote.signIn(result.optString("email"), result.optString("password"))
+        val shopId = result.optString("shop_id")
+            .ifBlank { result.optString("business_id") }
+            .takeIf(String::isNotBlank)
+        var session = loadAccount(autoSelectFirstBusiness = true, preferredShopId = shopId)
+        if (shopId != null && session.activeBusiness?.shopId != shopId) {
+            kotlinx.coroutines.delay(600)
+            session = loadAccount(autoSelectFirstBusiness = true, preferredShopId = shopId)
+        }
         ApprovedAccess(
-            session = loadAccount(autoSelectFirstBusiness = true),
-            businessId = result.optString("business_id").takeIf(String::isNotBlank)
+            session = session,
+            businessId = shopId ?: session.activeBusiness?.shopId ?: session.memberships.firstOrNull { it.status == "active" }?.shopId
         )
     }
 
@@ -206,16 +214,65 @@ class CounterPosRepository(
 
     suspend fun selectBusiness(shopId: String): SessionSnapshot = withContext(Dispatchers.IO) {
         val membership = account?.memberships?.firstOrNull { it.shopId == shopId }
+            ?: run {
+                account = remote.account()
+                account?.memberships?.firstOrNull { it.shopId == shopId }
+            }
+            ?: run {
+                if (account?.isPlatformAdmin == true) {
+                    val adminBiz = remote.adminBusinesses().firstOrNull { it.shopId == shopId }
+                    if (adminBiz != null) createAdminBusinessMembership(adminBiz) else null
+                } else null
+            }
             ?: throw IllegalArgumentException("Business membership not found")
-        if (membership.status != "active") {
+        if (membership.status == "suspended" || membership.status == "closed" || membership.status == "terminated") {
             throw IllegalStateException("This business is ${membership.status}. Contact the platform administrator.")
         }
-        if (membership.employmentStatus != "active") {
+        if (membership.role != "owner" && (membership.employmentStatus == "suspended" || membership.employmentStatus == "terminated" || membership.employmentStatus == "locked")) {
             throw IllegalStateException("Your employee access is ${membership.employmentStatus}. Contact the business administrator.")
         }
         activeBusiness = membership
         syncBusiness(membership)
         publishAccount()
+    }
+
+    suspend fun adminOpenBusiness(shopId: String): SessionSnapshot = withContext(Dispatchers.IO) {
+        val businesses = remote.adminBusinesses()
+        val biz = businesses.firstOrNull { it.shopId == shopId }
+            ?: throw IllegalArgumentException("Business profile not found in portfolio")
+        val membership = createAdminBusinessMembership(biz)
+        activeBusiness = membership
+        syncBusiness(membership)
+        publishAccount()
+    }
+
+    suspend fun exitToAdminPortal(): SessionSnapshot = withContext(Dispatchers.IO) {
+        activeBusiness = null
+        dao.clearTenantCache()
+        publishAccount()
+    }
+
+    private fun createAdminBusinessMembership(biz: AdminBusiness): BusinessMembership {
+        val isLiquorStore = biz.businessType == "counter_seller"
+        val flags = if (isLiquorStore) {
+            setOf("employee_management", "working_hours", "fifo_inventory", "sales_analytics")
+        } else {
+            setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics")
+        }
+        return BusinessMembership(
+            shopId = biz.shopId,
+            shopName = biz.shopName,
+            role = "owner",
+            status = "active",
+            employmentStatus = "active",
+            businessType = biz.businessType,
+            businessSize = biz.businessSize,
+            counterInventoryMode = biz.counterInventoryMode,
+            counterCount = if (isLiquorStore) 1 else biz.counterCount.toInt().coerceAtLeast(1),
+            featureFlags = flags,
+            currency = "KES",
+            lowStockThreshold = 5
+        )
     }
 
     suspend fun refreshAccount(): SessionSnapshot = withContext(Dispatchers.IO) {
@@ -224,6 +281,7 @@ class CounterPosRepository(
 
     suspend fun canOperateNow(): Boolean = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: return@withContext true
+        if (shop.role == "owner") return@withContext true
         remote.canSellForShop(shop.shopId)
     }
 
@@ -312,18 +370,26 @@ class CounterPosRepository(
         return remote.adminBusinesses()
     }
 
-    private suspend fun loadAccount(autoSelectFirstBusiness: Boolean): SessionSnapshot {
+    private suspend fun loadAccount(autoSelectFirstBusiness: Boolean, preferredShopId: String? = null): SessionSnapshot {
         account = remote.account()
-        val snapshot = publishAccount()
-        val activeMemberships = account?.memberships?.filter { it.status == "active" }.orEmpty()
-        if (autoSelectFirstBusiness && activeBusiness == null && activeMemberships.size == 1) {
-            activeMemberships.firstOrNull()?.let { membership ->
-                activeBusiness = membership
-                syncBusiness(membership)
-            }
+        val allMemberships = account?.memberships.orEmpty()
+        val activeMemberships = allMemberships.filter {
+            it.status != "suspended" && it.status != "terminated" && it.status != "closed"
+        }
+        val targetMembership = if (!preferredShopId.isNullOrBlank()) {
+            allMemberships.firstOrNull { it.shopId == preferredShopId }
+        } else if (autoSelectFirstBusiness) {
+            activeMemberships.firstOrNull { it.role == "owner" }
+                ?: activeMemberships.firstOrNull()
+                ?: allMemberships.firstOrNull()
+        } else null
+
+        if (targetMembership != null) {
+            activeBusiness = targetMembership
+            syncBusiness(targetMembership)
         } else if (activeBusiness != null) {
-            val refreshed = account?.memberships?.firstOrNull { it.shopId == activeBusiness?.shopId }
-            if (refreshed?.status == "active") {
+            val refreshed = allMemberships.firstOrNull { it.shopId == activeBusiness?.shopId }
+            if (refreshed != null && refreshed.status != "suspended" && refreshed.status != "terminated" && refreshed.status != "closed") {
                 activeBusiness = refreshed
                 syncBusiness(refreshed)
             } else {
@@ -359,13 +425,13 @@ class CounterPosRepository(
         val remoteCounters = runCatching { remote.serviceCounters(membership.shopId) }.getOrDefault(emptyList())
         val counters = if (remoteCounters.isNotEmpty()) {
             remoteCounters
+        } else if (membership.businessType == "counter_seller") {
+            listOf(ServiceCounter("counter_1", "Main Counter"))
         } else {
-            listOf(
-                ServiceCounter("counter_1", "Counter 1"),
-                ServiceCounter("counter_2", "Counter 2"),
-                ServiceCounter("counter_3", "Counter 3"),
-                ServiceCounter("counter_4", "Counter 4")
-            )
+            val count = membership.counterCount.coerceIn(1, 50)
+            (1..count).map { num ->
+                ServiceCounter("counter_$num", "Counter $num")
+            }
         }
         _serviceCounters.value = counters
 

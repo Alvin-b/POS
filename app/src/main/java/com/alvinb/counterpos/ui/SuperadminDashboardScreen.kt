@@ -254,6 +254,7 @@ fun SuperadminDashboardScreen(
                         selected = state.adminSelectedBusinessId == business.shopId,
                         adminEnrollmentCredential = state.adminEnrollmentCredential,
                         onSelect = { viewModel.selectAdminBusiness(business.shopId) },
+                        onOpenDashboard = { viewModel.launchBusinessWorkspace(business.shopId) },
                         onScanPhone = { role -> viewModel.openAdminEnrollmentScanner(business.shopId, role) },
                         onCreatePasskey = { role -> viewModel.createAdminEnrollmentPass(business.shopId, role) },
                         onClearPasskey = viewModel::clearAdminEnrollmentCredential,
@@ -507,6 +508,7 @@ private fun PortfolioBusinessCard(
     selected: Boolean,
     adminEnrollmentCredential: AdminEnrollmentCredential?,
     onSelect: () -> Unit,
+    onOpenDashboard: () -> Unit,
     onScanPhone: (String) -> Unit,
     onCreatePasskey: (String) -> Unit,
     onClearPasskey: () -> Unit,
@@ -572,10 +574,23 @@ private fun PortfolioBusinessCard(
                 }
             }
 
-            OutlinedButton(onClick = onSelect, modifier = Modifier.fillMaxWidth()) {
-                Icon(if (selected) Icons.Default.CheckCircle else Icons.Default.Business, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(if (selected) "Business selected" else "Manage business")
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = onOpenDashboard,
+                    modifier = Modifier.weight(1.2f)
+                ) {
+                    Icon(Icons.Default.Storefront, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Open Dashboard", fontWeight = FontWeight.Bold, maxLines = 1)
+                }
+                OutlinedButton(
+                    onClick = onSelect,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(if (selected) Icons.Default.CheckCircle else Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (selected) "Options" else "Enroll / Manage", maxLines = 1)
+                }
             }
 
             AnimatedVisibility(visible = selected) {

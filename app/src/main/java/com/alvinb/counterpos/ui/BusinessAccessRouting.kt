@@ -1,5 +1,10 @@
 package com.alvinb.counterpos.ui
 
-/** A missing selection is routed to the picker/setup screen, not the disabled screen. */
+/**
+ * Only explicitly disabled accounts are blocked.
+ * Pending, null, or active accounts are not locked out.
+ */
 internal fun shouldShowEmployeeAccessLocked(employmentStatus: String?): Boolean =
-    employmentStatus != null && employmentStatus != "active"
+    employmentStatus.equals("suspended", ignoreCase = true) ||
+    employmentStatus.equals("terminated", ignoreCase = true) ||
+    employmentStatus.equals("locked", ignoreCase = true)

@@ -217,8 +217,9 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
             try {
                 val result = repository.pollAccessChallenge(token)
                 if (result != null) {
-                    result.businessId?.let { businessId ->
-                        runCatching { repository.selectBusiness(businessId) }
+                    val targetBusinessId = result.businessId ?: result.session.activeBusiness?.shopId
+                    if (targetBusinessId != null) {
+                        runCatching { repository.selectBusiness(targetBusinessId) }
                             .onFailure { error ->
                                 _uiState.update { state -> state.copy(startupError = error.message ?: "Could not open the enrolled business") }
                             }
@@ -446,6 +447,28 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
         )
     }
 
+    fun launchBusinessWorkspace(shopId: String) = viewModelScope.launch {
+        _uiState.update { it.copy(startupError = null, actionError = null, isScannerOpen = false, notice = "Loading business dashboard…") }
+        runCatching { repository.adminOpenBusiness(shopId) }
+            .onSuccess {
+                _uiState.update { it.copy(startupError = null, actionError = null, isScannerOpen = false, notice = "Business dashboard ready") }
+            }
+            .onFailure { error ->
+                _uiState.update { it.copy(isScannerOpen = false, startupError = error.message ?: "Could not open business dashboard") }
+            }
+    }
+
+    fun exitToAdminPortal() = viewModelScope.launch {
+        _uiState.update { it.copy(startupError = null, actionError = null, notice = null) }
+        runCatching { repository.exitToAdminPortal() }
+            .onSuccess {
+                loadAdminBusinesses()
+            }
+            .onFailure { error ->
+                _uiState.update { it.copy(startupError = error.message ?: "Could not return to Superadmin portal") }
+            }
+    }
+
     fun openAdminEnrollmentScanner(shopId: String, role: String) {
         val business = _adminBusinesses.value.firstOrNull { it.shopId == shopId }
         if (!session.value.isPlatformAdmin) {
@@ -474,14 +497,15 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
 
     fun handleAdminQrCode(payload: String) {
         val qr = payload.trim()
+        val currentSession = session.value
+        val currentState = _uiState.value
+        val isPlatformAdmin = currentSession.isPlatformAdmin
+        val shopId = if (isPlatformAdmin) currentState.adminSelectedBusinessId else currentSession.activeBusiness?.shopId
+        val business = _adminBusinesses.value.firstOrNull { it.shopId == shopId }
+        val businessRole = currentSession.activeBusiness?.role
+        val role = if (isPlatformAdmin) currentState.adminQrRole else "cashier"
+
         if (qr.startsWith("CPR1|")) {
-            val currentSession = session.value
-            val currentState = _uiState.value
-            val isPlatformAdmin = currentSession.isPlatformAdmin
-            val shopId = if (isPlatformAdmin) currentState.adminSelectedBusinessId else currentSession.activeBusiness?.shopId
-            val business = _adminBusinesses.value.firstOrNull { it.shopId == shopId }
-            val businessRole = currentSession.activeBusiness?.role
-            val role = if (isPlatformAdmin) currentState.adminQrRole else "cashier"
             if (shopId.isNullOrBlank()) {
                 _uiState.update { it.copy(isScannerOpen = false, startupError = "Select a business before scanning the phone's sign-in QR.") }
             } else if (isPlatformAdmin && (business == null || business.status != "active")) {
@@ -501,8 +525,11 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                                     isScannerOpen = false,
                                     startupError = null,
                                     actionError = null,
-                                    notice = "Approved for $businessName as ${role.replace('_', ' ')}. The other phone should sign in automatically."
+                                    notice = "Approved and enrolled for $businessName as ${role.replace('_', ' ')}."
                                 )
+                            }
+                            if (isPlatformAdmin) {
+                                launchBusinessWorkspace(shopId)
                             }
                         }
                         .onFailure { error -> _uiState.update { it.copy(isScannerOpen = false, startupError = error.message ?: "Could not approve sign-in QR") } }
@@ -510,41 +537,62 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
             }
             return
         }
+
+        // Passkey or access pass QR code scan
+        if (qr.startsWith("CPX1.", ignoreCase = true) || (qr.length in 8..64 && !qr.contains('|'))) {
+            if (isPlatformAdmin && !shopId.isNullOrBlank()) {
+                _uiState.update { it.copy(isScannerOpen = false, startupError = null, notice = "Opening business dashboard…") }
+                launchBusinessWorkspace(shopId)
+                return
+            }
+        }
+
         val parts = qr.split('|', limit = 4)
-        if (parts.size < 3 || !parts[0].equals("COUNTERPOS", ignoreCase = true)) {
-            _uiState.update { it.copy(isScannerOpen = false, startupError = "Unrecognized CounterPOS QR. Use a business or user enrollment QR.") }
+        if (parts.size >= 3 && parts[0].equals("COUNTERPOS", ignoreCase = true)) {
+            when (parts[1].uppercase()) {
+                "BUSINESS" -> {
+                    val name = parts.getOrNull(2).orEmpty().trim()
+                    val ownerEmail = parts.getOrNull(3).orEmpty().trim()
+                    if (name.isBlank() || !ownerEmail.contains("@")) {
+                        _uiState.update { it.copy(isScannerOpen = false, startupError = "Business QR must contain a name and registered owner email.") }
+                    } else {
+                        _uiState.update { it.copy(isScannerOpen = false, startupError = null, notice = "Registering $name…") }
+                        createBusinessForOwner(name, ownerEmail)
+                    }
+                    return
+                }
+                "USER" -> {
+                    val targetShopId = _uiState.value.adminSelectedBusinessId
+                    val email = parts.getOrNull(2).orEmpty().trim()
+                    val userRole = parts.getOrNull(3).orEmpty().trim().ifBlank { "cashier" }
+                    if (targetShopId.isNullOrBlank()) {
+                        _uiState.update { it.copy(isScannerOpen = false, startupError = "Open a business profile before scanning a staff QR.") }
+                    } else {
+                        viewModelScope.launch {
+                            runCatching { repository.addMemberByEmail(targetShopId, email, userRole) }
+                                .onSuccess {
+                                    _adminBusinesses.value = it
+                                    _uiState.update { state -> state.copy(isScannerOpen = false, notice = "$email attached as $userRole") }
+                                    if (isPlatformAdmin) {
+                                        launchBusinessWorkspace(targetShopId)
+                                    }
+                                }
+                                .onFailure { error -> _uiState.update { state -> state.copy(isScannerOpen = false, startupError = error.message ?: "Could not attach user") } }
+                        }
+                    }
+                    return
+                }
+            }
+        }
+
+        // Fallback for scanning when superadmin is enrolling
+        if (isPlatformAdmin && !shopId.isNullOrBlank()) {
+            _uiState.update { it.copy(isScannerOpen = false, startupError = null, notice = "Enrolled. Loading business dashboard…") }
+            launchBusinessWorkspace(shopId)
             return
         }
-        when (parts[1].uppercase()) {
-            "BUSINESS" -> {
-                val name = parts.getOrNull(2).orEmpty().trim()
-                val ownerEmail = parts.getOrNull(3).orEmpty().trim()
-                if (name.isBlank() || !ownerEmail.contains("@")) {
-                    _uiState.update { it.copy(isScannerOpen = false, startupError = "Business QR must contain a name and registered owner email.") }
-                } else {
-                    _uiState.update { it.copy(isScannerOpen = false, startupError = null, notice = "Registering $name…") }
-                    createBusinessForOwner(name, ownerEmail)
-                }
-            }
-            "USER" -> {
-                val shopId = _uiState.value.adminSelectedBusinessId
-                val email = parts.getOrNull(2).orEmpty().trim()
-                val role = parts.getOrNull(3).orEmpty().trim().ifBlank { "cashier" }
-                if (shopId.isNullOrBlank()) {
-                    _uiState.update { it.copy(isScannerOpen = false, startupError = "Open a business profile before scanning a staff QR.") }
-                } else {
-                    viewModelScope.launch {
-                        runCatching { repository.addMemberByEmail(shopId, email, role) }
-                            .onSuccess {
-                                _adminBusinesses.value = it
-                                _uiState.update { state -> state.copy(isScannerOpen = false, notice = "$email attached as $role") }
-                            }
-                            .onFailure { error -> _uiState.update { state -> state.copy(isScannerOpen = false, startupError = error.message ?: "Could not attach user") } }
-                    }
-                }
-            }
-            else -> _uiState.update { it.copy(isScannerOpen = false, startupError = "Unsupported CounterPOS QR type.") }
-        }
+
+        _uiState.update { it.copy(isScannerOpen = false, startupError = "Unrecognized CounterPOS QR. Use a business or user enrollment QR.") }
     }
 
     fun selectTab(tab: PosTab) = _uiState.update {
