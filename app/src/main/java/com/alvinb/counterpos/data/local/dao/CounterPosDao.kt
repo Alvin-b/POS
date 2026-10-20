@@ -40,6 +40,9 @@ interface CounterPosDao {
     @Query("SELECT * FROM sales ORDER BY createdAt DESC, id DESC LIMIT 200")
     fun observeSales(): Flow<List<SaleEntity>>
 
+    @Query("SELECT * FROM sales WHERE undone = 0 AND remoteId IS NULL ORDER BY createdAt ASC, id ASC")
+    suspend fun getPendingRemoteSales(): List<SaleEntity>
+
     @Query("SELECT COUNT(*) FROM products")
     suspend fun getProductCount(): Int
 
@@ -101,6 +104,9 @@ interface CounterPosDao {
 
     @Insert
     suspend fun insertSale(sale: SaleEntity): Long
+
+    @Query("UPDATE sales SET remoteId = :remoteId WHERE id = :saleId")
+    suspend fun markSaleUploaded(saleId: Long, remoteId: String?)
 
     @Query("SELECT * FROM sales WHERE undone = 0 ORDER BY createdAt DESC, id DESC LIMIT 1")
     suspend fun getLatestActiveSale(): SaleEntity?

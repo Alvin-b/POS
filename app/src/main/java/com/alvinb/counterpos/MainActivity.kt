@@ -1,5 +1,6 @@
 package com.alvinb.counterpos
 
+import android.net.ConnectivityManager
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -27,10 +28,12 @@ class MainActivity : ComponentActivity() {
 
         val database = AppDatabase.getInstance(applicationContext)
         val repository = CounterPosRepository(
+            context = applicationContext,
             dao = database.counterPosDao(),
             assets = assets,
             remote = SupabaseRestClient(applicationContext)
         )
+        val connectivityManager = getSystemService(ConnectivityManager::class.java)
 
         setContent {
             CounterPosTheme {
@@ -44,7 +47,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 val appViewModel: CounterPosViewModel = viewModel(
-                    factory = CounterPosViewModelFactory(repository)
+                    factory = CounterPosViewModelFactory(repository, connectivityManager)
                 )
                 CounterPosApp(viewModel = appViewModel)
             }

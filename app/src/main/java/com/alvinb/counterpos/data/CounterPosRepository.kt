@@ -1,5 +1,6 @@
 package com.alvinb.counterpos.data
 
+import android.content.Context
 import android.content.res.AssetManager
 import com.alvinb.counterpos.data.local.dao.CounterPosDao
 import com.alvinb.counterpos.data.local.entity.DiningTableEntity
@@ -47,10 +48,12 @@ data class AdminCreateBusinessResult(
 )
 
 class CounterPosRepository(
+    context: Context,
     private val dao: CounterPosDao,
     private val assets: AssetManager,
     private val remote: SupabaseRestClient
 ) {
+    private val offlineAccountPrefs = context.getSharedPreferences("counterpos_offline_account", Context.MODE_PRIVATE)
     data class AccessChallenge(
         val token: String,
         val expiresAtMillis: Long
@@ -84,7 +87,8 @@ class CounterPosRepository(
             clearLocalSession()
             return@withContext _session.value
         }
-        loadAccount(autoSelectFirstBusiness = true)
+        runCatching { loadAccount(autoSelectFirstBusiness = true) }
+            .getOrElse { restoreCachedSession() ?: throw it }
     }
 
     suspend fun signIn(email: String, password: String): SessionSnapshot = withContext(Dispatchers.IO) {
@@ -279,6 +283,47 @@ class CounterPosRepository(
         loadAccount(autoSelectFirstBusiness = false)
     }
 
+    /**
+     * Reconcile offline work as soon as connectivity returns. Local Room is
+     * authoritative while offline; pending sales are uploaded first so the
+     * following tenant refresh cannot clear them from the local cache.
+     */
+    suspend fun synchronizeWhenOnline(): SessionSnapshot = withContext(Dispatchers.IO) {
+        if (remote.restoreSession() == null || activeBusiness == null) return@withContext _session.value
+        uploadPendingLocalSales()
+        loadAccount(autoSelectFirstBusiness = false)
+    }
+
+    private suspend fun uploadPendingLocalSales() {
+        val shopId = activeBusiness?.shopId ?: return
+        for (sale in dao.getPendingRemoteSales()) {
+            val productId = dao.getProductByCode(sale.catalogCode)?.remoteId ?: continue
+            val counterId = sale.counterId?.takeIf(String::isNotBlank) ?: _serviceCounters.value.firstOrNull()?.id ?: "counter_1"
+            val tableId = sale.tableId?.takeIf(String::isNotBlank)
+            val result = if (tableId != null) {
+                remote.recordTableSaleFromCounter(
+                    shopId = shopId,
+                    tableId = tableId,
+                    productId = productId,
+                    counterId = counterId,
+                    quantity = sale.quantity,
+                    unitName = sale.unitName,
+                    unitPrice = sale.unitPriceKsh
+                )
+            } else {
+                remote.recordSaleUnitFromCounter(
+                    productId = productId,
+                    counterId = counterId,
+                    quantity = sale.quantity,
+                    unitName = sale.unitName,
+                    unitPrice = sale.unitPriceKsh
+                )
+            }
+            val remoteId = result.optString("id").takeIf(String::isNotBlank) ?: "offline-${sale.id}"
+            dao.markSaleUploaded(sale.id, remoteId)
+        }
+    }
+
     suspend fun canOperateNow(): Boolean = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: return@withContext true
         if (shop.role == "owner") return@withContext true
@@ -372,6 +417,7 @@ class CounterPosRepository(
 
     private suspend fun loadAccount(autoSelectFirstBusiness: Boolean, preferredShopId: String? = null): SessionSnapshot {
         account = remote.account()
+        cacheAccount(account!!)
         val allMemberships = account?.memberships.orEmpty()
         val activeMemberships = allMemberships.filter {
             it.status != "suspended" && it.status != "terminated" && it.status != "closed"
@@ -397,7 +443,79 @@ class CounterPosRepository(
                 dao.clearTenantCache()
             }
         }
+        cacheAccount(account!!)
         return publishAccount()
+    }
+
+    private fun cacheAccount(snapshot: AccountSnapshot) {
+        val memberships = JSONArray()
+        snapshot.memberships.forEach { membership ->
+            memberships.put(JSONObject().apply {
+                put("shop_id", membership.shopId)
+                put("shop_name", membership.shopName)
+                put("role", membership.role)
+                put("status", membership.status)
+                put("employment_status", membership.employmentStatus)
+                put("business_type", membership.businessType)
+                put("business_size", membership.businessSize)
+                put("counter_inventory_mode", membership.counterInventoryMode)
+                put("counter_count", membership.counterCount)
+                put("feature_flags", JSONArray(membership.featureFlags.toList()))
+                put("currency", membership.currency)
+                put("low_stock_threshold", membership.lowStockThreshold)
+            })
+        }
+        offlineAccountPrefs.edit()
+            .putString("user_id", snapshot.userId)
+            .putString("email", snapshot.email)
+            .putBoolean("is_platform_admin", snapshot.isPlatformAdmin)
+            .putString("active_shop_id", activeBusiness?.shopId)
+            .putString("memberships", memberships.toString())
+            .apply()
+    }
+
+    private suspend fun restoreCachedSession(): SessionSnapshot? {
+        val userId = offlineAccountPrefs.getString("user_id", null) ?: return null
+        val rows = JSONArray(offlineAccountPrefs.getString("memberships", "[]"))
+        val memberships = buildList {
+            for (index in 0 until rows.length()) {
+                val row = rows.optJSONObject(index) ?: continue
+                val flags = buildSet {
+                    val values = row.optJSONArray("feature_flags") ?: JSONArray()
+                    for (flagIndex in 0 until values.length()) add(values.optString(flagIndex))
+                }
+                add(BusinessMembership(
+                    shopId = row.optString("shop_id"),
+                    shopName = row.optString("shop_name"),
+                    role = row.optString("role"),
+                    status = row.optString("status", "active"),
+                    employmentStatus = row.optString("employment_status", "active"),
+                    businessType = row.optString("business_type", "big_club"),
+                    businessSize = row.optString("business_size", "medium"),
+                    counterInventoryMode = row.optString("counter_inventory_mode", "shared"),
+                    counterCount = row.optInt("counter_count", 1),
+                    featureFlags = flags,
+                    currency = row.optString("currency", "KES"),
+                    lowStockThreshold = row.optInt("low_stock_threshold", 5)
+                ))
+            }
+        }.filter { it.shopId.isNotBlank() }
+        val active = memberships.firstOrNull { it.shopId == offlineAccountPrefs.getString("active_shop_id", null) }
+            ?: memberships.firstOrNull { it.status == "active" }
+        activeBusiness = active
+        if (active != null) {
+            seedCatalogIfEmpty()
+            _serviceCounters.value = (1..active.counterCount.coerceIn(1, 50)).map { ServiceCounter("counter_$it", "Counter $it") }
+        }
+        return publishAccount().copy(
+            isAuthenticated = true,
+            userId = userId,
+            email = offlineAccountPrefs.getString("email", "").orEmpty(),
+            isPlatformAdmin = offlineAccountPrefs.getBoolean("is_platform_admin", false),
+            memberships = memberships,
+            activeBusiness = active,
+            message = "Offline mode — changes will sync automatically when connected"
+        ).also { _session.value = it }
     }
 
     private fun publishAccount(): SessionSnapshot {

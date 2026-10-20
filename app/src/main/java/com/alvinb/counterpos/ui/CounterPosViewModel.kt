@@ -1,5 +1,7 @@
 package com.alvinb.counterpos.ui
 
+import android.net.ConnectivityManager
+import android.net.Network
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -22,6 +24,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.util.UUID
@@ -103,7 +106,10 @@ data class CounterPosUiState(
     val startupError: String? = null
 )
 
-class CounterPosViewModel(private val repository: CounterPosRepository) : ViewModel() {
+class CounterPosViewModel(
+    private val repository: CounterPosRepository,
+    private val connectivityManager: ConnectivityManager
+) : ViewModel() {
     val session = repository.session.stateIn(viewModelScope, SharingStarted.Eagerly, SessionSnapshot())
     private val _adminBusinesses = MutableStateFlow<List<AdminBusiness>>(emptyList())
     val adminBusinesses = _adminBusinesses.asStateFlow()
@@ -116,8 +122,21 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
     private val _uiState = MutableStateFlow(CounterPosUiState())
     val uiState = _uiState.asStateFlow()
     private var mutationInProgress = false
+    private var reconnectSyncJob: Job? = null
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            reconnectSyncJob?.cancel()
+            reconnectSyncJob = viewModelScope.launch {
+                delay(750)
+                runCatching { repository.synchronizeWhenOnline() }
+                    .onSuccess { _uiState.update { it.copy(notice = "Synced automatically") } }
+                    .onFailure { _uiState.update { it.copy(notice = "Offline changes will sync automatically when connected") } }
+            }
+        }
+    }
 
     init {
+        runCatching { connectivityManager.registerDefaultNetworkCallback(networkCallback) }
         viewModelScope.launch {
             try {
                 repository.restoreSession()
@@ -130,6 +149,12 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
                 monitorActiveHours()
             }
         }
+    }
+
+    override fun onCleared() {
+        runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
+        reconnectSyncJob?.cancel()
+        super.onCleared()
     }
 
     fun signIn(email: String, password: String) = viewModelScope.launch {
@@ -1196,12 +1221,15 @@ class CounterPosViewModel(private val repository: CounterPosRepository) : ViewMo
     }
 }
 
-class CounterPosViewModelFactory(private val repository: CounterPosRepository) : ViewModelProvider.Factory {
+class CounterPosViewModelFactory(
+    private val repository: CounterPosRepository,
+    private val connectivityManager: ConnectivityManager
+) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (!modelClass.isAssignableFrom(CounterPosViewModel::class.java)) {
             throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
         }
-        return CounterPosViewModel(repository) as T
+        return CounterPosViewModel(repository, connectivityManager) as T
     }
 }
