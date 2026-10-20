@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LocalDrink
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.QrCodeScanner
@@ -217,6 +218,14 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
         }
     }
 
+    val topBarSubtitle = when (state.tab) {
+        PosTab.SCAN -> if (summary.second > 0) "${ksh(summary.first)} · ${summary.second} sold" else "Ready for your next sale"
+        PosTab.STOCK -> "Manage your shelf"
+        PosTab.SALES -> "Sales history and receipts"
+        PosTab.REPORTS -> "Counter and waiter activity"
+        PosTab.TABLES -> "${serviceCounters.firstOrNull { it.id == state.selectedCounterId }?.name ?: "Counter 1"} · Service floor"
+    }
+
     // Camera Scanner view
     if (state.isScannerOpen) {
         BarcodeScannerScreen(
@@ -246,38 +255,30 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
                 })
             },
         topBar = {
-            Column(Modifier.statusBarsPadding()) {
-                LeanTopBar(
-                    state = state,
-                    businessName = session.activeBusiness?.shopName ?: "Counter POS",
-                    businessType = session.activeBusiness?.businessType ?: "big_club",
-                    isPlatformAdmin = session.isPlatformAdmin,
-                    onExitToAdmin = viewModel::exitToAdminPortal,
-                    todaySalesKsh = summary.first,
-                    unitsSold = summary.second,
-                    onSearchToggle = { active -> viewModel.setSearchActive(active) },
-                    onSearchChange = viewModel::setSearchQuery,
-                    onClearSearch = viewModel::clearSearch,
-                    onOpenScanner = { viewModel.openScanner(if (state.tab == PosTab.STOCK) ScannerMode.TAKE_STOCK else ScannerMode.SELL) },
-                    onAddNewProduct = { viewModel.openAddNewProduct() },
-                    canAddNewProduct = canReceiveStock,
-                    canManageTeam = role in setOf("owner", "manager") && "employee_management" in enabledFeatures,
-                    onManageTeam = viewModel::openTeamPanel
-                )
-                if (!state.isSearchActive && serviceCounters.size > 1) {
-                    CounterSelector(
-                        counters = serviceCounters,
-                        selectedCounterId = state.selectedCounterId,
-                        onSelect = viewModel::selectCounter,
-                        modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 6.dp)
-                    )
-                }
-            }
+            LeanTopBar(
+                modifier = Modifier.statusBarsPadding(),
+                state = state,
+                businessName = session.activeBusiness?.shopName ?: "Counter POS",
+                subtitle = topBarSubtitle,
+                isPlatformAdmin = session.isPlatformAdmin,
+                onExitToAdmin = viewModel::exitToAdminPortal,
+                onSearchToggle = { active -> viewModel.setSearchActive(active) },
+                onSearchChange = viewModel::setSearchQuery,
+                onClearSearch = viewModel::clearSearch,
+                onOpenScanner = { viewModel.openScanner(if (state.tab == PosTab.STOCK) ScannerMode.TAKE_STOCK else ScannerMode.SELL) },
+                onAddNewProduct = { viewModel.openAddNewProduct() },
+                canAddNewProduct = canReceiveStock,
+                canManageTeam = role in setOf("owner", "manager") && "employee_management" in enabledFeatures,
+                onManageTeam = viewModel::openTeamPanel,
+                counters = serviceCounters,
+                selectedCounterId = state.selectedCounterId,
+                onCounterSelect = viewModel::selectCounter
+            )
         },
         bottomBar = {
             Surface(
                 modifier = Modifier
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
                     .clip(RoundedCornerShape(26.dp)),
                 shape = RoundedCornerShape(26.dp),
                 color = MaterialTheme.colorScheme.surface,
@@ -285,7 +286,7 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
                 shadowElevation = 4.dp
             ) {
                 NavigationBar(
-                    modifier = Modifier.height(74.dp),
+                    modifier = Modifier.height(72.dp),
                     containerColor = Color.Transparent,
                     tonalElevation = 0.dp
                 ) {
@@ -325,7 +326,7 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
                         NavigationBarItem(
                             selected = state.tab == PosTab.TABLES,
                             onClick = { viewModel.selectTab(PosTab.TABLES) },
-                            icon = { Icon(Icons.Default.TableRestaurant, contentDescription = "Tables", modifier = Modifier.size(20.dp)) },
+                            icon = { Icon(Icons.Default.Home, contentDescription = "Tables", modifier = Modifier.size(20.dp)) },
                             label = { Text("Tables", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.TABLES) FontWeight.Bold else FontWeight.Normal) },
                             colors = posNavigationItemColors(),
                             modifier = Modifier.testTag("nav_tables")
@@ -349,7 +350,8 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
                         .padding(padding),
                     state = state,
                     products = products,
-                    onProductClick = viewModel::openSale
+                    onProductClick = viewModel::openSale,
+                    onOpenStock = { viewModel.selectTab(PosTab.STOCK) }
                 )
                 PosTab.STOCK -> FullscreenStockScreen(
                     modifier = Modifier
@@ -361,7 +363,6 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
                     onCategoryChange = viewModel::setLibraryCategory,
                     onAddStockClick = viewModel::openAddStock,
                     onEditProductClick = viewModel::openEditProduct,
-                    onAddNewProductClick = { viewModel.openAddNewProduct() },
                     onScanStockClick = { viewModel.openScanner(ScannerMode.TAKE_STOCK) },
                     onAddCatalogClick = viewModel::openCatalogItem,
                     canReceiveStock = canReceiveStock,
@@ -701,7 +702,7 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
 private fun posNavigationItemColors() = NavigationBarItemDefaults.colors(
     selectedIconColor = MaterialTheme.colorScheme.primary,
     selectedTextColor = MaterialTheme.colorScheme.primary,
-    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+    indicatorColor = Color.Transparent,
     unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
     unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
 )
@@ -763,11 +764,9 @@ private fun nowIso(): String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Loca
 private fun LeanTopBar(
     state: CounterPosUiState,
     businessName: String = "Counter POS",
-    businessType: String = "big_club",
+    subtitle: String,
     isPlatformAdmin: Boolean = false,
     onExitToAdmin: () -> Unit = {},
-    todaySalesKsh: Int,
-    unitsSold: Int,
     onSearchToggle: (Boolean) -> Unit,
     onSearchChange: (String) -> Unit,
     onClearSearch: () -> Unit,
@@ -776,11 +775,15 @@ private fun LeanTopBar(
     canAddNewProduct: Boolean = true,
     canManageTeam: Boolean = false,
     onManageTeam: () -> Unit = {},
+    counters: List<ServiceCounter> = emptyList(),
+    selectedCounterId: String? = null,
+    onCounterSelect: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val searchFocusRequester = remember { FocusRequester() }
+    var counterMenuExpanded by remember { mutableStateOf(false) }
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -792,7 +795,8 @@ private fun LeanTopBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                    .height(76.dp)
+                    .padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(
@@ -843,7 +847,7 @@ private fun LeanTopBar(
                     )
                 )
 
-                IconButton(onClick = onOpenScanner) {
+                IconButton(onClick = onOpenScanner, modifier = Modifier.size(40.dp)) {
                     Icon(
                         imageVector = Icons.Default.QrCodeScanner,
                         contentDescription = "Scan barcode",
@@ -860,7 +864,8 @@ private fun LeanTopBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 11.dp),
+                    .height(76.dp)
+                    .padding(horizontal = 15.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -872,35 +877,40 @@ private fun LeanTopBar(
                             .background(MaterialTheme.colorScheme.primary)
                     )
                     Spacer(Modifier.width(8.dp))
-                    Column(Modifier.weight(1f, fill = false)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Column(Modifier.weight(1f)) {
                         Text(
                             text = businessName,
-                            fontSize = 17.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = if (businessType == "counter_seller") MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.secondaryContainer
-                            ) {
-                                Text(
-                                    text = if (businessType == "counter_seller") "Liquor Store" else "Bar / Club",
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (businessType == "counter_seller") MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSecondaryContainer,
-                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = subtitle,
+                            modifier = Modifier.clickable(
+                                enabled = state.tab == PosTab.TABLES && counters.size > 1
+                            ) { counterMenuExpanded = true }.padding(top = 3.dp),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        DropdownMenu(
+                            expanded = counterMenuExpanded,
+                            onDismissRequest = { counterMenuExpanded = false }
+                        ) {
+                            counters.forEach { counter ->
+                                DropdownMenuItem(
+                                    text = { Text(counter.name) },
+                                    onClick = {
+                                        onCounterSelect(counter.id)
+                                        counterMenuExpanded = false
+                                    }
                                 )
                             }
                         }
-                        Text(
-                            text = if (unitsSold > 0) "Today  ${ksh(todaySalesKsh)}  ·  $unitsSold sold" else "Ready for your next sale",
-                            fontSize = 11.sp,
-                            color = if (unitsSold > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = if (unitsSold > 0) FontWeight.SemiBold else FontWeight.Normal
-                        )
                     }
                 }
 
@@ -911,7 +921,7 @@ private fun LeanTopBar(
                     if (isPlatformAdmin) {
                         IconButton(
                             onClick = onExitToAdmin,
-                            modifier = Modifier.testTag("exit_to_admin_button")
+                            modifier = Modifier.size(40.dp).testTag("exit_to_admin_button")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Settings,
@@ -924,11 +934,12 @@ private fun LeanTopBar(
                     // Search icon button (avoids using so much static space!)
                     IconButton(
                         onClick = { onSearchToggle(true) },
-                        modifier = Modifier.testTag("search_icon_button")
+                        modifier = Modifier.size(40.dp).testTag("search_icon_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Search,
-                            contentDescription = "Search products"
+                            contentDescription = "Search products",
+                            modifier = Modifier.size(20.dp)
                         )
                     }
 
@@ -936,28 +947,29 @@ private fun LeanTopBar(
                     if (state.tab == PosTab.STOCK && canAddNewProduct) {
                         IconButton(
                             onClick = onAddNewProduct,
-                            modifier = Modifier.testTag("add_product_icon_button")
+                            modifier = Modifier.size(40.dp).testTag("add_product_icon_button")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Add,
                                 contentDescription = "Add new product",
-                                tint = MaterialTheme.colorScheme.primary
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                     }
 
                     if (canManageTeam) {
-                        OutlinedButton(onClick = onManageTeam, modifier = Modifier.height(38.dp)) {
-                            Text("Settings", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        IconButton(onClick = onManageTeam, modifier = Modifier.size(40.dp)) {
+                            Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
 
                     // Barcode Scanner button
                     Surface(
                         onClick = onOpenScanner,
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(12.dp),
                         color = MaterialTheme.colorScheme.primaryContainer,
-                        modifier = Modifier.testTag("top_scanner_button")
+                        modifier = Modifier.height(40.dp).testTag("top_scanner_button")
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -992,7 +1004,8 @@ private fun FullscreenSellScreen(
     modifier: Modifier,
     state: CounterPosUiState,
     products: List<ProductEntity>,
-    onProductClick: (ProductEntity) -> Unit
+    onProductClick: (ProductEntity) -> Unit,
+    onOpenStock: () -> Unit
 ) {
     val stocked = remember(products) { products.filter { it.inMyStock } }
     var selectedCategory by remember { mutableStateOf("All") }
@@ -1009,31 +1022,46 @@ private fun FullscreenSellScreen(
     }
 
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 145.dp),
+        columns = GridCells.Fixed(2),
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // Category filter chips
-        if (categories.size > 2) {
+        if (categories.size > 1) {
             item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     categories.forEach { category ->
-                        FilterChip(
-                            selected = selectedCategory == category,
+                        val selected = selectedCategory == category
+                        Surface(
                             onClick = { selectedCategory = category },
-                            label = { Text(category, fontSize = 12.sp) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        )
+                            shape = RoundedCornerShape(20.dp),
+                            color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.outline
+                            ),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Box(
+                                Modifier.padding(horizontal = 13.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    category,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -1044,18 +1072,18 @@ private fun FullscreenSellScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp),
+                    .padding(horizontal = 1.dp, vertical = 1.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     "Shop Inventory (${visible.size})",
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Bold,
                     fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    "Tap to sell bottle / glass / cup",
+                    "Tap to sell",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -1064,17 +1092,55 @@ private fun FullscreenSellScreen(
 
         if (visible.isEmpty()) {
             item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
-                EmptyStateMessage(
-                    if (stocked.isEmpty()) {
-                        "Your shop stock is empty.\nGo to 'Stock' tab below or tap 'Scan' to add bottles to your shelves."
-                    } else {
-                        "No products match '${state.searchQuery}'."
-                    }
-                )
+                if (stocked.isEmpty()) SellEmptyState(onOpenStock)
+                else EmptyStateMessage("No products match '${state.searchQuery}'.")
             }
         } else {
             items(visible, key = { it.catalogCode }) { product ->
                 ProductSellCard(product = product, onClick = { onProductClick(product) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun SellEmptyState(onOpenStock: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(top = 24.dp).height(280.dp),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 2.dp
+    ) {
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Surface(
+                modifier = Modifier.size(56.dp),
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.primaryContainer
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.Inventory2, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(27.dp))
+                }
+            }
+            Spacer(Modifier.height(13.dp))
+            Text("Nothing to sell yet", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "Add products to your shelf before starting a sale.",
+                modifier = Modifier.padding(top = 5.dp, bottom = 14.dp),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+            Button(
+                onClick = onOpenStock,
+                modifier = Modifier.fillMaxWidth().height(40.dp),
+                shape = RoundedCornerShape(11.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+            ) {
+                Text("Open stock", fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -1096,7 +1162,6 @@ private fun FullscreenStockScreen(
     onCategoryChange: (String) -> Unit,
     onAddStockClick: (ProductEntity) -> Unit,
     onEditProductClick: (ProductEntity) -> Unit,
-    onAddNewProductClick: () -> Unit,
     onScanStockClick: () -> Unit,
     onAddCatalogClick: (ProductEntity) -> Unit,
     canReceiveStock: Boolean,
@@ -1121,99 +1186,43 @@ private fun FullscreenStockScreen(
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
 
-        // Mode switch + Add Product + Scan stock action bar
+        // Compact segmented shelf / catalog switch, matching the design reference.
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
+                horizontalArrangement = Arrangement.spacedBy(7.dp)
             ) {
-                // My Stock Tab Button
-                Button(
-                    onClick = { onModeChange(StockMode.MY_STOCK) },
-                    modifier = Modifier.weight(1f),
-                    colors = if (state.stockMode == StockMode.MY_STOCK) ButtonDefaults.buttonColors() else ButtonDefaults.outlinedButtonColors()
-                ) {
-                    Text(
-                        "Shop Shelf (${mine.size})",
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                // Beverage Library Tab Button
-                Button(
-                    onClick = { onModeChange(StockMode.LIBRARY) },
-                    modifier = Modifier.weight(1f),
-                    colors = if (state.stockMode == StockMode.LIBRARY) ButtonDefaults.buttonColors() else ButtonDefaults.outlinedButtonColors()
-                ) {
-                    Text(
-                        "Catalog (${library.size})",
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                // "+ Add New Product" Button
-                if (canReceiveStock) {
-                    Surface(
-                        onClick = onAddNewProductClick,
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        modifier = Modifier.height(40.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 8.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.Add,
-                                contentDescription = "New Product",
-                                modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                            Spacer(Modifier.width(3.dp))
-                            Text(
-                                "New",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
+                listOf(
+                    StockMode.MY_STOCK to "Shop Shelf (${mine.size})",
+                    StockMode.LIBRARY to "Catalog (${library.size})"
+                ).forEach { (mode, label) ->
+                    val selected = state.stockMode == mode
+                    val action: @Composable () -> Unit = {
+                        if (selected) {
+                            Button(
+                                onClick = { onModeChange(mode) },
+                                modifier = Modifier.fillMaxWidth().height(38.dp),
+                                shape = RoundedCornerShape(11.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                            ) {
+                                Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        } else {
+                            OutlinedButton(
+                                onClick = { onModeChange(mode) },
+                                modifier = Modifier.fillMaxWidth().height(38.dp),
+                                shape = RoundedCornerShape(11.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                            ) {
+                                Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
                         }
                     }
-
-                    // Compact "Scan" button for stock
-                    Surface(
-                        onClick = onScanStockClick,
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                        modifier = Modifier.height(40.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 8.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.QrCodeScanner,
-                                contentDescription = "Scan to take stock",
-                                modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.onSecondaryContainer
-                            )
-                            Spacer(Modifier.width(3.dp))
-                            Text(
-                                "Scan",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer
-                            )
-                        }
-                    }
+                    Box(Modifier.weight(1f)) { action() }
                 }
             }
         }
@@ -1222,25 +1231,28 @@ private fun FullscreenStockScreen(
         if (state.stockMode == StockMode.MY_STOCK) {
             item {
                 Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                            .padding(horizontal = 13.dp, vertical = 11.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "Total: $totalBottles bottles on shelf across ${mine.size} products",
+                            "Total: $totalBottles bottles on shelf",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
                         )
                         Text(
-                            "Add / Edit below",
+                            "Add / Edit",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold
@@ -1272,13 +1284,14 @@ private fun FullscreenStockScreen(
 
         if (visible.isEmpty()) {
             item {
-                EmptyStateMessage(
-                    if (state.stockMode == StockMode.MY_STOCK) {
-                        "No products in your shop stock yet.\nTap '+ New' above to add local liquor/drinks or select from 'Catalog'."
-                    } else {
-                        "No catalog items match '${state.searchQuery}'."
-                    }
-                )
+                if (state.stockMode == StockMode.MY_STOCK && state.searchQuery.isBlank()) {
+                    ShelfEmptyState(
+                        onBrowseCatalog = { onModeChange(StockMode.LIBRARY) },
+                        onScan = onScanStockClick
+                    )
+                } else {
+                    EmptyStateMessage("No catalog items match '${state.searchQuery}'.")
+                }
             }
         } else if (state.stockMode == StockMode.MY_STOCK) {
             items(visible, key = { it.catalogCode }) { product ->
@@ -1300,6 +1313,65 @@ private fun FullscreenStockScreen(
                     canAdd = canReceiveStock,
                     onAdd = { onAddCatalogClick(product) }
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShelfEmptyState(
+    onBrowseCatalog: () -> Unit,
+    onScan: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().height(300.dp),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 2.dp
+    ) {
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Surface(
+                modifier = Modifier.size(58.dp),
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.primaryContainer
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.Inventory2, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            Text("Your shelf is ready", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "Add products from the catalog or scan a barcode to start tracking stock and selling.",
+                modifier = Modifier.padding(top = 5.dp, bottom = 15.dp),
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+            Button(
+                onClick = onBrowseCatalog,
+                modifier = Modifier.fillMaxWidth().height(40.dp),
+                shape = RoundedCornerShape(11.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Browse catalog", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+            OutlinedButton(
+                onClick = onScan,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(40.dp),
+                shape = RoundedCornerShape(11.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+            ) {
+                Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Scan a product", fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -1720,27 +1792,33 @@ private fun FullscreenSalesScreen(
     var showDateRange by remember { mutableStateOf(false) }
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("Sales", fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                Text("Today’s performance and recent receipts", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.primaryContainer,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Column(Modifier.padding(14.dp)) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text("Today's Revenue", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
                         Text(ksh(todaySummary.first), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
                     }
                 }
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Column(Modifier.padding(14.dp)) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text("Units / Bottles Sold", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(todaySummary.second.toString(), fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     }
@@ -1748,21 +1826,34 @@ private fun FullscreenSalesScreen(
             }
         }
         item {
-            OutlinedButton(onClick = onUndo, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Undo last sale & restore shelf stock")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = onUndo,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 9.dp)
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("Undo sale", fontSize = 11.sp, maxLines = 1)
+                }
+                OutlinedButton(
+                    onClick = { showDateRange = true },
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 9.dp)
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("Export PDF", fontSize = 11.sp, maxLines = 1)
+                }
             }
         }
         item {
-            OutlinedButton(onClick = { showDateRange = true }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Export sales PDF by date")
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Recent receipts", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                    Text("${sales.size}", modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
-        }
-        item {
-            Text("Sales Receipts (${sales.size})", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
         }
         if (sales.isEmpty()) {
             item { EmptyStateMessage("No sales made today yet. Go to POS tab to sell products.") }
@@ -1900,26 +1991,27 @@ private fun ProductSellCard(
 
     Card(
         onClick = onClick,
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(12.dp)) {
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(126.dp)
-                    .clip(RoundedCornerShape(16.dp))
+                    .height(122.dp)
+                    .clip(RoundedCornerShape(14.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant)
             ) {
-                ProductThumbnail(product, Modifier.fillMaxSize().padding(4.dp))
+                ProductThumbnail(product, Modifier.fillMaxSize().padding(5.dp))
                 StockIndicatorPill(
                     quantity = product.stockQuantity,
                     threshold = product.lowStockThreshold,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .padding(6.dp)
+                        .padding(7.dp),
+                    showInStockText = true
                 )
             }
 
@@ -1929,35 +2021,38 @@ private fun ProductSellCard(
                 fontSize = 14.sp,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 6.dp),
+                modifier = Modifier.padding(top = 8.dp),
                 lineHeight = 17.sp
             )
 
             // Show units summary (e.g. "Bottle · Glass · Cup")
             if (units.size > 1) {
                 Text(
-                    text = units.joinToString(" · ") { "${it.name}: ${it.priceKsh}" },
+                    text = units.joinToString(" · ") { it.name },
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 2.dp)
+                    modifier = Modifier.padding(top = 3.dp)
                 )
             } else {
                 Text(
-                    text = listOf(product.brand, product.size).filter(String::isNotBlank).joinToString(" · ").ifBlank { product.category },
+                    text = listOf(units.firstOrNull()?.name.orEmpty(), product.size.ifBlank { product.category })
+                        .filter(String::isNotBlank)
+                        .joinToString(" · "),
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 3.dp)
                 )
             }
 
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(top = 6.dp),
+                    .padding(top = 9.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -1969,15 +2064,15 @@ private fun ProductSellCard(
                 )
 
                 Surface(
-                    shape = RoundedCornerShape(6.dp),
+                    shape = RoundedCornerShape(8.dp),
                     color = MaterialTheme.colorScheme.primaryContainer
                 ) {
                     Text(
                         if (units.size > 1) "Options" else "Sell",
-                        fontSize = 11.sp,
+                        fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
                     )
                 }
             }
@@ -2010,87 +2105,76 @@ private fun StockProductCard(
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        modifier = Modifier.fillMaxWidth().border(
-            width = 1.dp,
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
-            shape = RoundedCornerShape(18.dp)
-        )
+        modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             Modifier
                 .fillMaxWidth()
                 .padding(12.dp),
             verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             ProductThumbnail(
                 product,
                 Modifier
-                    .size(72.dp)
-                    .clip(RoundedCornerShape(13.dp))
+                    .size(76.dp)
+                    .clip(RoundedCornerShape(12.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant)
                     .padding(2.dp)
+                    .clickable(enabled = canEditProducts, onClick = onChangePhoto)
             )
 
             Column(Modifier.weight(1f)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.Top
-                ) {
-                    Text(
-                        product.name,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 14.sp,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    StockIndicatorPill(product.stockQuantity, product.lowStockThreshold)
-                }
+                Text(
+                    product.name,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
 
                 // Show units of sale configured (e.g. Bottle @ 300, Glass @ 70, Cup @ 35)
                 if (units.size > 1) {
                     Text(
-                        text = "Units: " + units.joinToString(", ") { "${it.name} (${ksh(it.priceKsh)})" },
+                        text = units.joinToString(" · ") { "${it.name} ${ksh(it.priceKsh)}" },
                         fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 2,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 2.dp)
+                        modifier = Modifier.padding(top = 4.dp)
                     )
                 } else {
                     Text(
                         text = "${ksh(product.sellingPriceKsh)} · ${product.category}",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp)
                     )
                 }
 
                 Text(
                     text = "Code: ${product.verifiedBarcode ?: product.catalogCode}",
                     fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
 
                 // Clean Action Buttons: ONLY "+ Add" and "Edit" (No bulky +24 or +6 buttons!)
                 if (canReceiveStock || canEditProducts || canTransferStock) Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.padding(top = 8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(top = 10.dp)
                 ) {
                     // "+ Add" button (Opens input box for bottle count)
                     if (canReceiveStock) {
                         Button(
                             onClick = onAddStock,
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
-                            modifier = Modifier.height(34.dp)
+                            contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp),
+                            modifier = Modifier.height(32.dp)
                         ) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Add Stock", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("Add Stock", fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -2098,12 +2182,12 @@ private fun StockProductCard(
                     if (canEditProducts) {
                         OutlinedButton(
                             onClick = onEditProduct,
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                            modifier = Modifier.height(34.dp)
+                            contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp),
+                            modifier = Modifier.height(32.dp)
                         ) {
                             Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Edit", fontSize = 12.sp)
+                            Text("Edit", fontSize = 10.sp)
                         }
                     }
 
@@ -2115,20 +2199,6 @@ private fun StockProductCard(
                         ) { Text("Move", fontSize = 12.sp) }
                     }
 
-                    // Photo button
-                    if (canEditProducts) {
-                        IconButton(
-                            onClick = onChangePhoto,
-                            modifier = Modifier.size(34.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.PhotoCamera,
-                                contentDescription = "Change photo",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
                 }
             }
         }
@@ -3299,21 +3369,27 @@ private fun QuantityStepperControl(quantity: Int, onChange: (Int) -> Unit) {
 }
 
 @Composable
-private fun StockIndicatorPill(quantity: Int, threshold: Int, modifier: Modifier = Modifier) {
+private fun StockIndicatorPill(
+    quantity: Int,
+    threshold: Int,
+    modifier: Modifier = Modifier,
+    showInStockText: Boolean = false
+) {
     val outOfStock = quantity <= 0
     val low = quantity in 1..threshold
     val bg = when {
-        outOfStock -> Color(0xFFFFE4E6)
-        low -> Color(0xFFFEF3C7)
-        else -> Color(0xFFD1FAE5)
+        outOfStock -> MaterialTheme.colorScheme.errorContainer
+        low -> MaterialTheme.colorScheme.secondaryContainer
+        else -> MaterialTheme.colorScheme.surface
     }
     val textCol = when {
-        outOfStock -> Color(0xFFBE123C)
-        low -> Color(0xFFB45309)
-        else -> Color(0xFF047857)
+        outOfStock -> MaterialTheme.colorScheme.onErrorContainer
+        low -> MaterialTheme.colorScheme.onSecondaryContainer
+        else -> MaterialTheme.colorScheme.primary
     }
     val label = when {
-        outOfStock -> "0 left"
+        outOfStock -> "Out of stock"
+        showInStockText -> "$quantity in stock"
         else -> "$quantity"
     }
 
@@ -3321,11 +3397,12 @@ private fun StockIndicatorPill(quantity: Int, threshold: Int, modifier: Modifier
         modifier = modifier,
         color = bg,
         contentColor = textCol,
-        shape = RoundedCornerShape(50)
+        shape = RoundedCornerShape(8.dp),
+        shadowElevation = if (showInStockText) 2.dp else 0.dp
     ) {
         Text(
             label,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
             fontSize = 10.sp,
             fontWeight = FontWeight.Bold
         )
@@ -3334,24 +3411,28 @@ private fun StockIndicatorPill(quantity: Int, threshold: Int, modifier: Modifier
 
 @Composable
 private fun SaleReceiptRow(sale: SaleEntity) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(10.dp),
+                .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier.size(40.dp)
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                modifier = Modifier.size(42.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         Icons.Default.LocalDrink,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
                         modifier = Modifier.size(20.dp)
                     )
                 }

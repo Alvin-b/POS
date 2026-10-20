@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.TableRestaurant
@@ -36,6 +37,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -161,42 +163,24 @@ internal fun TablesScreen(
     }
 
     if (selected == null) {
-            Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 14.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Tables", fontSize = 28.sp, fontWeight = FontWeight.Bold)
-                    Text("Keep every running bill moving smoothly.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Tables", fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                    Text("Open a running bill for each table", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Button(
                     onClick = { newTableName = ""; showCreateDialog = true },
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                    modifier = Modifier.padding(start = 10.dp)
+                    shape = RoundedCornerShape(11.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                    modifier = Modifier.padding(start = 10.dp).height(40.dp)
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Text("Add table", modifier = Modifier.padding(start = 5.dp), fontWeight = FontWeight.Bold)
-                }
-            }
-            if (tables.isNotEmpty()) {
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-                ) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text("Running total", fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                            Text("Across ${tables.size} table${if (tables.size == 1) "" else "s"}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f))
-                        }
-                        Text(ksh(allTablesTotal), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                    }
                 }
             }
             if (!actionError.isNullOrBlank() && !showCreateDialog) {
@@ -205,13 +189,13 @@ internal fun TablesScreen(
             if (tables.isEmpty()) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.TableRestaurant, contentDescription = null, modifier = Modifier.size(44.dp), tint = MaterialTheme.colorScheme.primary)
+                        Icon(Icons.Default.Home, contentDescription = null, modifier = Modifier.size(44.dp), tint = MaterialTheme.colorScheme.primary)
                         Text("No tables yet", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
                         Text("Each table keeps its own running bill.\nAdd products from your stock as guests order.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                     }
                 }
             } else {
-                LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(top = 10.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(top = 12.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(tables, key = { it.id }) { table ->
                         val lines = orders.filter { it.tableId == table.id }
                         val total = lines.sumOf { it.totalKsh.toLong() }
@@ -221,13 +205,37 @@ internal fun TablesScreen(
                             shape = RoundedCornerShape(18.dp),
                             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                         ) {
-                            Row(Modifier.fillMaxWidth().padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.TableRestaurant, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(27.dp))
+                            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    modifier = Modifier.size(42.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.Home, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+                                    }
+                                }
                                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
                                     Text(table.name, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                                     Text("${lines.size} served item${if (lines.size == 1) "" else "s"} · ${ksh(total)}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                Text("Open", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                                Text("Open", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                    item(key = "running-total") {
+                        Card(
+                            modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 15.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Running total", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                Text(ksh(allTablesTotal), fontSize = 19.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                             }
                         }
                     }

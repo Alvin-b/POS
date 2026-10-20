@@ -5,6 +5,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,23 +29,29 @@ fun LoginQrCard(payload: String) {
     val bitmap = remember(payload) { createLoginQr(payload) }
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
     ) {
         Column(
-            Modifier.fillMaxWidth().padding(20.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text("Scan to sign in", style = MaterialTheme.typography.titleMedium)
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = "Secure business sign-in QR code",
-                modifier = Modifier.size(204.dp)
-            )
+            Text("Scan to sign in", fontSize = 15.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+            androidx.compose.material3.Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.size(118.dp)
+            ) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "Secure business sign-in QR code",
+                    modifier = Modifier.fillMaxSize().padding(10.dp)
+                )
+            }
             Text(
-                "Ask the business administrator to scan this code. The QR contains an opaque one-time request token.",
-                fontSize = 12.sp,
+                "Ask the business administrator to scan this code.",
+                fontSize = 11.sp,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )

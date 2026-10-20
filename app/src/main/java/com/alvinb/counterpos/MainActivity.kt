@@ -6,7 +6,6 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -37,13 +36,12 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             CounterPosTheme {
-                val darkTheme = isSystemInDarkTheme()
                 SideEffect {
                     window.statusBarColor = Color.Transparent.toArgb()
                     window.navigationBarColor = Color.Transparent.toArgb()
                     WindowInsetsControllerCompat(window, window.decorView).apply {
-                        isAppearanceLightStatusBars = !darkTheme
-                        isAppearanceLightNavigationBars = !darkTheme
+                        isAppearanceLightStatusBars = true
+                        isAppearanceLightNavigationBars = true
                     }
                 }
                 val appViewModel: CounterPosViewModel = viewModel(

@@ -58,6 +58,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.ui.draw.clip
@@ -168,120 +174,128 @@ private fun AuthScreen(
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(0.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+    BoxWithConstraints(
+        modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding(),
+        contentAlignment = Alignment.TopCenter
     ) {
-        Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.primaryContainer,
-            modifier = Modifier.size(78.dp)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 460.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 30.dp)
+                .heightIn(min = maxHeight),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                Image(
-                    painter = painterResource(R.drawable.ic_counterpos_logo),
-                    contentDescription = "Counter POS logo",
-                    modifier = Modifier.size(54.dp)
-                )
+            Surface(
+                shape = RoundedCornerShape(22.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                modifier = Modifier.size(74.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Image(
+                        painter = painterResource(R.drawable.ic_counterpos_logo),
+                        contentDescription = "Counter POS logo",
+                        modifier = Modifier.size(48.dp)
+                    )
+                }
             }
-        }
-        Spacer(Modifier.height(13.dp))
-        Text("Counter POS", fontSize = 29.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.4).sp)
-        Text(
-            "A calmer way to run your counter",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 14.sp
-        )
-        Spacer(Modifier.height(22.dp))
-        val qrExpired = error?.let { message ->
-            message.contains("expired", ignoreCase = true) ||
-                message.contains("session expired", ignoreCase = true) ||
-                message.contains("already used", ignoreCase = true) ||
-                message.contains("used", ignoreCase = true)
-        } == true
-        if (qrPayload != null && !qrExpired) LoginQrCard(payload = qrPayload)
-        else Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = if (error.isNullOrBlank()) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.errorContainer),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-        ) {
-            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(if (qrExpired) "QR code expired" else if (error.isNullOrBlank()) "Preparing secure QR sign-in…" else "Secure QR sign-in unavailable", fontWeight = FontWeight.SemiBold)
-                if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 12.sp)
-                OutlinedButton(onClick = { onClearError(); onQrSignIn() }, modifier = Modifier.fillMaxWidth()) { Text(if (qrExpired) "Refresh QR" else "Retry QR setup") }
+            Spacer(Modifier.height(13.dp))
+            Text("Counter POS", fontSize = 30.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.4).sp)
+            Text(
+                "A calmer way to run your counter",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 14.sp
+            )
+            Spacer(Modifier.height(25.dp))
+            val qrExpired = error?.let { message ->
+                message.contains("expired", ignoreCase = true) ||
+                    message.contains("session expired", ignoreCase = true) ||
+                    message.contains("already used", ignoreCase = true) ||
+                    message.contains("used", ignoreCase = true)
+            } == true
+            if (qrPayload != null && !qrExpired) LoginQrCard(payload = qrPayload)
+            else Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = if (error.isNullOrBlank()) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.errorContainer),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(if (qrExpired) "QR code expired" else if (error.isNullOrBlank()) "Preparing secure QR sign-in…" else "Secure QR sign-in unavailable", fontWeight = FontWeight.SemiBold)
+                    if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 12.sp)
+                    OutlinedButton(onClick = { onClearError(); onQrSignIn() }, modifier = Modifier.fillMaxWidth()) { Text(if (qrExpired) "Refresh QR" else "Retry QR setup") }
+                }
             }
-        }
-        Spacer(Modifier.height(12.dp))
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            shape = RoundedCornerShape(22.dp),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-        ) {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Sign in to your workspace", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Text("Enter your access passkey. The app opens the workspace and features allowed for your account.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedTextField(
-                    value = credential,
-                    onValueChange = { credential = it; onClearError() },
-                    label = { Text("Passkey") },
-                    placeholder = { Text("Enter passkey or access token") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
-                    trailingIcon = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (credential.isNotEmpty()) {
-                                IconButton(onClick = { credential = ""; onClearError() }) {
-                                    Icon(Icons.Default.Clear, contentDescription = "Clear input", modifier = Modifier.size(20.dp))
+            Spacer(Modifier.height(12.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(20.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Sign in to your workspace", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Enter your access passkey. The app opens the workspace and features allowed for your account.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 13.sp,
+                        lineHeight = 19.sp
+                    )
+                    OutlinedTextField(
+                        value = credential,
+                        onValueChange = { credential = it; onClearError() },
+                        placeholder = { Text("Enter passkey or access token") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                        trailingIcon = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (credential.isNotEmpty()) {
+                                    IconButton(onClick = { credential = ""; onClearError() }) {
+                                        Icon(Icons.Default.Clear, contentDescription = "Clear input", modifier = Modifier.size(20.dp))
+                                    }
+                                }
+                                IconButton(
+                                    onClick = { pasteFromClipboard() },
+                                    modifier = Modifier.testTag("paste_passkey_icon")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ContentPaste,
+                                        contentDescription = "Paste passkey from clipboard",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
                                 }
                             }
-                            IconButton(
-                                onClick = { pasteFromClipboard() },
-                                modifier = Modifier.testTag("paste_passkey_icon")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ContentPaste,
-                                    contentDescription = "Paste passkey from clipboard",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth().testTag("passkey_input_field")
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = { pasteFromClipboard() },
-                        modifier = Modifier.weight(1f).testTag("paste_passkey_button")
+                        },
+                        modifier = Modifier.fillMaxWidth().height(52.dp).testTag("passkey_input_field")
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Paste")
+                        OutlinedButton(
+                            onClick = { pasteFromClipboard() },
+                            modifier = Modifier.weight(1f).testTag("paste_passkey_button")
+                        ) {
+                            Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Paste")
+                        }
+                        Button(
+                            onClick = { onCredentialSignIn(credential.trim()) },
+                            enabled = credential.isNotBlank(),
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Continue") }
                     }
-                    Button(
-                        onClick = { onCredentialSignIn(credential.trim()) },
-                        enabled = credential.isNotBlank(),
-                        modifier = Modifier.weight(1f)
-                    ) { Text("Continue") }
+                    OutlinedButton(onClick = onQrSignIn, modifier = Modifier.fillMaxWidth()) { Text("Sign in with QR code") }
+                    OutlinedButton(onClick = onScanAccessQr, modifier = Modifier.fillMaxWidth()) { Text("Scan access pass QR") }
+                    if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    if (!notice.isNullOrBlank()) Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
                 }
-                OutlinedButton(onClick = onQrSignIn, modifier = Modifier.fillMaxWidth()) { Text("Sign in with QR code") }
-                if (qrPayload != null && !qrExpired) {
-                    OutlinedButton(onClick = onQrSignIn, modifier = Modifier.fillMaxWidth()) { Text("Refresh QR") }
-                }
-                OutlinedButton(onClick = onScanAccessQr, modifier = Modifier.fillMaxWidth()) { Text("Scan access pass QR") }
-                if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-                if (!notice.isNullOrBlank()) Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
             }
-        }
+            }
     }
 }
 

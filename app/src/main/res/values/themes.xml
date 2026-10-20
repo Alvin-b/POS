@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.CounterPos" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.CounterPos" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">@color/counter_pos_background</item>
+        <item name="android:colorAccent">#087F5B</item>
+    </style>
 </resources>
