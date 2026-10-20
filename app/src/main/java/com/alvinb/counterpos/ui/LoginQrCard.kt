@@ -13,6 +13,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -25,7 +26,7 @@ import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 
 @Composable
-fun LoginQrCard(payload: String) {
+fun LoginQrCard(payload: String, onRefresh: () -> Unit = {}) {
     val bitmap = remember(payload) { createLoginQr(payload) }
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -55,6 +56,7 @@ fun LoginQrCard(payload: String) {
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
+            TextButton(onClick = onRefresh) { Text("Refresh QR") }
         }
     }
 }

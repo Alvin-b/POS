@@ -214,7 +214,7 @@ private fun AuthScreen(
             Spacer(Modifier.height(13.dp))
             Text("Counter POS", fontSize = 30.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.4).sp)
             Text(
-                "A calmer way to run your counter",
+                "Fast selling for your team",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 14.sp
             )
@@ -225,17 +225,16 @@ private fun AuthScreen(
                     message.contains("already used", ignoreCase = true) ||
                     message.contains("used", ignoreCase = true)
             } == true
-            if (qrPayload != null && !qrExpired) LoginQrCard(payload = qrPayload)
+            if (qrPayload != null && !qrExpired) LoginQrCard(payload = qrPayload, onRefresh = { onClearError(); onQrSignIn() })
             else Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = if (error.isNullOrBlank()) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.errorContainer),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(if (qrExpired) "QR code expired" else if (error.isNullOrBlank()) "Preparing secure QR sign-in…" else "Secure QR sign-in unavailable", fontWeight = FontWeight.SemiBold)
-                    if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 12.sp)
-                    OutlinedButton(onClick = { onClearError(); onQrSignIn() }, modifier = Modifier.fillMaxWidth()) { Text(if (qrExpired) "Refresh QR" else "Retry QR setup") }
+                    Text(if (qrExpired) "QR code expired" else "QR sign-in unavailable", fontWeight = FontWeight.SemiBold)
+                    OutlinedButton(onClick = { onClearError(); onQrSignIn() }, modifier = Modifier.fillMaxWidth()) { Text("Refresh QR") }
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -246,9 +245,9 @@ private fun AuthScreen(
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Sign in to your workspace", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text("Welcome back", fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     Text(
-                        "Enter your access passkey. The app opens the workspace and features allowed for your account.",
+                        "Use your passkey or QR code to continue.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 13.sp,
                         lineHeight = 19.sp
@@ -299,9 +298,6 @@ private fun AuthScreen(
                             modifier = Modifier.weight(1f)
                         ) { Text("Continue") }
                     }
-                    OutlinedButton(onClick = onQrSignIn, modifier = Modifier.fillMaxWidth()) { Text("Sign in with QR code") }
-                    OutlinedButton(onClick = onScanAccessQr, modifier = Modifier.fillMaxWidth()) { Text("Scan access pass QR") }
-                    if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                     if (!notice.isNullOrBlank()) Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
                 }
             }

@@ -166,20 +166,14 @@ internal fun TablesScreen(
 
     if (selected == null) {
         Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 14.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Tables", fontSize = 23.sp, fontWeight = FontWeight.Bold)
-                    Text("Open a running bill for each table", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+            Column(Modifier.fillMaxWidth()) {
+                Text("Tables", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                Text("Open bills", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Button(
                     onClick = { newTableName = ""; showCreateDialog = true },
                     shape = RoundedCornerShape(11.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                    modifier = Modifier.padding(start = 10.dp).height(40.dp)
+                    contentPadding = PaddingValues(vertical = 10.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Text("Add table", modifier = Modifier.padding(start = 5.dp), fontWeight = FontWeight.Bold)
@@ -193,7 +187,7 @@ internal fun TablesScreen(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Default.Home, contentDescription = null, modifier = Modifier.size(44.dp), tint = MaterialTheme.colorScheme.primary)
                         Text("No tables yet", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
-                        Text("Each table keeps its own running bill.\nAdd products from your stock as guests order.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        Text("Add a table to start a bill.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                     }
                 }
             } else {

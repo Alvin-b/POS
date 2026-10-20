@@ -1,6 +1,5 @@
 package com.alvinb.counterpos.ui
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
@@ -40,30 +39,30 @@ private val CounterPosLightColors = lightColorScheme(
 )
 
 private val CounterPosDarkColors = darkColorScheme(
-    primary = Color(0xFF70D6A8),
-    onPrimary = Color(0xFF063D2B),
-    primaryContainer = Color(0xFF1F4B38),
-    onPrimaryContainer = Color(0xFFB9F2D4),
+    primary = Color(0xFF5BE6AF),
+    onPrimary = Color(0xFF002117),
+    primaryContainer = Color(0xFF124C39),
+    onPrimaryContainer = Color(0xFF9FF5CD),
     secondary = Color(0xFFFFB86B),
     onSecondary = Color(0xFF482300),
     secondaryContainer = Color(0xFF5A3517),
     onSecondaryContainer = Color(0xFFFFDDB8),
-    tertiary = Color(0xFF9FD3BD),
-    onTertiary = Color(0xFF153B2C),
-    tertiaryContainer = Color(0xFF2C5140),
-    onTertiaryContainer = Color(0xFFBCEBD5),
+    tertiary = Color(0xFF8ED8E2),
+    onTertiary = Color(0xFF00363C),
+    tertiaryContainer = Color(0xFF164E55),
+    onTertiaryContainer = Color(0xFFA9EFF5),
     error = Color(0xFFFFB4AB),
     onError = Color(0xFF690005),
     errorContainer = Color(0xFF93000A),
     onErrorContainer = Color(0xFFFFDAD6),
-    background = Color(0xFF101612),
-    onBackground = Color(0xFFE8F0EA),
-    surface = Color(0xFF18211B),
-    onSurface = Color(0xFFE8F0EA),
-    surfaceVariant = Color(0xFF25312A),
-    onSurfaceVariant = Color(0xFFB2C0B7),
-    outline = Color(0xFF536258),
-    outlineVariant = Color(0xFF39483E)
+    background = Color(0xFF0B1110),
+    onBackground = Color(0xFFE8F2ED),
+    surface = Color(0xFF121B18),
+    onSurface = Color(0xFFE8F2ED),
+    surfaceVariant = Color(0xFF1C2924),
+    onSurfaceVariant = Color(0xFFAABDB4),
+    outline = Color(0xFF40564C),
+    outlineVariant = Color(0xFF293A33)
 )
 
 private val CounterPosTypography = Typography().run {
@@ -73,7 +72,7 @@ private val CounterPosTypography = Typography().run {
         titleLarge = titleLarge.copy(fontWeight = FontWeight.Bold),
         titleMedium = titleMedium.copy(fontWeight = FontWeight.SemiBold),
         titleSmall = titleSmall.copy(fontWeight = FontWeight.SemiBold),
-        bodyLarge = bodyLarge.copy(lineHeight = 24.sp),
+        bodyLarge = bodyLarge.copy(lineHeight = 22.sp),
         bodyMedium = bodyMedium.copy(lineHeight = 21.sp),
         labelLarge = labelLarge.copy(fontWeight = FontWeight.Bold)
     )
@@ -89,7 +88,7 @@ private val CounterPosShapes = Shapes(
 
 @Composable
 fun CounterPosTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    darkTheme: Boolean = true,
     content: @Composable () -> Unit
 ) {
     MaterialTheme(

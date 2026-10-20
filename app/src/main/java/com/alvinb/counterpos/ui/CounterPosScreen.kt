@@ -1384,7 +1384,7 @@ private data class ServiceCounterReportData(
 )
 
 /**
- * Counter & Waiter Report Screen
+ * Reports Screen
  * Tracks drinks taken from each counter (Counter 1, Counter 2, Counter 3, Counter 4)
  * and which rotating waiters served clients/tables.
  */
@@ -1489,7 +1489,7 @@ private fun CounterReportScreen(
         sb.appendLine("========================================")
         counterReports.forEach { c ->
             sb.appendLine("\n📍 ${c.counterName.uppercase()}:")
-            sb.appendLine("Total: ${c.totalItems} products taken · ${kshLong(c.totalKsh)}")
+            sb.appendLine("Total: ${c.totalItems} drinks · ${kshLong(c.totalKsh)}")
             if (c.products.isNotEmpty()) {
                 sb.appendLine("Products Taken:")
                 c.products.forEach { p ->
@@ -1519,8 +1519,8 @@ private fun CounterReportScreen(
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("Counter & Waiter Report", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                    Text("Drinks taken per counter & rotating waiter tracking", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Reports", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Text("Today at a glance", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = onRefresh, enabled = !isLoading) {
                     if (isLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -1529,7 +1529,7 @@ private fun CounterReportScreen(
             }
         }
 
-        // Quick Actions Bar: Record Dispensation + Share Summary
+        // Quick Actions Bar: Log drink + Share Summary
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1542,7 +1542,7 @@ private fun CounterReportScreen(
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(17.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Record Dispensation", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Log drink", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
                 OutlinedButton(
                     onClick = { copyShareableReport() },
@@ -1564,17 +1564,17 @@ private fun CounterReportScreen(
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Column {
-                            Text("Total products taken", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                            Text("$totalClubUnits drinks", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Text("Drinks", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Text("$totalClubUnits", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
                         }
                         Column(horizontalAlignment = Alignment.End) {
-                            Text("Total club amount", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Text("Revenue", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
                             Text(kshLong(totalClubRevenue), fontSize = 24.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
                         }
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("${counterReports.size} active counters", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f))
-                        Text("$activeWaitersCount rotating waiters recorded", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f))
+                        Text("${counterReports.size} counters", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f))
+                        Text("$activeWaitersCount waiters", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f))
                     }
                 }
             }
@@ -1603,7 +1603,7 @@ private fun CounterReportScreen(
                         FilterChip(
                             selected = reportCounterFilter == "all",
                             onClick = { onSetReportCounterFilter("all") },
-                            label = { Text("All counters (${counterReports.size})", fontSize = 12.sp) }
+                            label = { Text("All", fontSize = 12.sp) }
                         )
                         effectiveCounters.forEach { counter ->
                             FilterChip(
@@ -1620,7 +1620,7 @@ private fun CounterReportScreen(
         // Section label
         item {
             Text(
-                "Counter Performance & Waiter Activity",
+                "Counters",
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(top = 4.dp)
@@ -1665,12 +1665,12 @@ private fun CounterReportScreen(
                             Spacer(Modifier.width(10.dp))
                             Column {
                                 Text(counterData.counterName, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                Text("${counterData.salesCount} sale events", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("${counterData.salesCount} sales", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text(kshLong(counterData.totalKsh), fontWeight = FontWeight.Bold, fontSize = 17.sp, color = MaterialTheme.colorScheme.primary)
-                            Text("${counterData.totalItems} products taken", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("${counterData.totalItems} drinks", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
 
@@ -1692,13 +1692,13 @@ private fun CounterReportScreen(
                     ) {
                         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
-                                if (effectiveCounters.size > 1) "PRODUCTS TAKEN FROM ${counterData.counterName.uppercase()}" else "PRODUCTS SOLD",
+                                if (effectiveCounters.size > 1) "DRINKS" else "PRODUCTS SOLD",
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
                             )
                             if (counterData.products.isEmpty()) {
-                                Text("No drinks logged from this counter yet today.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("No drinks yet", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             } else {
                                 counterData.products.forEach { prod ->
                                     Row(
@@ -1730,13 +1730,13 @@ private fun CounterReportScreen(
                     ) {
                         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
-                                if (effectiveCounters.size > 1) "REGISTERED WAITERS SERVING FROM THIS COUNTER" else "REGISTERED WAITERS",
+                                if (effectiveCounters.size > 1) "WAITERS" else "REGISTERED WAITERS",
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.secondary
                             )
                             if (counterData.waiters.isEmpty()) {
-                                Text("No waiter servings logged from this counter yet.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("No waiter activity yet", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             } else {
                                 counterData.waiters.forEach { waiter ->
                                     Row(
@@ -2450,7 +2450,7 @@ private fun SaleWithUnitsSheet(
 }
 
 /**
- * Record Dispensation Bottom Sheet:
+ * Log drink Bottom Sheet:
  * Provides a simple, fast interface for waiters or cashiers to record
  * drinks taken from a specific counter (Counter 1, Counter 2, etc.) to serve a table or client.
  */
