@@ -59,6 +59,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LocalDrink
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -77,6 +78,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -308,7 +310,6 @@ fun CounterPosWorkspace(
                 canAddNewProduct = canReceiveStock,
                 canManageTeam = role in setOf("owner", "manager") && "employee_management" in enabledFeatures,
                 onManageTeam = viewModel::openTeamPanel,
-                onOpenStaffManagement = { viewModel.openStaffManagement() },
                 counters = serviceCounters,
                 selectedCounterId = state.selectedCounterId,
                 onCounterSelect = viewModel::selectCounter
@@ -638,36 +639,15 @@ fun CounterPosWorkspace(
                 role = role,
                 businessType = session.activeBusiness?.businessType ?: "big_club",
                 registeredCounters = serviceCounters,
-                themeMode = themeMode,
                 onClose = viewModel::closeTeamPanel,
-            onBusinessNameSave = { viewModel.updateBusinessName(it) },
-            onIssueWaiterPass = { viewModel.issueEmployeePass("cashier") },
-            onCopyWaiterPass = { passkey -> clipboardManager.setText(AnnotatedString(passkey)) },
-            onShareWaiterPass = { passkey ->
-                val businessName = session.activeBusiness?.shopName.orEmpty()
-                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_SUBJECT, "One-time waiter passkey for $businessName")
-                    putExtra(Intent.EXTRA_TEXT, "One-time waiter passkey for $businessName: $passkey\nShare privately. This passkey can be redeemed once.")
+                onBusinessNameSave = { viewModel.updateBusinessName(it) },
+                onLoadMembers = { viewModel.loadEmployeeMembers() },
+                onCounterCreate = { name -> viewModel.createServiceCounter(name) },
+                onCounterRename = { id, name -> viewModel.renameServiceCounter(id, name) },
+                onOpenStaffManagement = {
+                    viewModel.closeTeamPanel()
+                    viewModel.openStaffManagement()
                 }
-                context.startActivity(Intent.createChooser(shareIntent, "Share waiter passkey"))
-            },
-            onScanWaiterQr = {
-                viewModel.closeTeamPanel()
-                viewModel.openScanner(ScannerMode.ADMIN_QR)
-            },
-            onLoadMembers = { viewModel.loadEmployeeMembers() },
-            onWaiterStatusChange = { userId, status -> viewModel.setEmployeeStatus(userId, status) },
-            onRemoveWaiter = { userId -> viewModel.removeEmployeeAccess(userId) },
-            onScheduleSave = { userId, schedule -> viewModel.saveEmployeeSchedule(userId, schedule) },
-            onScheduleClear = { userId -> viewModel.clearEmployeeSchedule(userId) },
-            onCounterCreate = { name -> viewModel.createServiceCounter(name) },
-            onCounterRename = { id, name -> viewModel.renameServiceCounter(id, name) },
-            onThemeModeChange = onThemeModeChange,
-            onOpenStaffManagement = {
-                viewModel.closeTeamPanel()
-                viewModel.openStaffManagement()
-            }
             )
         }
     }
@@ -779,7 +759,6 @@ private fun LeanTopBar(
     canAddNewProduct: Boolean = true,
     canManageTeam: Boolean = false,
     onManageTeam: () -> Unit = {},
-    onOpenStaffManagement: () -> Unit = {},
     counters: List<ServiceCounter> = emptyList(),
     selectedCounterId: String? = null,
     onCounterSelect: (String) -> Unit = {},
@@ -964,12 +943,6 @@ private fun LeanTopBar(
                     }
 
                     if (canManageTeam) {
-                        IconButton(
-                            onClick = onOpenStaffManagement,
-                            modifier = Modifier.size(40.dp).testTag("staff_management_top_button")
-                        ) {
-                            Icon(Icons.Default.Badge, contentDescription = "Staff Management", tint = MaterialTheme.colorScheme.primary)
-                        }
                         IconButton(onClick = onManageTeam, modifier = Modifier.size(40.dp).testTag("settings_top_button")) {
                             Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }

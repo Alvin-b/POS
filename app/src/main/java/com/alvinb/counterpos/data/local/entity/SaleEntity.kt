@@ -21,5 +21,6 @@ data class SaleEntity(
     val counterName: String? = null,
     val waiterName: String? = null,
     val tableId: String? = null,
-    val tableName: String? = null
+    val tableName: String? = null,
+    val sourceCounterId: String? = null
 )

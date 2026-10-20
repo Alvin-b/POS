@@ -16,9 +16,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.alvinb.counterpos.data.CounterPosRepository
-import com.alvinb.counterpos.data.local.AppDatabase
-import com.alvinb.counterpos.data.remote.SupabaseRestClient
 import com.alvinb.counterpos.ui.CounterPosApp
 import com.alvinb.counterpos.ui.CounterPosTheme
 import com.alvinb.counterpos.ui.CounterPosViewModel
@@ -30,13 +27,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
 
-        val database = AppDatabase.getInstance(applicationContext)
-        val repository = CounterPosRepository(
-            context = applicationContext,
-            dao = database.counterPosDao(),
-            assets = assets,
-            remote = SupabaseRestClient(applicationContext)
-        )
+        val repository = (application as CounterPosApplication).repository
         val connectivityManager = getSystemService(ConnectivityManager::class.java)
         val appearancePreferences = getSharedPreferences("counterpos_appearance", MODE_PRIVATE)
 

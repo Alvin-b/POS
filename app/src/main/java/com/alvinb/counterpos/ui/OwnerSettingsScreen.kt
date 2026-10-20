@@ -86,21 +86,11 @@ fun OwnerSettingsScreen(
     role: String,
     businessType: String = "big_club",
     registeredCounters: List<ServiceCounter>,
-    themeMode: String,
     onClose: () -> Unit,
     onBusinessNameSave: (String) -> Unit,
-    onIssueWaiterPass: () -> Unit,
-    onCopyWaiterPass: (String) -> Unit,
-    onShareWaiterPass: (String) -> Unit,
-    onScanWaiterQr: () -> Unit,
     onLoadMembers: () -> Unit,
-    onWaiterStatusChange: (String, String) -> Unit,
-    onRemoveWaiter: (String) -> Unit,
-    onScheduleSave: (String, List<EmployeeScheduleDay>) -> Unit,
-    onScheduleClear: (String) -> Unit,
     onCounterCreate: (String) -> Unit,
     onCounterRename: (String, String) -> Unit,
-    onThemeModeChange: (String) -> Unit,
     onOpenStaffManagement: () -> Unit = {}
 ) {
     BackHandler(onBack = onClose)
@@ -110,8 +100,6 @@ fun OwnerSettingsScreen(
     var newCounterName by remember { mutableStateOf("") }
     var editingCounterId by remember { mutableStateOf<String?>(null) }
     var editingCounterName by remember { mutableStateOf("") }
-    var expandedWaiterId by remember { mutableStateOf<String?>(null) }
-    var removeCandidate by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     // The roster is intentionally derived only from actual member rows. There are no sample names,
     // placeholder emails, or local fallback accounts in this screen.
@@ -209,12 +197,34 @@ fun OwnerSettingsScreen(
                 }
 
                 SettingsSection(
-                    title = "Waiter access",
-                    description = "Invite staff or approve a phone.",
-                    icon = Icons.Default.Key
+                    title = "Team & working hours",
+                    description = "Manage waiters, access, and schedules in one place.",
+                    icon = Icons.Default.Badge
                 ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(
+                                if (waiters.isEmpty()) "No waiters added yet" else "${waiters.size} waiter${if (waiters.size == 1) "" else "s"}",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                "Passkeys, QR approvals, and duty hours",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        if (state.isLoadingEmployeeMembers) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            IconButton(onClick = onLoadMembers, enabled = role in setOf("owner", "manager")) {
+                                Icon(Icons.Default.Refresh, contentDescription = "Refresh waiter count")
+                            }
+                        }
+                    }
                     Button(
                         onClick = onOpenStaffManagement,
+                        enabled = role in setOf("owner", "manager"),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primaryContainer,
                             contentColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -222,108 +232,7 @@ fun OwnerSettingsScreen(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Default.Badge, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Open Staff & Business Hours Hub", fontWeight = FontWeight.SemiBold)
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                        Button(
-                            onClick = onIssueWaiterPass,
-                            enabled = ownerCanEdit && !state.isIssuingEmployeePass,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            if (state.isIssuingEmployeePass) {
-                                CircularProgressIndicator(modifier = Modifier.size(17.dp), strokeWidth = 2.dp)
-                                Spacer(Modifier.width(8.dp))
-                            } else {
-                                Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(17.dp))
-                                Spacer(Modifier.width(6.dp))
-                            }
-                            Text("Issue waiter pass")
-                        }
-                        OutlinedButton(
-                            onClick = onScanWaiterQr,
-                            enabled = ownerCanEdit,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(17.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Scan waiter QR")
-                        }
-                    }
-                    state.employeePasskey?.takeIf { it.isNotBlank() }?.let { passkey ->
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                                Text("New waiter passkey", fontWeight = FontWeight.SemiBold)
-                                Text(passkey, style = MaterialTheme.typography.headlineSmall, letterSpacing = 1.2.sp)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                                    OutlinedButton(
-                                        onClick = { onCopyWaiterPass(passkey) },
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(Modifier.width(5.dp))
-                                        Text("Copy")
-                                    }
-                                    Button(
-                                        onClick = { onShareWaiterPass(passkey) },
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(Modifier.width(5.dp))
-                                        Text("Share")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (!ownerCanEdit) ReadOnlyHint()
-                }
-
-                SettingsSection(
-                    title = "Registered waiters",
-                    description = "Manage staff access.",
-                    icon = Icons.Default.Store
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            if (waiters.isEmpty()) "No registered waiters" else "${waiters.size} registered waiter${if (waiters.size == 1) "" else "s"}",
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(onClick = onLoadMembers, enabled = !state.isLoadingEmployeeMembers) {
-                            if (state.isLoadingEmployeeMembers) {
-                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            } else {
-                                Icon(Icons.Default.Refresh, contentDescription = "Refresh registered waiters")
-                            }
-                        }
-                    }
-                    if (waiters.isEmpty()) {
-                        Text(
-                            "No staff yet. Use the actions above to add one.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                    waiters.forEach { (member, email) ->
-                        WaiterCard(
-                            member = member,
-                            email = email,
-                            ownerCanEdit = ownerCanEdit,
-                            expanded = expandedWaiterId == member.optString("member_user_id"),
-                            isSavingSchedule = state.isSavingEmployeeSchedule || state.isClearingEmployeeSchedule,
-                            onToggleExpanded = {
-                                expandedWaiterId = if (expandedWaiterId == member.optString("member_user_id")) null else member.optString("member_user_id")
-                            },
-                            onStatusChange = { status -> onWaiterStatusChange(member.optString("member_user_id"), status) },
-                            onRemove = { removeCandidate = member.optString("member_user_id") to email },
-                            onScheduleSave = onScheduleSave,
-                            onScheduleClear = onScheduleClear
-                        )
+                        Text("Manage team", fontWeight = FontWeight.SemiBold)
                     }
                     if (!ownerCanEdit) ReadOnlyHint()
                 }
@@ -402,49 +311,11 @@ fun OwnerSettingsScreen(
                     if (!ownerCanEdit) ReadOnlyHint()
                 }
 
-                SettingsSection(
-                    title = "Appearance",
-                    description = "Choose the app theme.",
-                    icon = Icons.Default.DarkMode
-                ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        listOf("system" to "System", "light" to "Light", "dark" to "Dark").forEach { (value, label) ->
-                            FilterChip(
-                                selected = themeMode.equals(value, ignoreCase = true),
-                                onClick = { onThemeModeChange(value) },
-                                enabled = ownerCanEdit,
-                                label = { Text(label) },
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    }
-                    if (!ownerCanEdit) ReadOnlyHint()
-                }
                 Spacer(Modifier.size(6.dp))
             }
         }
     }
 
-    removeCandidate?.let { (userId, email) ->
-        AlertDialog(
-            onDismissRequest = { removeCandidate = null },
-            title = { Text("Remove waiter access?") },
-            text = {
-                Text("Remove $email from this business? The account will lose access, while recorded sales history is retained. This cannot be undone from Settings.")
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        removeCandidate = null
-                        expandedWaiterId = null
-                        onRemoveWaiter(userId)
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) { Text("Remove access") }
-            },
-            dismissButton = { TextButton(onClick = { removeCandidate = null }) { Text("Keep waiter") } }
-        )
-    }
 }
 
 @Composable

@@ -22,6 +22,7 @@ import com.alvinb.counterpos.ui.scanner.ScannerMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.delay
@@ -135,7 +136,8 @@ data class CounterPosUiState(
     val actionError: String? = null,
     val notice: String? = null,
     val isReady: Boolean = false,
-    val startupError: String? = null
+    val startupError: String? = null,
+    val pendingSyncCount: Int = 0
 )
 
 class CounterPosViewModel(
@@ -185,6 +187,11 @@ class CounterPosViewModel(
                             }
                         }
                 }
+            }
+        }
+        viewModelScope.launch {
+            repository.pendingSyncCount.collect { count ->
+                _uiState.update { it.copy(pendingSyncCount = count) }
             }
         }
         viewModelScope.launch {

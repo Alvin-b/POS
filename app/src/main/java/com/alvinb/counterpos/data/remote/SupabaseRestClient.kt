@@ -11,7 +11,11 @@ import java.nio.charset.StandardCharsets
 import java.net.HttpURLConnection
 import java.net.URL
 
-class SupabaseApiException(val statusCode: Int, message: String) : IOException(message)
+open class SupabaseHttpException(val statusCode: Int, message: String) : IOException(message)
+
+open class SupabaseApiException(statusCode: Int, message: String) : SupabaseHttpException(statusCode, message)
+
+class SupabaseUnauthorizedException(message: String) : SupabaseApiException(HttpURLConnection.HTTP_UNAUTHORIZED, message)
 
  data class AuthSession(
     val accessToken: String,
@@ -444,6 +448,16 @@ class SupabaseRestClient(context: Context) {
     suspend fun undoSaleFromCounter(shopId: String): JSONObject =
         rpcObject("undo_sale_from_counter", JSONObject().put("_shop", shopId))
 
+    suspend fun applyPosOperation(shopId: String, operationId: String, kind: String, payload: JSONObject): JSONObject =
+        rpcObjectOrEmpty(
+            "apply_pos_operation",
+            JSONObject()
+                .put("_shop", shopId)
+                .put("_operation_id", operationId)
+                .put("_kind", kind)
+                .put("_payload", payload)
+        )
+
     suspend fun updateProduct(productId: String, fields: JSONObject): JSONObject =
         patch("products?id=eq.$productId", fields)
 
@@ -571,6 +585,15 @@ class SupabaseRestClient(context: Context) {
         }
     }
 
+    private suspend fun rpcObjectOrEmpty(name: String, args: JSONObject): JSONObject {
+        val body = request("/rest/v1/rpc/$name", "POST", args.toString(), true).trim()
+        return when {
+            body.isBlank() || body == "null" -> JSONObject()
+            body.startsWith("[") -> parseArray(body).optJSONObject(0) ?: JSONObject()
+            else -> parseObject(body)
+        }
+    }
+
     private suspend fun rpcVoid(name: String, args: JSONObject): JSONObject {
         request("/rest/v1/rpc/$name", "POST", args.toString(), true)
         return JSONObject()
@@ -622,7 +645,7 @@ class SupabaseRestClient(context: Context) {
                 return@withContext requestRaw(path, method, body, authenticated, false)
             }
             clearSession()
-            throw SupabaseApiException(HttpURLConnection.HTTP_UNAUTHORIZED, "Session expired")
+            throw SupabaseUnauthorizedException("Session expired")
         }
         if (status !in 200..299) throw SupabaseApiException(status, extractError(text, status))
         HttpResponse(status, text)

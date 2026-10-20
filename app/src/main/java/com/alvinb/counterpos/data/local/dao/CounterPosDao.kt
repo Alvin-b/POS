@@ -5,37 +5,109 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
+import com.alvinb.counterpos.data.local.entity.CounterStockEntity
 import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
+import com.alvinb.counterpos.data.local.entity.ServiceCounterEntity
 import com.alvinb.counterpos.data.local.entity.TableOrderEntity
 import kotlinx.coroutines.flow.Flow
+import com.alvinb.counterpos.data.local.entity.OfflineSessionEntity
+import com.alvinb.counterpos.data.local.entity.OutboxEntity
 @Dao
 interface CounterPosDao {
     @Query("SELECT * FROM dining_tables ORDER BY createdAt ASC, name COLLATE NOCASE ASC")
     fun observeDiningTables(): Flow<List<DiningTableEntity>>
     @Query("SELECT * FROM table_orders ORDER BY servedAt ASC, id ASC")
     fun observeTableOrders(): Flow<List<TableOrderEntity>>
+    @Query("SELECT * FROM service_counters WHERE shopId = :shopId ORDER BY name COLLATE NOCASE ASC")
+    suspend fun getServiceCounters(shopId: String): List<ServiceCounterEntity>
+    @Query("DELETE FROM service_counters WHERE shopId = :shopId")
+    suspend fun clearServiceCounters(shopId: String)
+    @Query("DELETE FROM service_counters")
+    suspend fun clearAllServiceCounters()
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertServiceCounters(counters: List<ServiceCounterEntity>)
+    @Query("SELECT * FROM counter_stock WHERE counterId = :counterId")
+    suspend fun getCounterStockRows(counterId: String): List<CounterStockEntity>
+    @Query("SELECT quantity FROM counter_stock WHERE counterId = :counterId AND catalogCode = :catalogCode LIMIT 1")
+    suspend fun getCounterStockQuantity(counterId: String, catalogCode: String): Int?
+    @Query("DELETE FROM counter_stock WHERE shopId = :shopId AND counterId = :counterId")
+    suspend fun clearCounterStock(shopId: String, counterId: String)
+    @Query("DELETE FROM counter_stock WHERE shopId = :shopId")
+    suspend fun clearCounterStockForShop(shopId: String)
+    @Query("DELETE FROM counter_stock")
+    suspend fun clearAllCounterStock()
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCounterStock(rows: List<CounterStockEntity>)
+    @Query("UPDATE counter_stock SET quantity = quantity - :quantity WHERE counterId = :counterId AND catalogCode = :catalogCode AND quantity >= :quantity")
+    suspend fun decrementCounterStock(counterId: String, catalogCode: String, quantity: Int): Int
+    @Query("UPDATE counter_stock SET quantity = quantity + :quantity WHERE counterId = :counterId AND catalogCode = :catalogCode")
+    suspend fun incrementCounterStock(counterId: String, catalogCode: String, quantity: Int): Int
+    @Transaction
+    suspend fun queueCounterTransfer(outbox: OutboxEntity, sourceCounterId: String, targetBalance: CounterStockEntity, quantity: Int): Boolean {
+        if (quantity < 1) return false
+        val available = getCounterStockQuantity(sourceCounterId, targetBalance.catalogCode) ?: return false
+        if (available < quantity || decrementCounterStock(sourceCounterId, targetBalance.catalogCode, quantity) != 1) return false
+        insertCounterStock(listOf(targetBalance))
+        enqueueOutbox(outbox)
+        return true
+    }
+    @Query("SELECT * FROM sync_outbox WHERE shopId = :shopId AND blocked = 0 ORDER BY createdAt ASC, operationId ASC")
+    suspend fun pendingOutbox(shopId: String): List<OutboxEntity>
+    @Query("SELECT * FROM sync_outbox WHERE shopId = :shopId AND blocked = 0 ORDER BY createdAt ASC, operationId ASC LIMIT 1")
+    suspend fun nextPendingOutbox(shopId: String): OutboxEntity?
+    @Query("SELECT COUNT(*) FROM sync_outbox")
+    fun observePendingOutboxCount(): Flow<Int>
+    @Query("SELECT COUNT(*) FROM sync_outbox WHERE shopId = :shopId")
+    suspend fun outboxCount(shopId: String): Int
+    @Query("SELECT COUNT(*) FROM sync_outbox")
+    suspend fun outboxCountAll(): Int
+    @Query("SELECT COUNT(*) FROM sync_outbox WHERE actorUserId <> :userId")
+    suspend fun outboxCountForOtherActor(userId: String): Int
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun enqueueOutbox(item: OutboxEntity)
+    @Query("UPDATE sync_outbox SET attempts = attempts + 1, lastError = :error WHERE operationId = :operationId")
+    suspend fun recordOutboxAttempt(operationId: String, error: String?)
+    @Query("UPDATE sync_outbox SET lastError = :error, blocked = 1 WHERE operationId = :operationId")
+    suspend fun blockOutboxItem(operationId: String, error: String)
+    @Query("DELETE FROM sync_outbox WHERE operationId = :operationId")
+    suspend fun acknowledgeOutboxItem(operationId: String): Int
+    @Query("SELECT * FROM sync_outbox WHERE localSaleId = :saleId LIMIT 1")
+    suspend fun outboxForSale(saleId: Long): OutboxEntity?
+    @Query("DELETE FROM sync_outbox WHERE localSaleId = :saleId")
+    suspend fun cancelOutboxForSale(saleId: Long): Int
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveOfflineSession(session: OfflineSessionEntity)
+    @Query("SELECT * FROM offline_session WHERE `key` = 'account' LIMIT 1")
+    suspend fun loadOfflineSession(): OfflineSessionEntity?
+    @Query("UPDATE offline_session SET activeShopId = :shopId, savedAt = :savedAt WHERE `key` = 'account'")
+    suspend fun setOfflineActiveShop(shopId: String?, savedAt: Long): Int
+    @Query("DELETE FROM offline_session")
+    suspend fun clearOfflineSession()
     @Query("SELECT * FROM dining_tables WHERE id = :id LIMIT 1")
     suspend fun getDiningTable(id: String): DiningTableEntity?
+    @Query("SELECT * FROM dining_tables")
+    suspend fun getDiningTables(): List<DiningTableEntity>
     @Query("SELECT * FROM dining_tables WHERE name = :name COLLATE NOCASE LIMIT 1")
     suspend fun getDiningTableByName(name: String): DiningTableEntity?
     @Query("SELECT COUNT(*) FROM dining_tables")
     suspend fun getDiningTableCount(): Int
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertDiningTable(table: DiningTableEntity)
+    @Transaction
+    suspend fun queueDiningTable(table: DiningTableEntity, outbox: OutboxEntity) {
+        insertDiningTable(table)
+        enqueueOutbox(outbox)
+    }
+    @Query("UPDATE dining_tables SET remoteId = :remoteId WHERE id = :localId")
+    suspend fun setDiningTableRemoteId(localId: String, remoteId: String): Int
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertDiningTables(tables: List<DiningTableEntity>)
     @Query("DELETE FROM dining_tables WHERE id = :id")
     suspend fun deleteDiningTable(id: String): Int
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert
     suspend fun insertTableOrder(order: TableOrderEntity): Long
-
-    @Transaction
-    suspend fun insertCommittedTableSale(sale: SaleEntity, order: TableOrderEntity) {
-        insertSales(listOf(sale))
-        insertTableOrder(order)
-    }
 
     @Query("DELETE FROM table_orders WHERE saleId = :saleId")
     suspend fun deleteTableOrderBySaleId(saleId: Long): Int
@@ -81,8 +153,28 @@ interface CounterPosDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertProduct(product: ProductEntity): Long
 
+    @Transaction
+    suspend fun queueProductChange(product: ProductEntity, outbox: OutboxEntity, counterStock: CounterStockEntity? = null) {
+        insertProduct(product)
+        if (counterStock != null) insertCounterStock(listOf(counterStock))
+        enqueueOutbox(outbox)
+    }
+    @Transaction
+    suspend fun queueProductChanges(product: ProductEntity, outboxItems: List<OutboxEntity>, counterStock: CounterStockEntity? = null) {
+        insertProduct(product)
+        if (counterStock != null) insertCounterStock(listOf(counterStock))
+        outboxItems.forEach { enqueueOutbox(it) }
+    }
+
+    @Query("UPDATE products SET remoteId = :remoteId WHERE catalogCode = :code")
+    suspend fun setProductRemoteId(code: String, remoteId: String): Int
+    @Query("UPDATE counter_stock SET productId = :remoteId WHERE catalogCode = :code")
+    suspend fun setCounterStockProductId(code: String, remoteId: String): Int
+
     @Query("SELECT * FROM products WHERE catalogCode = :code LIMIT 1")
     suspend fun getProductByCode(code: String): ProductEntity?
+    @Query("SELECT * FROM products WHERE remoteId = :remoteId LIMIT 1")
+    suspend fun getProductByRemoteId(remoteId: String): ProductEntity?
 
     @Query("DELETE FROM products WHERE catalogCode = :code")
     suspend fun deleteProductByCode(code: String): Int
@@ -114,14 +206,123 @@ interface CounterPosDao {
     @Query("UPDATE sales SET remoteId = :remoteId WHERE id = :saleId")
     suspend fun markSaleUploaded(saleId: Long, remoteId: String?)
 
+    @Query("UPDATE sales SET remoteId = :remoteId WHERE id = :localSaleId")
+    suspend fun setSaleRemoteId(localSaleId: Long, remoteId: String): Int
+
+    @Transaction
+    suspend fun queueSale(sale: SaleEntity, outbox: OutboxEntity, stockToDecrement: Int): Long? {
+        if (stockToDecrement < 0) return null
+        val product = getProductByCode(sale.catalogCode) ?: return null
+        if (!product.inMyStock || product.stockQuantity < stockToDecrement) return null
+        if (stockToDecrement > 0 && decrementStock(sale.catalogCode, stockToDecrement) != 1) return null
+        val localId = insertSale(sale)
+        enqueueOutbox(outbox.copy(localSaleId = localId))
+        return localId
+    }
+
+    @Transaction
+    suspend fun queueSaleAtCounter(
+        sale: SaleEntity,
+        outbox: OutboxEntity,
+        counterId: String,
+        stockToDecrement: Int,
+        perCounter: Boolean
+    ): Long? {
+        if (stockToDecrement < 0) return null
+        val product = getProductByCode(sale.catalogCode) ?: return null
+        if (!product.inMyStock) return null
+        if (perCounter) {
+            val stock = getCounterStockQuantity(counterId, sale.catalogCode) ?: return null
+            if (stock < stockToDecrement) return null
+            if (stockToDecrement > 0 && decrementCounterStock(counterId, sale.catalogCode, stockToDecrement) != 1) return null
+        } else {
+            if (product.stockQuantity < stockToDecrement) return null
+            if (stockToDecrement > 0 && decrementStock(sale.catalogCode, stockToDecrement) != 1) return null
+        }
+        val localId = insertSale(sale)
+        enqueueOutbox(outbox.copy(localSaleId = localId))
+        return localId
+    }
+
+    @Transaction
+    suspend fun queueTableSale(order: TableOrderEntity, sale: SaleEntity, outbox: OutboxEntity, stockToDecrement: Int): Long? {
+        if (stockToDecrement < 0 || getDiningTable(order.tableId) == null) return null
+        val product = getProductByCode(sale.catalogCode) ?: return null
+        if (!product.inMyStock || product.stockQuantity < stockToDecrement) return null
+        if (stockToDecrement > 0 && decrementStock(sale.catalogCode, stockToDecrement) != 1) return null
+        val localSaleId = insertSale(sale)
+        if (localSaleId <= 0L) return null
+        insertTableOrder(order.copy(saleId = localSaleId))
+        enqueueOutbox(outbox.copy(localSaleId = localSaleId))
+        return localSaleId
+    }
+
+    @Transaction
+    suspend fun queueTableSaleAtCounter(
+        order: TableOrderEntity,
+        sale: SaleEntity,
+        outbox: OutboxEntity,
+        counterId: String,
+        stockToDecrement: Int,
+        perCounter: Boolean
+    ): Long? {
+        if (stockToDecrement < 0 || getDiningTable(order.tableId) == null) return null
+        val product = getProductByCode(sale.catalogCode) ?: return null
+        if (!product.inMyStock) return null
+        if (perCounter) {
+            val stock = getCounterStockQuantity(counterId, sale.catalogCode) ?: return null
+            if (stock < stockToDecrement) return null
+            if (stockToDecrement > 0 && decrementCounterStock(counterId, sale.catalogCode, stockToDecrement) != 1) return null
+        } else {
+            if (product.stockQuantity < stockToDecrement) return null
+            if (stockToDecrement > 0 && decrementStock(sale.catalogCode, stockToDecrement) != 1) return null
+        }
+        val localSaleId = insertSale(sale)
+        if (localSaleId <= 0L) return null
+        insertTableOrder(order.copy(saleId = localSaleId))
+        enqueueOutbox(outbox.copy(localSaleId = localSaleId))
+        return localSaleId
+    }
+
     @Query("SELECT * FROM sales WHERE undone = 0 ORDER BY createdAt DESC, id DESC LIMIT 1")
     suspend fun getLatestActiveSale(): SaleEntity?
+    @Query("SELECT * FROM sales WHERE id = :saleId LIMIT 1")
+    suspend fun getSaleById(saleId: Long): SaleEntity?
 
     @Query("UPDATE products SET stockQuantity = stockQuantity + :quantity WHERE catalogCode = :code AND inMyStock = 1")
     suspend fun restoreStock(code: String, quantity: Int): Int
 
     @Query("UPDATE sales SET undone = 1 WHERE id = :saleId AND undone = 0")
     suspend fun markSaleUndone(saleId: Long): Int
+
+    @Transaction
+    suspend fun cancelUnsentSale(sale: SaleEntity, perCounter: Boolean): Boolean {
+        if (sale.undone || outboxForSale(sale.id) == null) return false
+        val restore = if (sale.unitName.equals("Bottle", true) || sale.unitName.equals("Can", true)) sale.quantity else 1
+        val restored = if (perCounter) {
+            val counterId = sale.sourceCounterId ?: return false
+            incrementCounterStock(counterId, sale.catalogCode, restore) == 1
+        } else restoreStock(sale.catalogCode, restore) == 1
+        if (!restored) return false
+        cancelOutboxForSale(sale.id)
+        deleteTableOrderBySaleId(sale.id)
+        return markSaleUndone(sale.id) == 1
+    }
+
+    @Transaction
+    suspend fun queueUndoSale(sale: SaleEntity, outbox: OutboxEntity, perCounter: Boolean): Boolean {
+        if (sale.undone || sale.remoteId.isNullOrBlank()) return false
+        val restore = if (sale.unitName.equals("Bottle", true) || sale.unitName.equals("Can", true)) sale.quantity else 1
+        val restored = if (perCounter) {
+            val counterId = sale.sourceCounterId ?: return false
+            incrementCounterStock(counterId, sale.catalogCode, restore) == 1
+        } else restoreStock(sale.catalogCode, restore) == 1
+        if (!restored) return false
+        deleteTableOrderBySaleId(sale.id)
+        if (markSaleUndone(sale.id) != 1) return false
+        enqueueOutbox(outbox.copy(localSaleId = sale.id))
+        return true
+    }
 
     @Query("UPDATE products SET photoOverrideUri = :uri WHERE catalogCode = :code")
     suspend fun updatePhotoOverride(code: String, uri: String): Int
