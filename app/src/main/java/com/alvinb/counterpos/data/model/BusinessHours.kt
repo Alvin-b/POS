@@ -4,7 +4,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
 import java.util.Locale
-import java.util.TimeZone
 
 /**
  * Represents a single time of day in hours and minutes.
@@ -43,9 +42,9 @@ data class TimeSlot(
 data class DayBusinessHours(
     val dayOfWeek: Int, // Calendar.SUNDAY (1) .. Calendar.SATURDAY (7)
     val dayName: String, // e.g. "Monday"
-    val isOpen: Boolean = true,
-    val openTime: TimeSlot = TimeSlot(8, 0),
-    val closeTime: TimeSlot = TimeSlot(23, 0)
+    val isOpen: Boolean = false,
+    val openTime: TimeSlot = TimeSlot(0, 0),
+    val closeTime: TimeSlot = TimeSlot(0, 0)
 ) {
     /**
      * True if the shift crosses midnight (e.g. open at 18:00, close at 04:00 next day).
@@ -65,9 +64,9 @@ data class DayBusinessHours(
         fun fromJson(json: JSONObject): DayBusinessHours {
             val dow = json.optInt("day_of_week", Calendar.MONDAY)
             val name = json.optString("day_name", defaultDayName(dow))
-            val open = json.optBoolean("is_open", true)
-            val openSlot = TimeSlot.parse(json.optString("open_time", "08:00"), 8, 0)
-            val closeSlot = TimeSlot.parse(json.optString("close_time", "23:00"), 23, 0)
+            val open = json.optBoolean("is_open", false)
+            val openSlot = TimeSlot.parse(json.optString("open_time", "00:00"), 0, 0)
+            val closeSlot = TimeSlot.parse(json.optString("close_time", "00:00"), 0, 0)
             return DayBusinessHours(
                 dayOfWeek = dow,
                 dayName = name,
@@ -94,9 +93,9 @@ data class DayBusinessHours(
  * Business hours configuration model for a business tenant.
  */
 data class BusinessHours(
-    val isEnabled: Boolean = true,
-    val weeklySchedule: List<DayBusinessHours> = defaultWeeklySchedule(),
-    val timezoneId: String = TimeZone.getDefault().id
+    val isEnabled: Boolean = false,
+    val weeklySchedule: List<DayBusinessHours> = closedWeeklySchedule(),
+    val timezoneId: String = "Africa/Nairobi"
 ) {
     fun toJson(): String {
         val root = JSONObject()
@@ -111,6 +110,11 @@ data class BusinessHours(
     }
 
     companion object {
+        val Unrestricted: BusinessHours = BusinessHours()
+
+        private fun closedWeeklySchedule(): List<DayBusinessHours> =
+            defaultWeeklySchedule(0, 0, 0, 0).map { it.copy(isOpen = false) }
+
         fun defaultWeeklySchedule(
             openHour: Int = 8,
             openMinute: Int = 0,
@@ -147,11 +151,11 @@ data class BusinessHours(
         )
 
         fun fromJson(jsonStr: String?): BusinessHours {
-            if (jsonStr.isNullOrBlank()) return BusinessHours()
+            if (jsonStr.isNullOrBlank()) return Unrestricted
             return runCatching {
                 val obj = JSONObject(jsonStr)
-                val enabled = obj.optBoolean("is_enabled", true)
-                val tz = obj.optString("timezone_id", TimeZone.getDefault().id)
+                val enabled = obj.optBoolean("is_enabled", false)
+                val tz = obj.optString("timezone_id", "Africa/Nairobi")
                 val arr = obj.optJSONArray("weekly_schedule")
                 val schedule = if (arr != null && arr.length() > 0) {
                     val list = mutableListOf<DayBusinessHours>()
@@ -160,10 +164,10 @@ data class BusinessHours(
                     }
                     list
                 } else {
-                    defaultWeeklySchedule()
+                    closedWeeklySchedule()
                 }
-                BusinessHours(isEnabled = enabled, weeklySchedule = schedule, timezoneId = tz)
-            }.getOrDefault(BusinessHours())
+                BusinessHours(isEnabled = enabled && schedule.any(DayBusinessHours::isOpen), weeklySchedule = schedule, timezoneId = tz)
+            }.getOrDefault(Unrestricted)
         }
     }
 }

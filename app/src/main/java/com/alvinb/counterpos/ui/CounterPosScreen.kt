@@ -294,7 +294,7 @@ fun CounterPosWorkspace(
                 canAddNewProduct = canReceiveStock,
                 canManageTeam = role in setOf("owner", "manager") && "employee_management" in enabledFeatures,
                 onManageTeam = viewModel::openTeamPanel,
-                onOpenStaffManagement = viewModel::openStaffManagement,
+                onOpenStaffManagement = { viewModel.openStaffManagement() },
                 counters = serviceCounters,
                 selectedCounterId = state.selectedCounterId,
                 onCounterSelect = viewModel::selectCounter
@@ -653,6 +653,7 @@ fun CounterPosWorkspace(
                 businessName = session.activeBusiness?.shopName.orEmpty(),
                 role = role,
                 businessType = session.activeBusiness?.businessType ?: "big_club",
+                startOnBusinessHours = state.staffManagementStartsOnHours,
                 onClose = viewModel::closeStaffManagement,
                 onLoadMembers = { viewModel.loadEmployeeMembers() },
                 onIssueWaiterPass = { r -> viewModel.issueEmployeePass(r) },

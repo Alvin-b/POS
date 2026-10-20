@@ -112,7 +112,13 @@ fun CounterPosApp(
                 onClearError = viewModel::clearStartupError
             )
             session.activeBusiness != null && !session.activeBusiness?.role.equals("owner", ignoreCase = true) && shouldShowEmployeeAccessLocked(session.activeBusiness?.employmentStatus) -> EmployeeAccessBlockedScreen(session.activeBusiness, viewModel::signOut)
-            session.activeBusiness != null && !session.activeBusiness?.role.equals("owner", ignoreCase = true) && state.isAccessLocked -> WorkingHoursLockedScreen(state.accessLockMessage.orEmpty(), viewModel::refreshAccessNow, viewModel::signOut)
+            session.activeBusiness != null && state.isAccessLocked -> WorkingHoursLockedScreen(
+                message = state.accessLockMessage.orEmpty(),
+                ownerCanManage = session.activeBusiness?.role.equals("owner", ignoreCase = true),
+                onCheckAgain = viewModel::refreshAccessNow,
+                onOpenOwnerSettings = { viewModel.openStaffManagement(openHours = true) },
+                onSignOut = viewModel::signOut
+            )
             session.activeBusiness != null -> CounterPosWorkspace(viewModel, themeMode, onThemeModeChange)
             session.isPlatformAdmin -> SuperadminDashboardScreen(
                 viewModel = viewModel,
@@ -317,12 +323,21 @@ private fun EmployeeAccessBlockedScreen(
 }
 
 @Composable
-private fun WorkingHoursLockedScreen(message: String, onCheckAgain: () -> Unit, onSignOut: () -> Unit) {
+private fun WorkingHoursLockedScreen(
+    message: String,
+    ownerCanManage: Boolean,
+    onCheckAgain: () -> Unit,
+    onOpenOwnerSettings: () -> Unit,
+    onSignOut: () -> Unit
+) {
     Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Workspace locked", fontSize = 28.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        Text("Business hours are closed", fontSize = 28.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
         Text(message, modifier = Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         Spacer(Modifier.height(20.dp))
-        Button(onClick = onCheckAgain, modifier = Modifier.fillMaxWidth()) { Text("Check active hours") }
+        Button(onClick = onCheckAgain, modifier = Modifier.fillMaxWidth()) { Text("Check access again") }
+        if (ownerCanManage) {
+            OutlinedButton(onClick = onOpenOwnerSettings, modifier = Modifier.fillMaxWidth()) { Text("Manage business hours") }
+        }
         TextButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
     }
 }

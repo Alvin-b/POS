@@ -18,6 +18,7 @@ import com.alvinb.counterpos.data.remote.CounterReportRow
 import com.alvinb.counterpos.data.remote.ServiceCounter
 import com.alvinb.counterpos.data.remote.SupabaseApiException
 import com.alvinb.counterpos.data.remote.SupabaseRestClient
+import com.alvinb.counterpos.data.model.TimeSlot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -57,18 +58,7 @@ class CounterPosRepository(
     private val remote: SupabaseRestClient
 ) {
     private val offlineAccountPrefs = context.getSharedPreferences("counterpos_offline_account", Context.MODE_PRIVATE)
-    private val businessHoursPrefs = context.getSharedPreferences("counterpos_business_hours", Context.MODE_PRIVATE)
 
-    fun getBusinessHours(shopId: String? = activeBusiness?.shopId): BusinessHours {
-        val key = "hours_${shopId ?: "default"}"
-        val raw = businessHoursPrefs.getString(key, null)
-        return BusinessHours.fromJson(raw)
-    }
-
-    fun saveBusinessHours(hours: BusinessHours, shopId: String? = activeBusiness?.shopId) {
-        val key = "hours_${shopId ?: "default"}"
-        businessHoursPrefs.edit().putString(key, hours.toJson()).apply()
-    }
     data class AccessChallenge(
         val token: String,
         val expiresAtMillis: Long
@@ -201,6 +191,58 @@ class CounterPosRepository(
         remote.listShopMembers(shop.shopId)
     }
 
+    suspend fun loadBusinessHours(): BusinessHours = withContext(Dispatchers.IO) {
+        val shop = activeBusiness ?: throw IllegalStateException("Open a business first.")
+        remote.getBusinessHours(shop.shopId).toBusinessHours()
+    }
+
+    suspend fun saveBusinessHours(hours: BusinessHours): BusinessHours = withContext(Dispatchers.IO) {
+        val shop = activeBusiness ?: throw IllegalStateException("Open a business first.")
+        require(shop.role == "owner") { "Only the business owner can change business hours." }
+        val schedule = hours.weeklySchedule
+        require(schedule.size == 7 && schedule.map { it.dayOfWeek }.toSet() == (1..7).toSet()) {
+            "Configure each weekday from Monday through Sunday exactly once."
+        }
+        require(!hours.isEnabled || schedule.none { it.isOpen && it.openTime == it.closeTime }) {
+            "Opening and closing times cannot be the same on an enabled day."
+        }
+        val rows = JSONArray().apply {
+            schedule.sortedBy { it.dayOfWeek }.forEach { day ->
+                put(JSONObject().apply {
+                    put("weekday", day.dayOfWeek - 1)
+                    put("open_time", day.openTime.format())
+                    put("close_time", day.closeTime.format())
+                    put("enabled", day.isOpen)
+                })
+            }
+        }
+        remote.setBusinessHours(shop.shopId, hours.isEnabled, rows)
+        remote.getBusinessHours(shop.shopId).toBusinessHours()
+    }
+
+    private fun JSONObject.toBusinessHours(): BusinessHours {
+        val rows = optJSONArray("days") ?: JSONArray()
+        val byWeekday = buildMap {
+            for (index in 0 until rows.length()) {
+                val row = rows.optJSONObject(index) ?: continue
+                put(row.optInt("weekday", -1), row)
+            }
+        }
+        val weeklySchedule = BusinessHours.defaultWeeklySchedule().map { template ->
+            val row = byWeekday[template.dayOfWeek - 1]
+            template.copy(
+                isOpen = row?.optBoolean("enabled", false) ?: false,
+                openTime = TimeSlot.parse(row?.optString("open_time") ?: template.openTime.format()),
+                closeTime = TimeSlot.parse(row?.optString("close_time") ?: template.closeTime.format())
+            )
+        }
+        return BusinessHours(
+            isEnabled = optBoolean("is_enabled", false),
+            weeklySchedule = weeklySchedule,
+            timezoneId = optString("timezone").ifBlank { "Africa/Nairobi" }
+        )
+    }
+
     suspend fun createEmployeeAccessPass(role: String): JSONObject = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: throw IllegalStateException("Open a business first.")
         require(shop.role == "owner" || shop.role == "manager") { "Only an owner or manager can issue staff passes." }
@@ -330,7 +372,6 @@ class CounterPosRepository(
 
     suspend fun canOperateNow(): Boolean = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: return@withContext true
-        if (shop.role == "owner") return@withContext true
         remote.canSellForShop(shop.shopId)
     }
 

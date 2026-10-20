@@ -90,15 +90,47 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.alvinb/counterpos/data.model.BusinessHours
-import com.alvinb/counterpos.data.model.DayBusinessHours
-import com.alvinb/counterpos.data.model.TimeSlot
-import com.alvinb/counterpos.data.service.BusinessHoursValidationResult
-import com.alvinb/counterpos.data.service.BusinessHoursValidationService
+import com.alvinb.counterpos.data.model.BusinessHours
+import com.alvinb.counterpos.data.model.DayBusinessHours
+import com.alvinb.counterpos.data.model.TimeSlot
+import com.alvinb.counterpos.data.service.BusinessHoursValidationResult
+import com.alvinb.counterpos.data.service.BusinessHoursValidationService
 import kotlinx.coroutines.launch
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
 import java.util.Locale
+
+private val EmployeeWeekdayNames = listOf("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
+private val EmployeeTimePattern = Regex("^(?:[01]\\d|2[0-3]):[0-5]\\d$")
+
+private fun readEmployeeSchedule(member: JSONObject): List<EmployeeScheduleDay> {
+    val rows = member.optJSONArray("schedule") ?: JSONArray()
+    val byWeekday = buildMap {
+        for (index in 0 until rows.length()) {
+            val row = rows.optJSONObject(index) ?: continue
+            val weekday = row.optInt("weekday", -1)
+            if (weekday in 0..6) put(weekday, row)
+        }
+    }
+    return (0..6).map { weekday ->
+        val row = byWeekday[weekday]
+        EmployeeScheduleDay(
+            weekday = weekday,
+            start = row?.optString("start_time").orEmpty().take(5),
+            end = row?.optString("end_time").orEmpty().take(5),
+            enabled = row?.optBoolean("enabled", false) ?: false
+        )
+    }
+}
+
+private fun employeeScheduleSummary(member: JSONObject): String {
+    val enabled = readEmployeeSchedule(member).filter(EmployeeScheduleDay::enabled)
+    if (enabled.isEmpty()) return "No personal duty hours configured"
+    return enabled.joinToString(" · ") { day ->
+        "${EmployeeWeekdayNames[day.weekday].take(3)} ${day.start}–${day.end}"
+    }
+}
 
 private enum class StaffManagementTab(val title: String) {
     ENROLL("Enroll Waiter"),
@@ -117,6 +149,7 @@ fun StaffManagementScreen(
     businessName: String,
     role: String,
     businessType: String,
+    startOnBusinessHours: Boolean = false,
     onClose: () -> Unit,
     onLoadMembers: () -> Unit,
     onIssueWaiterPass: (String) -> Unit,
@@ -136,8 +169,11 @@ fun StaffManagementScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val ownerCanEdit = role.equals("owner", ignoreCase = true) || role.equals("manager", ignoreCase = true)
+    val ownerCanEditHours = role.equals("owner", ignoreCase = true)
 
-    var selectedTab by remember { mutableStateOf(StaffManagementTab.ENROLL) }
+    var selectedTab by remember(startOnBusinessHours) {
+        mutableStateOf(if (startOnBusinessHours) StaffManagementTab.HOURS else StaffManagementTab.ENROLL)
+    }
     var enrollmentMode by remember { mutableStateOf(EnrollmentMode.PASSKEY) }
     var selectedRoleToEnroll by remember { mutableStateOf("cashier") }
 
@@ -157,11 +193,19 @@ fun StaffManagementScreen(
     LaunchedEffect(Unit) {
         onLoadMembers()
     }
+    LaunchedEffect(state.notice, state.actionError) {
+        when {
+            !state.actionError.isNullOrBlank() -> snackbarHostState.showSnackbar(state.actionError)
+            state.notice == "Business hours saved." -> snackbarHostState.showSnackbar("Business hours saved. POS access rules updated.")
+        }
+    }
 
     // Filter staff members
     val allStaffMembers = remember(state.employeeMembers) {
         state.employeeMembers.mapNotNull { member ->
-            val userId = member.optString("user_id").ifBlank { member.optString("id") }
+            val userId = member.optString("user_id").ifBlank {
+                member.optString("member_user_id").ifBlank { member.optString("id") }
+            }
             val email = member.optString("email").trim()
             val staffRole = member.optString("role", "cashier")
             val status = member.optString("employment_status", member.optString("status", "active"))
@@ -319,10 +363,11 @@ fun StaffManagementScreen(
                         hours = businessHoursDraft,
                         onHoursChange = { businessHoursDraft = it },
                         validationResult = liveValidationResult,
-                        ownerCanEdit = ownerCanEdit,
+                        ownerCanEdit = ownerCanEditHours,
+                        isSaving = state.isSavingBusinessHours,
+                        error = state.actionError,
                         onSaveHours = {
                             onSaveBusinessHours(businessHoursDraft)
-                            scope.launch { snackbarHostState.showSnackbar("Business hours saved. POS access rules updated.") }
                         }
                     )
                 }
@@ -734,7 +779,9 @@ private fun StaffRosterTabContent(
             }
         } else {
             staffList.forEach { member ->
-                val userId = member.optString("user_id").ifBlank { member.optString("id") }
+                val userId = member.optString("user_id").ifBlank {
+                    member.optString("member_user_id").ifBlank { member.optString("id") }
+                }
                 val email = member.optString("email").trim()
                 val name = member.optString("name", member.optString("full_name", email)).ifBlank { "Staff Member" }
                 val role = member.optString("role", "cashier")
@@ -750,7 +797,7 @@ private fun StaffRosterTabContent(
                     role = role,
                     isSuspended = isSuspended,
                     isExpanded = isExpanded,
-                    ownerCanEdit = ownerCanEdit,
+                    ownerCanEdit = ownerCanEdit && !role.equals("owner", ignoreCase = true),
                     onToggleExpand = { onToggleExpand(userId) },
                     onToggleSuspend = {
                         val newStatus = if (isSuspended) "active" else "suspended"
@@ -908,8 +955,19 @@ private fun StaffMemberCard(
                 }
             }
 
-            // Expandable duty schedule editor for this staff member
+            Text(
+                text = employeeScheduleSummary(member),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            // Per-weekday drafts initialize from the persisted member schedule; no sample shifts are shown.
             AnimatedVisibility(visible = isExpanded) {
+                var scheduleDraft by remember(member.toString()) { mutableStateOf(readEmployeeSchedule(member)) }
+                var scheduleError by remember(member.toString()) { mutableStateOf<String?>(null) }
+
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -917,52 +975,84 @@ private fun StaffMemberCard(
                         .clip(RoundedCornerShape(12.dp))
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
                         .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(9.dp)
                 ) {
                     Text("Staff Duty Shift Schedule", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    Text("Out-of-shift hours lock the POS app automatically for this waiter until the next shift.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "Each day can have its own shift. Outside an enabled shift, this staff account is locked.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
 
-                    var shiftStart by remember { mutableStateOf("08:00") }
-                    var shiftEnd by remember { mutableStateOf("23:00") }
-                    var shiftEnabled by remember { mutableStateOf(true) }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        OutlinedTextField(
-                            value = shiftStart,
-                            onValueChange = { shiftStart = it.take(5) },
-                            label = { Text("Start (HH:mm)") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = shiftEnd,
-                            onValueChange = { shiftEnd = it.take(5) },
-                            label = { Text("End (HH:mm)") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
+                    scheduleDraft.forEach { day ->
+                        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Switch(
+                                    checked = day.enabled,
+                                    enabled = ownerCanEdit,
+                                    onCheckedChange = { enabled ->
+                                        scheduleDraft = scheduleDraft.map {
+                                            if (it.weekday == day.weekday) it.copy(enabled = enabled) else it
+                                        }
+                                    }
+                                )
+                                Text(EmployeeWeekdayNames[day.weekday], fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                                Text(if (day.enabled) "On duty" else "Off", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(
+                                    value = day.start,
+                                    onValueChange = { value ->
+                                        scheduleDraft = scheduleDraft.map {
+                                            if (it.weekday == day.weekday) it.copy(start = value.take(5)) else it
+                                        }
+                                    },
+                                    label = { Text("Start (HH:mm)") },
+                                    singleLine = true,
+                                    enabled = ownerCanEdit,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                OutlinedTextField(
+                                    value = day.end,
+                                    onValueChange = { value ->
+                                        scheduleDraft = scheduleDraft.map {
+                                            if (it.weekday == day.weekday) it.copy(end = value.take(5)) else it
+                                        }
+                                    },
+                                    label = { Text("End (HH:mm)") },
+                                    singleLine = true,
+                                    enabled = ownerCanEdit,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Enforce for all workdays", fontSize = 12.sp)
-                        Switch(checked = shiftEnabled, onCheckedChange = { shiftEnabled = it })
-                    }
-
+                    scheduleError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
                     Button(
                         onClick = {
-                            // Apply schedule for Mon-Sun (weekdays 0..6)
-                            for (w in 0..6) {
-                                onSaveSchedule(userId, w, shiftStart.trim(), shiftEnd.trim(), shiftEnabled)
+                            val invalid = scheduleDraft.any { day ->
+                                day.enabled && (
+                                    !EmployeeTimePattern.matches(day.start) ||
+                                        !EmployeeTimePattern.matches(day.end) || day.start == day.end
+                                    )
+                            }
+                            if (invalid) {
+                                scheduleError = "Enter valid HH:mm start and end times for every enabled day."
+                            } else {
+                                scheduleDraft.forEach { day ->
+                                    val startTime = day.start.takeIf { EmployeeTimePattern.matches(it) } ?: "00:00"
+                                    val endTime = day.end.takeIf { EmployeeTimePattern.matches(it) } ?: "00:00"
+                                    onSaveSchedule(userId, day.weekday, startTime, endTime, day.enabled)
+                                }
+                                scheduleError = null
                             }
                         },
+                        enabled = ownerCanEdit,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("Save Duty Schedule", fontSize = 12.sp)
@@ -983,6 +1073,8 @@ private fun BusinessHoursTabContent(
     onHoursChange: (BusinessHours) -> Unit,
     validationResult: BusinessHoursValidationResult,
     ownerCanEdit: Boolean,
+    isSaving: Boolean,
+    error: String?,
     onSaveHours: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -1114,6 +1206,10 @@ private fun BusinessHoursTabContent(
             ) {
                 Text("Weekly Operating Schedule", fontWeight = FontWeight.Bold, fontSize = 14.sp)
 
+                if (!error.isNullOrBlank()) {
+                    Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+
                 hours.weeklySchedule.forEachIndexed { index, daySchedule ->
                     DayScheduleEditorRow(
                         day = daySchedule,
@@ -1131,15 +1227,19 @@ private fun BusinessHoursTabContent(
 
                 Button(
                     onClick = onSaveHours,
-                    enabled = ownerCanEdit,
+                    enabled = ownerCanEdit && !isSaving,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 8.dp)
                         .testTag("save_business_hours_button")
                 ) {
-                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                    if (isSaving) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                    }
                     Spacer(Modifier.width(8.dp))
-                    Text("Save & Enforce Business Hours")
+                    Text(if (isSaving) "Saving…" else "Save & Enforce Business Hours")
                 }
             }
         }

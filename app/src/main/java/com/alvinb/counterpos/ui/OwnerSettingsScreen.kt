@@ -536,6 +536,16 @@ private fun WaiterCard(
     val normalizedStatus = status.lowercase(Locale.ROOT)
     val canReactivate = normalizedStatus in setOf("suspended", "locked")
     val canLogOut = normalizedStatus == "active"
+    val dutySummary = remember(member.toString()) {
+        val enabledDays = readEmployeeSchedule(member).filter(EmployeeScheduleDay::enabled)
+        if (enabledDays.isEmpty()) {
+            "Duty hours: no personal schedule configured (unrestricted)"
+        } else {
+            "Duty hours: " + enabledDays.joinToString(" · ") { day ->
+                "${SettingsWeekdayLabels[day.weekday].take(3)} ${day.start}–${day.end}"
+            }
+        }
+    }
 
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -549,6 +559,13 @@ private fun WaiterCard(
                         "Waiter · ${if (status.isBlank()) "STATUS UNAVAILABLE" else status.uppercase(Locale.ROOT)}",
                         color = if (normalizedStatus == "active") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall
+                    )
+                    Text(
+                        dutySummary,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 TextButton(onClick = onToggleExpanded, enabled = ownerCanEdit && userId.isNotBlank()) {
@@ -660,10 +677,14 @@ private fun WaiterScheduleEditor(
             Button(
                 onClick = {
                     val enabledDays = days.filter(EmployeeScheduleDay::enabled)
-                    val invalid = enabledDays.any { !SettingsHourMinutePattern.matcher(it.start.trim()).matches() || !SettingsHourMinutePattern.matcher(it.end.trim()).matches() }
+                    val invalid = enabledDays.any {
+                        !SettingsHourMinutePattern.matcher(it.start.trim()).matches() ||
+                            !SettingsHourMinutePattern.matcher(it.end.trim()).matches() ||
+                            it.start.trim() == it.end.trim()
+                    }
                     validationError = when {
                         enabledDays.isEmpty() -> "Enable at least one day, or clear the schedule for unrestricted access."
-                        invalid -> "Every enabled day needs valid HH:mm start and end values."
+                        invalid -> "Every enabled day needs distinct, valid HH:mm start and end values."
                         else -> null
                     }
                     if (validationError == null) onSave(userId, days)
@@ -734,8 +755,8 @@ private fun readEmployeeSchedule(member: JSONObject): List<EmployeeScheduleDay> 
         val row = schedule.optJSONObject(index) ?: continue
         val weekday = readWeekday(row)
         if (weekday !in 0..6) continue
-        val start = firstNonBlank(row, "start", "start_time", "startTime")
-        val end = firstNonBlank(row, "end", "end_time", "endTime")
+        val start = firstNonBlank(row, "start", "start_time", "startTime").take(5)
+        val end = firstNonBlank(row, "end", "end_time", "endTime").take(5)
         val enabled = row.has("enabled") && row.optBoolean("enabled", false)
         days[weekday] = EmployeeScheduleDay(weekday, start, end, enabled)
     }
