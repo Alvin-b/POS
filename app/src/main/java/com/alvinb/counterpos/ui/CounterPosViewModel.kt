@@ -16,6 +16,9 @@ import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.SaleUnit
 import com.alvinb.counterpos.data.local.entity.parseSaleUnits
 import com.alvinb.counterpos.data.local.entity.serializeSaleUnits
+import com.alvinb.counterpos.data.model.BusinessHours
+import com.alvinb.counterpos.data.service.BusinessHoursValidationResult
+import com.alvinb.counterpos.data.service.BusinessHoursValidationService
 import com.alvinb.counterpos.ui.scanner.ScannerMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -94,6 +97,10 @@ data class CounterPosUiState(
     val accessLockMessage: String? = null,
     val employeePasskey: String? = null,
     val adminEnrollmentCredential: AdminEnrollmentCredential? = null,
+    val isStaffManagementOpen: Boolean = false,
+    val waiterEnrollmentQrPayload: String? = null,
+    val isGeneratingEnrollmentQr: Boolean = false,
+    val businessHours: BusinessHours = BusinessHours(),
 
     // Sale sheet
     val selectedSaleCode: String? = null,
@@ -143,6 +150,7 @@ class CounterPosViewModel(
 
     private val _uiState = MutableStateFlow(CounterPosUiState())
     val uiState = _uiState.asStateFlow()
+    private val businessHoursValidationService = BusinessHoursValidationService()
     private var mutationInProgress = false
     private var reconnectSyncJob: Job? = null
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
@@ -159,6 +167,12 @@ class CounterPosViewModel(
 
     init {
         runCatching { connectivityManager.registerDefaultNetworkCallback(networkCallback) }
+        viewModelScope.launch {
+            repository.session.collect { sess ->
+                val hours = repository.getBusinessHours(sess.activeBusiness?.shopId)
+                _uiState.update { it.copy(businessHours = hours) }
+            }
+        }
         viewModelScope.launch {
             try {
                 repository.restoreSession()
@@ -345,39 +359,110 @@ class CounterPosViewModel(
 
     fun closeTeamPanel() = _uiState.update { it.copy(isTeamPanelOpen = false, actionError = null) }
 
+    fun openStaffManagement() = _uiState.update {
+        it.copy(isStaffManagementOpen = true, actionError = null)
+    }.also {
+        loadEmployeeMembers()
+    }
+
+    fun closeStaffManagement() = _uiState.update {
+        it.copy(isStaffManagementOpen = false, actionError = null, waiterEnrollmentQrPayload = null)
+    }
+
+    fun saveBusinessHours(hours: BusinessHours) {
+        val shopId = session.value.activeBusiness?.shopId
+        repository.saveBusinessHours(hours, shopId)
+        _uiState.update { it.copy(businessHours = hours, notice = "Business hours configuration saved.") }
+        refreshAccessNow()
+    }
+
+    fun generateWaiterEnrollmentQr(role: String = "cashier") = viewModelScope.launch {
+        if (_uiState.value.isGeneratingEnrollmentQr) return@launch
+        _uiState.update { it.copy(isGeneratingEnrollmentQr = true, actionError = null) }
+        try {
+            val pass = repository.createEmployeeAccessPass(role)
+            val passkey = pass.optString("passkey").trim()
+            require(passkey.isNotBlank()) { "Server did not return a waiter passkey." }
+            val payload = "CPX1.$passkey"
+            _uiState.update {
+                it.copy(
+                    waiterEnrollmentQrPayload = payload,
+                    employeePasskey = passkey,
+                    actionError = null,
+                    notice = "Waiter enrollment QR code generated. Waiter can scan it from their sign-in screen."
+                )
+            }
+        } catch (e: Exception) {
+            _uiState.update { it.copy(actionError = e.message ?: "Could not generate enrollment QR") }
+        } finally {
+            _uiState.update { it.copy(isGeneratingEnrollmentQr = false) }
+        }
+    }
+
+    fun clearWaiterEnrollmentQr() = _uiState.update { it.copy(waiterEnrollmentQrPayload = null) }
+
     private fun monitorActiveHours() = viewModelScope.launch {
         while (isActive) {
-            runCatching { repository.canOperateNow() }
-                .onSuccess { allowed ->
-                    _uiState.update { state ->
-                        state.copy(
-                            isAccessLocked = !allowed,
-                            accessLockMessage = if (allowed) null else "This employee account is outside its configured working hours. The workspace will reopen automatically when the next active period begins."
-                        )
-                    }
+            val isOwner = session.value.activeBusiness?.role == "owner"
+            val hours = _uiState.value.businessHours
+            val validation = businessHoursValidationService.validate(hours)
+
+            if (!isOwner && hours.isEnabled && !validation.isOpen) {
+                val closed = validation as? BusinessHoursValidationResult.Closed
+                _uiState.update { state ->
+                    state.copy(
+                        isAccessLocked = true,
+                        accessLockMessage = "The POS is locked outside configured business hours (${closed?.reason ?: "Closed"}). Reopens ${closed?.nextOpeningDay ?: "upcoming shift"} at ${closed?.nextOpeningTime ?: "--:--"}."
+                    )
                 }
-                .onFailure {
-                    if (session.value.activeBusiness?.role != "owner") {
+            } else {
+                runCatching { repository.canOperateNow() }
+                    .onSuccess { allowed ->
                         _uiState.update { state ->
                             state.copy(
-                                isAccessLocked = true,
-                                accessLockMessage = "Waiter access could not be verified. Reconnect to the internet to check your account status and duty hours."
+                                isAccessLocked = !allowed,
+                                accessLockMessage = if (allowed) null else "This employee account is outside its configured working hours. The workspace will reopen automatically when the next active period begins."
                             )
                         }
                     }
-                }
+                    .onFailure {
+                        if (!isOwner) {
+                            _uiState.update { state ->
+                                state.copy(
+                                    isAccessLocked = true,
+                                    accessLockMessage = "Waiter access could not be verified. Reconnect to the internet to check your account status and duty hours."
+                                )
+                            }
+                        }
+                    }
+            }
             delay(30_000)
         }
     }
 
     fun refreshAccessNow() = viewModelScope.launch {
+        val isOwner = session.value.activeBusiness?.role == "owner"
+        val hours = _uiState.value.businessHours
+        val validation = businessHoursValidationService.validate(hours)
+
+        if (!isOwner && hours.isEnabled && !validation.isOpen) {
+            val closed = validation as? BusinessHoursValidationResult.Closed
+            _uiState.update { state ->
+                state.copy(
+                    isAccessLocked = true,
+                    accessLockMessage = "The POS is locked outside configured business hours (${closed?.reason ?: "Closed"}). Reopens ${closed?.nextOpeningDay ?: "upcoming shift"} at ${closed?.nextOpeningTime ?: "--:--"}."
+                )
+            }
+            return@launch
+        }
+
         runCatching { repository.canOperateNow() }
             .onSuccess { allowed -> _uiState.update { it.copy(isAccessLocked = !allowed, accessLockMessage = if (allowed) null else "You are outside your configured working hours.") } }
             .onFailure { error ->
                 _uiState.update {
                     it.copy(
-                        isAccessLocked = session.value.activeBusiness?.role != "owner",
-                        accessLockMessage = if (session.value.activeBusiness?.role != "owner") {
+                        isAccessLocked = !isOwner,
+                        accessLockMessage = if (!isOwner) {
                             "Waiter access could not be verified. Reconnect to the internet to check your account status and duty hours."
                         } else null,
                         actionError = error.message ?: "Could not verify working hours"

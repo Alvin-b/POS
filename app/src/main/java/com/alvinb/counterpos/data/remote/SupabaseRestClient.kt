@@ -203,16 +203,17 @@ class SupabaseRestClient(context: Context) {
             val rows = json.optJSONArray("memberships") ?: JSONArray()
             for (index in 0 until rows.length()) {
                 rows.optJSONObject(index)?.let { row ->
-                    val bType = row.optString("business_type", "big_club")
-                    val counterCount = row.optInt("counter_count", 1)
-                    val defaultFlags = if (bType == "counter_seller") {
-                        setOf("employee_management", "working_hours", "fifo_inventory", "sales_analytics")
-                    } else {
+                    val bType = row.optString("business_type", "big_club").trim()
+                    val isClub = bType.equals("big_club", ignoreCase = true) || bType.equals("club", ignoreCase = true)
+                    val counterCount = if (isClub) row.optInt("counter_count", 1).coerceAtLeast(1) else 1
+                    val defaultFlags = if (isClub) {
                         setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics")
+                    } else {
+                        setOf("employee_management", "working_hours", "fifo_inventory", "sales_analytics")
                     }
                     val rawFlags = row.optJSONObject("feature_flags")?.keys()?.asSequence()?.filter { key -> row.optJSONObject("feature_flags")?.optBoolean(key, false) == true }?.toSet()
                     val resolvedFlags = if (rawFlags != null && rawFlags.isNotEmpty()) {
-                        if (bType == "counter_seller") rawFlags - "tables" else rawFlags
+                        if (isClub) rawFlags + "tables" else rawFlags - "tables"
                     } else defaultFlags
                     add(
                         BusinessMembership(

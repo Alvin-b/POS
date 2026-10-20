@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Business
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
@@ -82,6 +83,7 @@ fun OwnerSettingsScreen(
     state: CounterPosUiState,
     businessName: String,
     role: String,
+    businessType: String = "big_club",
     registeredCounters: List<ServiceCounter>,
     themeMode: String,
     onClose: () -> Unit,
@@ -97,9 +99,11 @@ fun OwnerSettingsScreen(
     onScheduleClear: (String) -> Unit,
     onCounterCreate: (String) -> Unit,
     onCounterRename: (String, String) -> Unit,
-    onThemeModeChange: (String) -> Unit
+    onThemeModeChange: (String) -> Unit,
+    onOpenStaffManagement: () -> Unit = {}
 ) {
     val ownerCanEdit = role.equals("owner", ignoreCase = true)
+    val isLiquorStore = businessType.equals("counter_seller", ignoreCase = true)
     var businessNameDraft by remember(businessName) { mutableStateOf(businessName) }
     var newCounterName by remember { mutableStateOf("") }
     var editingCounterId by remember { mutableStateOf<String?>(null) }
@@ -207,6 +211,19 @@ fun OwnerSettingsScreen(
                     description = "Issue a one-time cashier passkey or approve a waiter phone from its pending QR.",
                     icon = Icons.Default.Key
                 ) {
+                    Button(
+                        onClick = onOpenStaffManagement,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Badge, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Open Staff & Business Hours Hub", fontWeight = FontWeight.SemiBold)
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                         Button(
                             onClick = onIssueWaiterPass,
@@ -327,53 +344,74 @@ fun OwnerSettingsScreen(
                 }
 
                 SettingsSection(
-                    title = "Service counters",
-                    description = "Manage the counters registered for this business.",
+                    title = if (isLiquorStore) "Service counter" else "Service counters",
+                    description = if (isLiquorStore) "Liquor store operates with a single register counter." else "Manage multiple counters registered for this club.",
                     icon = Icons.Default.Tune
                 ) {
-                    if (registeredCounters.isEmpty()) {
-                        Text("No registered counters were returned by the business service.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } else {
-                        registeredCounters.forEach { counter ->
-                            CounterSettingsRow(
-                                counter = counter,
-                                ownerCanEdit = ownerCanEdit,
-                                editing = editingCounterId == counter.id,
-                                editingName = editingCounterName,
-                                onStartEditing = {
-                                    editingCounterId = counter.id
-                                    editingCounterName = counter.name
-                                },
-                                onEditingNameChange = { editingCounterName = it.take(60) },
-                                onRename = {
-                                    onCounterRename(counter.id, editingCounterName.trim())
-                                    editingCounterId = null
-                                }
-                            )
-                        }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        OutlinedTextField(
-                            value = newCounterName,
-                            onValueChange = { newCounterName = it.take(60) },
-                            label = { Text("New counter name") },
-                            placeholder = {
-                                Text(if (registeredCounters.isEmpty()) "Main Counter" else "Counter ${registeredCounters.size + 1}")
-                            },
-                            singleLine = true,
-                            enabled = ownerCanEdit,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Button(
-                            onClick = {
-                                onCounterCreate(newCounterName.trim())
-                                newCounterName = ""
-                            },
-                            enabled = ownerCanEdit && newCounterName.trim().isNotBlank()
+                    if (isLiquorStore) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(17.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Add")
+                            Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    text = registeredCounters.firstOrNull()?.name ?: "Main Counter",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
+                                Text(
+                                    text = "This liquor store uses one checkout register with shared stock. Waiters and cashiers dispense directly from here.",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    } else {
+                        if (registeredCounters.isEmpty()) {
+                            Text("No registered counters were returned by the business service.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            registeredCounters.forEach { counter ->
+                                CounterSettingsRow(
+                                    counter = counter,
+                                    ownerCanEdit = ownerCanEdit,
+                                    editing = editingCounterId == counter.id,
+                                    editingName = editingCounterName,
+                                    onStartEditing = {
+                                        editingCounterId = counter.id
+                                        editingCounterName = counter.name
+                                    },
+                                    onEditingNameChange = { editingCounterName = it.take(60) },
+                                    onRename = {
+                                        onCounterRename(counter.id, editingCounterName.trim())
+                                        editingCounterId = null
+                                    }
+                                )
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            OutlinedTextField(
+                                value = newCounterName,
+                                onValueChange = { newCounterName = it.take(60) },
+                                label = { Text("New counter name") },
+                                placeholder = {
+                                    Text(if (registeredCounters.isEmpty()) "Main Counter" else "Counter ${registeredCounters.size + 1}")
+                                },
+                                singleLine = true,
+                                enabled = ownerCanEdit,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Button(
+                                onClick = {
+                                    onCounterCreate(newCounterName.trim())
+                                    newCounterName = ""
+                                },
+                                enabled = ownerCanEdit && newCounterName.trim().isNotBlank()
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(17.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Add")
+                            }
                         }
                     }
                     if (!ownerCanEdit) ReadOnlyHint()

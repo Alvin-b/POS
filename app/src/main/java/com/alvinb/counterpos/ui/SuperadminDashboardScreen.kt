@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Storefront
+import androidx.compose.material.icons.filled.TableRestaurant
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -422,29 +423,178 @@ private fun RegisterBusinessCard(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                         singleLine = true
                     )
-                    Text("Business type", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = businessType == "big_club",
+                    Text("Select Business Model", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    val isClub = businessType == "big_club" || businessType == "club"
+                    val isLiquorStore = businessType == "counter_seller" || businessType == "liquor_store"
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Club Card
+                        Card(
                             onClick = { onBusinessTypeChange("big_club") },
-                            label = { Text("Bar / Club") },
-                            modifier = Modifier.weight(1f),
-                            leadingIcon = if (businessType == "big_club") ({ Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }) else null
-                        )
-                        FilterChip(
-                            selected = businessType == "counter_seller",
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(132.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (isClub) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                            ),
+                            border = BorderStroke(
+                                if (isClub) 2.dp else 1.dp,
+                                if (isClub) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+                            )
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(12.dp),
+                                verticalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.TableRestaurant,
+                                        contentDescription = null,
+                                        tint = if (isClub) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                    if (isClub) {
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = "Selected",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                                Column {
+                                    Text(
+                                        text = "Club",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp,
+                                        color = if (isClub) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "Table Management: ON",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (isClub) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "Multi-counters & floor",
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+
+                        // Liquor Store Card
+                        Card(
                             onClick = { onBusinessTypeChange("counter_seller") },
-                            label = { Text("Liquor Store") },
-                            modifier = Modifier.weight(1f),
-                            leadingIcon = if (businessType == "counter_seller") ({ Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }) else null
-                        )
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(132.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (isLiquorStore) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                            ),
+                            border = BorderStroke(
+                                if (isLiquorStore) 2.dp else 1.dp,
+                                if (isLiquorStore) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+                            )
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(12.dp),
+                                verticalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Storefront,
+                                        contentDescription = null,
+                                        tint = if (isLiquorStore) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                    if (isLiquorStore) {
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = "Selected",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                                Column {
+                                    Text(
+                                        text = "Liquor Store",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp,
+                                        color = if (isLiquorStore) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "Table Management: OFF",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (isLiquorStore) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "1 counter POS & stock",
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
                     }
-                    Text(
-                        if (businessType == "big_club") "Tables and working-hours controls enabled."
-                        else "Inventory and staff controls enabled; tables and working-hours screens hidden.",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+
+                    // Explanatory badge
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isClub) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        border = BorderStroke(1.dp, if (isClub) MaterialTheme.colorScheme.primary.copy(alpha = 0.3f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isClub) Icons.Default.TableRestaurant else Icons.Default.Storefront,
+                                contentDescription = null,
+                                tint = if (isClub) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (isClub) "Club Feature Configuration" else "Liquor Store Configuration",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    color = if (isClub) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = if (isClub) {
+                                        "Table Management is enabled by default. Waiters can assign drink orders to tables, manage table tabs, and dispense from multiple counters."
+                                    } else {
+                                        "Table Management is hidden. Optimized for fast over-the-counter checkout, FIFO inventory stock-taking, shift summaries, and waiter duty schedules."
+                                    },
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
                     if (businessType == "big_club") {
                         Text("Club size", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -484,7 +634,7 @@ private fun RegisterBusinessCard(
                         )
                     } else {
                         Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)) {
-                            Text("Liquor Store uses one counter with shared stock.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(12.dp))
+                            Text("Liquor Store operates with 1 service counter and shared stock. Waiters and cashiers dispense directly from checkout.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(12.dp))
                         }
                     }
                     Button(

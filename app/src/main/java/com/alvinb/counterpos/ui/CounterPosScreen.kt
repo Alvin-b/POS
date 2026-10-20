@@ -48,6 +48,7 @@ import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Assessment
+import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -199,7 +200,9 @@ fun CounterPosWorkspace(
     val summary = remember(sales) { salesTodaySummary(sales) }
     val role = session.activeBusiness?.role.orEmpty()
     val enabledFeatures = session.activeBusiness?.featureFlags.orEmpty()
-    val supportsTables = "tables" in enabledFeatures
+    val rawBusinessType = session.activeBusiness?.businessType.orEmpty().trim().lowercase()
+    val isClub = rawBusinessType in setOf("big_club", "club")
+    val supportsTables = isClub && ("tables" in enabledFeatures)
     val registeredWaiterEmails = remember(state.employeeMembers) {
         state.employeeMembers.asSequence()
             .filter { it.optString("role").equals("cashier", ignoreCase = true) }
@@ -291,6 +294,7 @@ fun CounterPosWorkspace(
                 canAddNewProduct = canReceiveStock,
                 canManageTeam = role in setOf("owner", "manager") && "employee_management" in enabledFeatures,
                 onManageTeam = viewModel::openTeamPanel,
+                onOpenStaffManagement = viewModel::openStaffManagement,
                 counters = serviceCounters,
                 selectedCounterId = state.selectedCounterId,
                 onCounterSelect = viewModel::selectCounter
@@ -454,6 +458,7 @@ fun CounterPosWorkspace(
             products = products.filter { it.inMyStock && it.stockQuantity > 0 },
             initialWaiter = session.email,
             initialTableId = state.selectedTableId,
+            supportsTables = supportsTables,
             error = state.actionError,
             onDismiss = viewModel::dismissRecordDispensation,
             onRecord = { counterId, counterName, waiterName, tableId, tableName, productCode, quantity, unitName, unitPriceKsh ->
@@ -602,6 +607,7 @@ fun CounterPosWorkspace(
                 state = state,
                 businessName = session.activeBusiness?.shopName.orEmpty(),
                 role = role,
+                businessType = session.activeBusiness?.businessType ?: "big_club",
                 registeredCounters = serviceCounters,
                 themeMode = themeMode,
                 onClose = viewModel::closeTeamPanel,
@@ -628,7 +634,39 @@ fun CounterPosWorkspace(
             onScheduleClear = { userId -> viewModel.clearEmployeeSchedule(userId) },
             onCounterCreate = { name -> viewModel.createServiceCounter(name) },
             onCounterRename = { id, name -> viewModel.renameServiceCounter(id, name) },
-                onThemeModeChange = onThemeModeChange
+            onThemeModeChange = onThemeModeChange,
+            onOpenStaffManagement = {
+                viewModel.closeTeamPanel()
+                viewModel.openStaffManagement()
+            }
+            )
+        }
+    }
+
+    if (state.isStaffManagementOpen && role in setOf("owner", "manager") && "employee_management" in enabledFeatures) {
+        Dialog(
+            onDismissRequest = viewModel::closeStaffManagement,
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            StaffManagementScreen(
+                state = state,
+                businessName = session.activeBusiness?.shopName.orEmpty(),
+                role = role,
+                businessType = session.activeBusiness?.businessType ?: "big_club",
+                onClose = viewModel::closeStaffManagement,
+                onLoadMembers = { viewModel.loadEmployeeMembers() },
+                onIssueWaiterPass = { r -> viewModel.issueEmployeePass(r) },
+                onGenerateWaiterQr = { r -> viewModel.generateWaiterEnrollmentQr(r) },
+                onClearWaiterQr = { viewModel.clearWaiterEnrollmentQr() },
+                onSetEmployeeStatus = { uid, st -> viewModel.setEmployeeStatus(uid, st) },
+                onSetEmployeeRole = { uid, rl -> viewModel.setEmployeeRole(uid, rl) },
+                onRemoveEmployee = { uid -> viewModel.removeEmployeeAccess(uid) },
+                onSaveEmployeeSchedule = { uid, dow, st, en, act -> viewModel.setEmployeeHours(uid, dow, st, en, act) },
+                onSaveBusinessHours = { bh -> viewModel.saveBusinessHours(bh) },
+                onScanWaiterCode = {
+                    viewModel.closeStaffManagement()
+                    viewModel.openScanner(ScannerMode.ADMIN_QR)
+                }
             )
         }
     }
@@ -711,6 +749,7 @@ private fun LeanTopBar(
     canAddNewProduct: Boolean = true,
     canManageTeam: Boolean = false,
     onManageTeam: () -> Unit = {},
+    onOpenStaffManagement: () -> Unit = {},
     counters: List<ServiceCounter> = emptyList(),
     selectedCounterId: String? = null,
     onCounterSelect: (String) -> Unit = {},
@@ -895,7 +934,13 @@ private fun LeanTopBar(
                     }
 
                     if (canManageTeam) {
-                        IconButton(onClick = onManageTeam, modifier = Modifier.size(40.dp)) {
+                        IconButton(
+                            onClick = onOpenStaffManagement,
+                            modifier = Modifier.size(40.dp).testTag("staff_management_top_button")
+                        ) {
+                            Icon(Icons.Default.Badge, contentDescription = "Staff Management", tint = MaterialTheme.colorScheme.primary)
+                        }
+                        IconButton(onClick = onManageTeam, modifier = Modifier.size(40.dp).testTag("settings_top_button")) {
                             Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
@@ -2417,6 +2462,7 @@ private fun RecordDispensationBottomSheet(
     products: List<ProductEntity>,
     initialWaiter: String,
     initialTableId: String?,
+    supportsTables: Boolean = true,
     error: String?,
     onDismiss: () -> Unit,
     onRecord: (counterId: String, counterName: String, waiterName: String, tableId: String?, tableName: String?, productCode: String, quantity: Int, unitName: String, unitPriceKsh: Int) -> Unit
@@ -2426,7 +2472,9 @@ private fun RecordDispensationBottomSheet(
         mutableStateOf(initialCounterId ?: counters.singleOrNull()?.id.orEmpty())
     }
     var selectedWaiter by remember(initialWaiter) { mutableStateOf(initialWaiter) }
-    var destinationMode by remember { mutableStateOf(if (initialTableId != null) "table" else "walk_in") }
+    var destinationMode by remember(supportsTables, initialTableId) {
+        mutableStateOf(if (supportsTables && initialTableId != null) "table" else "walk_in")
+    }
     var selectedTableId by remember(initialTableId) { mutableStateOf(initialTableId ?: diningTables.firstOrNull()?.id) }
     var selectedProductCode by remember(products) { mutableStateOf(products.firstOrNull()?.catalogCode.orEmpty()) }
     var quantity by remember { mutableStateOf(1) }
@@ -2439,7 +2487,7 @@ private fun RecordDispensationBottomSheet(
     var selectedUnit by remember(units) { mutableStateOf(units.firstOrNull() ?: SaleUnit("Bottle", selectedProduct?.sellingPriceKsh ?: 0)) }
 
     val resolvedCounter = counters.firstOrNull { it.id == selectedCounterId }
-    val resolvedTable = if (destinationMode == "table") diningTables.firstOrNull { it.id == selectedTableId } else null
+    val resolvedTable = if (supportsTables && destinationMode == "table") diningTables.firstOrNull { it.id == selectedTableId } else null
     val totalAmount = selectedUnit.priceKsh * quantity
 
     ModalBottomSheet(
@@ -2489,35 +2537,51 @@ private fun RecordDispensationBottomSheet(
             Text(selectedWaiter.ifBlank { "Signed-in account required" }, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
 
             // 3. Destination (Table vs Direct Walk-in)
-            Text("3. Served Destination:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = destinationMode == "table",
-                    onClick = { destinationMode = "table" },
-                    label = { Text("Table Check") }
-                )
-                FilterChip(
-                    selected = destinationMode == "walk_in",
-                    onClick = { destinationMode = "walk_in" },
-                    label = { Text("Direct Walk-in / Bar") }
-                )
-            }
-            if (destinationMode == "table") {
-                if (diningTables.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        diningTables.forEach { table ->
-                            FilterChip(
-                                selected = table.id == selectedTableId,
-                                onClick = { selectedTableId = table.id },
-                                label = { Text(table.name) }
-                            )
+            if (supportsTables) {
+                Text("3. Served Destination:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = destinationMode == "table",
+                        onClick = { destinationMode = "table" },
+                        label = { Text("Table Check") }
+                    )
+                    FilterChip(
+                        selected = destinationMode == "walk_in",
+                        onClick = { destinationMode = "walk_in" },
+                        label = { Text("Direct Walk-in / Bar") }
+                    )
+                }
+                if (destinationMode == "table") {
+                    if (diningTables.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            diningTables.forEach { table ->
+                                FilterChip(
+                                    selected = table.id == selectedTableId,
+                                    onClick = { selectedTableId = table.id },
+                                    label = { Text(table.name) }
+                                )
+                            }
                         }
+                    } else {
+                        Text("No dining tables yet. Create one in the Tables tab, or choose Direct Walk-in / Bar.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                } else {
-                    Text("No dining tables yet. Create one in the Tables tab, or choose Direct Walk-in / Bar.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        "3. Served Destination: Direct Register Checkout (Tables disabled for Liquor Store)",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(10.dp)
+                    )
                 }
             }
 

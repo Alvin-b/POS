@@ -59,7 +59,7 @@ fun LoginQrCard(payload: String) {
     }
 }
 
-private fun createLoginQr(payload: String): Bitmap {
+internal fun createLoginQr(payload: String): Bitmap {
     val size = 640
     val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, size, size)
     val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)

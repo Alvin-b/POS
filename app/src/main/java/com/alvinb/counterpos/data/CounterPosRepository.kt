@@ -26,6 +26,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
+import com.alvinb.counterpos.data.model.BusinessHours
 import java.io.IOException
 import java.util.Date
 import java.util.Locale
@@ -56,6 +57,18 @@ class CounterPosRepository(
     private val remote: SupabaseRestClient
 ) {
     private val offlineAccountPrefs = context.getSharedPreferences("counterpos_offline_account", Context.MODE_PRIVATE)
+    private val businessHoursPrefs = context.getSharedPreferences("counterpos_business_hours", Context.MODE_PRIVATE)
+
+    fun getBusinessHours(shopId: String? = activeBusiness?.shopId): BusinessHours {
+        val key = "hours_${shopId ?: "default"}"
+        val raw = businessHoursPrefs.getString(key, null)
+        return BusinessHours.fromJson(raw)
+    }
+
+    fun saveBusinessHours(hours: BusinessHours, shopId: String? = activeBusiness?.shopId) {
+        val key = "hours_${shopId ?: "default"}"
+        businessHoursPrefs.edit().putString(key, hours.toJson()).apply()
+    }
     data class AccessChallenge(
         val token: String,
         val expiresAtMillis: Long
@@ -253,7 +266,7 @@ class CounterPosRepository(
     }
 
     private fun createAdminBusinessMembership(biz: AdminBusiness): BusinessMembership {
-        val isLiquorStore = biz.businessType == "counter_seller"
+        val isLiquorStore = biz.businessType.equals("counter_seller", ignoreCase = true) || biz.businessType.equals("liquor_store", ignoreCase = true)
         val flags = if (isLiquorStore) {
             setOf("employee_management", "working_hours", "fifo_inventory", "sales_analytics")
         } else {
