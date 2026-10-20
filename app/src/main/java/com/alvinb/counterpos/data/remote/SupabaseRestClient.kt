@@ -11,6 +11,8 @@ import java.nio.charset.StandardCharsets
 import java.net.HttpURLConnection
 import java.net.URL
 
+class SupabaseApiException(val statusCode: Int, message: String) : IOException(message)
+
  data class AuthSession(
     val accessToken: String,
     val refreshToken: String,
@@ -185,7 +187,7 @@ class SupabaseRestClient(context: Context) {
     suspend fun restoreSession(): AuthSession? = withContext(Dispatchers.IO) {
         session?.let { current ->
             runCatching { request("/auth/v1/user", "GET", null, true) }
-                .onFailure { if (it is UnauthorizedException) refreshSession() }
+                .onFailure { if (it is SupabaseApiException && it.statusCode == 401) refreshSession() }
         }
         session
     }
@@ -613,9 +615,9 @@ class SupabaseRestClient(context: Context) {
                 return@withContext requestRaw(path, method, body, authenticated, false)
             }
             clearSession()
-            throw UnauthorizedException("Session expired")
+            throw SupabaseApiException(HttpURLConnection.HTTP_UNAUTHORIZED, "Session expired")
         }
-        if (status !in 200..299) throw IOException(extractError(text, status))
+        if (status !in 200..299) throw SupabaseApiException(status, extractError(text, status))
         HttpResponse(status, text)
     }
 
@@ -688,8 +690,6 @@ class SupabaseRestClient(context: Context) {
         put(key, value ?: JSONObject.NULL)
 
     private data class HttpResponse(val status: Int, val body: String)
-    private class UnauthorizedException(message: String) : IOException(message)
-
     private val baseUrl: String
         get() = BuildConfig.SUPABASE_URL.trimEnd('/')
 

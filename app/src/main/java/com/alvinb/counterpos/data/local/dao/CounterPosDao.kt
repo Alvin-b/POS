@@ -28,8 +28,14 @@ interface CounterPosDao {
     suspend fun insertDiningTables(tables: List<DiningTableEntity>)
     @Query("DELETE FROM dining_tables WHERE id = :id")
     suspend fun deleteDiningTable(id: String): Int
-    @Insert
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTableOrder(order: TableOrderEntity): Long
+
+    @Transaction
+    suspend fun insertCommittedTableSale(sale: SaleEntity, order: TableOrderEntity) {
+        insertSales(listOf(sale))
+        insertTableOrder(order)
+    }
 
     @Query("DELETE FROM table_orders WHERE saleId = :saleId")
     suspend fun deleteTableOrderBySaleId(saleId: Long): Int

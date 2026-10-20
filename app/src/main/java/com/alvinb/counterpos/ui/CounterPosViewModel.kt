@@ -26,8 +26,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
+import java.util.regex.Pattern
 
 enum class PosTab { SCAN, STOCK, SALES, REPORTS, TABLES }
 enum class StockMode { MY_STOCK, LIBRARY }
@@ -40,6 +42,22 @@ data class AdminEnrollmentCredential(
     val expiresInHours: Int
 )
 
+/** A single Sunday–Saturday employee duty window. Weekdays use 0 = Sunday through 6 = Saturday. */
+data class EmployeeScheduleDay(
+    val weekday: Int,
+    val start: String = "",
+    val end: String = "",
+    val enabled: Boolean = false
+)
+
+private val HourMinutePattern = Pattern.compile("^(?:[01]\\d|2[0-3]):[0-5]\\d$")
+
+private fun JSONArray.toEmployeeMemberList(): List<JSONObject> = buildList {
+    for (index in 0 until length()) optJSONObject(index)?.let(::add)
+}
+
+private fun isValidHourMinute(value: String): Boolean = HourMinutePattern.matcher(value.trim()).matches()
+
 data class CounterPosUiState(
     val tab: PosTab = PosTab.SCAN,
     val stockMode: StockMode = StockMode.MY_STOCK,
@@ -50,8 +68,8 @@ data class CounterPosUiState(
     val selectedCounterId: String? = null,
     val selectedServingCounterId: String? = null,
     val selectedServingCounterName: String? = null,
-    val selectedWaiterName: String = "Amina",
-    val availableWaiters: List<String> = listOf("Amina", "John", "Grace", "Peter", "Sarah"),
+    val selectedWaiterName: String = "",
+    val availableWaiters: List<String> = emptyList(),
     val reportFilter: String = "today",
     val reportCounterFilter: String = "all",
     val isRecordDispensationOpen: Boolean = false,
@@ -68,6 +86,10 @@ data class CounterPosUiState(
     val isQrPolling: Boolean = false,
     val employeeMembers: List<JSONObject> = emptyList(),
     val isSavingBusinessName: Boolean = false,
+    val isLoadingEmployeeMembers: Boolean = false,
+    val isIssuingEmployeePass: Boolean = false,
+    val isSavingEmployeeSchedule: Boolean = false,
+    val isClearingEmployeeSchedule: Boolean = false,
     val isAccessLocked: Boolean = false,
     val accessLockMessage: String? = null,
     val employeePasskey: String? = null,
@@ -334,6 +356,16 @@ class CounterPosViewModel(
                         )
                     }
                 }
+                .onFailure {
+                    if (session.value.activeBusiness?.role != "owner") {
+                        _uiState.update { state ->
+                            state.copy(
+                                isAccessLocked = true,
+                                accessLockMessage = "Waiter access could not be verified. Reconnect to the internet to check your account status and duty hours."
+                            )
+                        }
+                    }
+                }
             delay(30_000)
         }
     }
@@ -341,31 +373,86 @@ class CounterPosViewModel(
     fun refreshAccessNow() = viewModelScope.launch {
         runCatching { repository.canOperateNow() }
             .onSuccess { allowed -> _uiState.update { it.copy(isAccessLocked = !allowed, accessLockMessage = if (allowed) null else "You are outside your configured working hours.") } }
-            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not verify working hours") } }
+            .onFailure { error ->
+                _uiState.update {
+                    it.copy(
+                        isAccessLocked = session.value.activeBusiness?.role != "owner",
+                        accessLockMessage = if (session.value.activeBusiness?.role != "owner") {
+                            "Waiter access could not be verified. Reconnect to the internet to check your account status and duty hours."
+                        } else null,
+                        actionError = error.message ?: "Could not verify working hours"
+                    )
+                }
+            }
     }
 
-    fun issueEmployeePass(role: String) = viewModelScope.launch {
+    fun issueEmployeePass(role: String = "cashier") = viewModelScope.launch {
+        if (_uiState.value.isIssuingEmployeePass) return@launch
         if (role != "cashier") {
             _uiState.update { it.copy(actionError = "Waiter is the only employee position currently available.") }
             return@launch
         }
-        runCatching { repository.createEmployeeAccessPass(role) }
-            .onSuccess { pass -> _uiState.update { it.copy(employeePasskey = pass.optString("passkey"), notice = "One-time ${role.replace('_', ' ')} pass created. Share it privately.") } }
-            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not create employee pass") } }
+        _uiState.update { it.copy(isIssuingEmployeePass = true, employeePasskey = null, actionError = null) }
+        try {
+            val pass = repository.createEmployeeAccessPass("cashier")
+            val passkey = pass.optString("passkey").trim()
+            require(passkey.isNotBlank()) { "The server did not return a waiter passkey." }
+            _uiState.update {
+                it.copy(
+                    employeePasskey = passkey,
+                    actionError = null,
+                    notice = "One-time waiter passkey created. Share it privately; the waiter account is created when it is redeemed."
+                )
+            }
+        } catch (error: Exception) {
+            _uiState.update { it.copy(actionError = error.message ?: "Could not create waiter passkey") }
+        } finally {
+            _uiState.update { it.copy(isIssuingEmployeePass = false) }
+        }
     }
 
     fun clearEmployeePass() = _uiState.update { it.copy(employeePasskey = null) }
 
     fun loadEmployeeMembers() = viewModelScope.launch {
-        runCatching { repository.shopMembers() }
-            .onSuccess { rows -> _uiState.update { it.copy(employeeMembers = (0 until rows.length()).mapNotNull(rows::optJSONObject)) } }
-            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not load employees") } }
+        if (_uiState.value.isLoadingEmployeeMembers) return@launch
+        _uiState.update { it.copy(isLoadingEmployeeMembers = true, actionError = null) }
+        try {
+            val rows = repository.shopMembers()
+            _uiState.update { it.copy(employeeMembers = rows.toEmployeeMemberList(), actionError = null) }
+        } catch (error: Exception) {
+            _uiState.update { it.copy(actionError = error.message ?: "Could not load registered waiters") }
+        } finally {
+            _uiState.update { it.copy(isLoadingEmployeeMembers = false) }
+        }
     }
 
     fun setEmployeeStatus(userId: String, status: String) = viewModelScope.launch {
-        runCatching { repository.setEmployeeStatus(userId, status, if (status == "active") "Reactivated by business admin" else "Disabled by business admin") }
-            .onSuccess { rows -> _uiState.update { it.copy(employeeMembers = (0 until rows.length()).mapNotNull(rows::optJSONObject), notice = "Employee status updated") } }
-            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not update employee") } }
+        val normalizedStatus = status.trim().lowercase()
+        if (userId.isBlank()) {
+            _uiState.update { it.copy(actionError = "This waiter has no registered account ID.") }
+            return@launch
+        }
+        if (normalizedStatus !in setOf("active", "suspended")) {
+            _uiState.update { it.copy(actionError = "Choose Reactivate or Log out waiter.") }
+            return@launch
+        }
+        runCatching {
+            repository.setEmployeeStatus(
+                userId,
+                normalizedStatus,
+                if (normalizedStatus == "active") "Reactivated by business admin" else "Logged out by business admin"
+            )
+        }
+            .onSuccess { rows ->
+                _uiState.update {
+                    it.copy(
+                        employeeMembers = rows.toEmployeeMemberList(),
+                        actionError = null,
+                        notice = if (normalizedStatus == "active") "Waiter reactivated." else "Waiter logged out. Business access is locked on the next server authorization check."
+                    )
+                }
+            }
+            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not update waiter status") } }
     }
 
     fun setEmployeeRole(userId: String, role: String) = viewModelScope.launch {
@@ -375,9 +462,13 @@ class CounterPosViewModel(
     }
 
     fun removeEmployeeAccess(userId: String) = viewModelScope.launch {
+        if (userId.isBlank()) {
+            _uiState.update { it.copy(actionError = "This waiter has no registered account ID.") }
+            return@launch
+        }
         runCatching { repository.removeEmployeeAccess(userId, "Access removed by business administrator") }
-            .onSuccess { rows -> _uiState.update { it.copy(employeeMembers = (0 until rows.length()).mapNotNull(rows::optJSONObject), actionError = null, notice = "Employee access removed; their history is retained") } }
-            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not remove employee access") } }
+            .onSuccess { rows -> _uiState.update { it.copy(employeeMembers = rows.toEmployeeMemberList(), actionError = null, notice = "Waiter access removed; sales history is retained.") } }
+            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not remove waiter access") } }
     }
 
     fun updateBusinessName(name: String) = viewModelScope.launch {
@@ -394,8 +485,86 @@ class CounterPosViewModel(
 
     fun setEmployeeHours(userId: String, weekday: Int, start: String, end: String, enabled: Boolean) = viewModelScope.launch {
         runCatching { repository.setEmployeeHours(userId, weekday, start, end, enabled) }
-            .onSuccess { rows -> _uiState.update { it.copy(employeeMembers = (0 until rows.length()).mapNotNull(rows::optJSONObject), notice = "Working hours saved") } }
+            .onSuccess { rows -> _uiState.update { it.copy(employeeMembers = rows.toEmployeeMemberList(), notice = "Working hours saved") } }
             .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not save working hours") } }
+    }
+
+    /**
+     * Saves all seven days in order. Disabled days are still sent so a previous schedule cannot
+     * remain active when a day is switched off in the settings screen.
+     */
+    fun saveEmployeeSchedule(userId: String, schedule: List<EmployeeScheduleDay>) = viewModelScope.launch {
+        if (_uiState.value.isSavingEmployeeSchedule || _uiState.value.isClearingEmployeeSchedule) return@launch
+        val byWeekday = schedule.associateBy(EmployeeScheduleDay::weekday)
+        val enabledDays = (0..6).mapNotNull { byWeekday[it] }.filter(EmployeeScheduleDay::enabled)
+        val invalidTime = enabledDays.firstOrNull { !isValidHourMinute(it.start) || !isValidHourMinute(it.end) }
+        when {
+            userId.isBlank() -> {
+                _uiState.update { it.copy(actionError = "This waiter has no registered account ID.") }
+                return@launch
+            }
+            enabledDays.isEmpty() -> {
+                _uiState.update { it.copy(actionError = "Enable at least one day, or use Clear schedule for unrestricted access.") }
+                return@launch
+            }
+            invalidTime != null -> {
+                _uiState.update { it.copy(actionError = "Use HH:mm time values such as 08:30 and 17:00 for every enabled day.") }
+                return@launch
+            }
+        }
+
+        _uiState.update { it.copy(isSavingEmployeeSchedule = true, actionError = null) }
+        try {
+            for (weekday in 0..6) {
+                val day = byWeekday[weekday]
+                repository.setEmployeeHours(
+                    userId = userId,
+                    weekday = weekday,
+                    start = if (day?.enabled == true) day.start.trim() else "00:00",
+                    end = if (day?.enabled == true) day.end.trim() else "00:00",
+                    enabled = day?.enabled == true
+                )
+            }
+            val rows = repository.shopMembers()
+            _uiState.update {
+                it.copy(
+                    employeeMembers = rows.toEmployeeMemberList(),
+                    actionError = null,
+                    notice = "Duty schedule saved for this waiter."
+                )
+            }
+        } catch (error: Exception) {
+            _uiState.update { it.copy(actionError = error.message ?: "Could not save the waiter duty schedule") }
+        } finally {
+            _uiState.update { it.copy(isSavingEmployeeSchedule = false) }
+        }
+    }
+
+    /** Disables every weekday; the backend then treats the waiter as unrestricted. */
+    fun clearEmployeeSchedule(userId: String) = viewModelScope.launch {
+        if (_uiState.value.isSavingEmployeeSchedule || _uiState.value.isClearingEmployeeSchedule) return@launch
+        if (userId.isBlank()) {
+            _uiState.update { it.copy(actionError = "This waiter has no registered account ID.") }
+            return@launch
+        }
+        _uiState.update { it.copy(isClearingEmployeeSchedule = true, actionError = null) }
+        try {
+            for (weekday in 0..6) {
+                repository.setEmployeeHours(userId, weekday, "00:00", "00:00", false)
+            }
+            val rows = repository.shopMembers()
+            _uiState.update {
+                it.copy(
+                    employeeMembers = rows.toEmployeeMemberList(),
+                    actionError = null,
+                    notice = "Duty schedule cleared. This waiter has unrestricted access."
+                )
+            }
+        } catch (error: Exception) {
+            _uiState.update { it.copy(actionError = error.message ?: "Could not clear the waiter duty schedule") }
+        } finally {
+            _uiState.update { it.copy(isClearingEmployeeSchedule = false) }
+        }
     }
 
     fun loadAdminBusinesses() = viewModelScope.launch {
@@ -906,7 +1075,10 @@ class CounterPosViewModel(
         unitName: String,
         unitPriceKsh: Int
     ) = viewModelScope.launch {
-        if (quantity < 1 || unitPriceKsh < 1) return@launch
+        if (quantity < 1 || unitPriceKsh < 1) {
+            _uiState.update { it.copy(actionError = "Select a valid quantity and sale price.") }
+            return@launch
+        }
         try {
             if (tableId != null) {
                 repository.sellToTable(
@@ -932,7 +1104,7 @@ class CounterPosViewModel(
                     tableName = "Direct Walk-in"
                 )
             }
-            refreshCounterStock(counterId)
+            runCatching { refreshCounterStock(counterId) }
             _uiState.update {
                 it.copy(
                     isRecordDispensationOpen = false,
@@ -947,14 +1119,20 @@ class CounterPosViewModel(
     fun confirmSale() {
         val state = _uiState.value
         val code = state.selectedSaleCode ?: return
-        val counterId = state.selectedServingCounterId
-            ?: state.selectedCounterId
-            ?: serviceCounters.value.firstOrNull()?.id
-            ?: "counter_1"
-        val counterName = state.selectedServingCounterName
-            ?: serviceCounters.value.firstOrNull { it.id == counterId }?.name
-            ?: "Counter 1"
-        val waiterName = state.selectedWaiterName
+        if (state.saleQuantity < 1 || state.selectedUnitPrice < 1) {
+            _uiState.update { it.copy(actionError = "Select a valid quantity and sale price.") }
+            return
+        }
+        val counters = serviceCounters.value
+        val requestedCounterId = state.selectedServingCounterId ?: state.selectedCounterId ?: counters.singleOrNull()?.id
+        val selectedCounter = counters.firstOrNull { it.id == requestedCounterId }
+        if (selectedCounter == null) {
+            _uiState.update { it.copy(actionError = "No valid service counter is selected. Check the business counters in Settings and try again.") }
+            return
+        }
+        val counterId = selectedCounter.id
+        val counterName = selectedCounter.name
+        val waiterName = state.selectedWaiterName.takeIf(String::isNotBlank) ?: session.value.email
 
         if (mutationInProgress) return
         mutationInProgress = true
@@ -987,7 +1165,7 @@ class CounterPosViewModel(
                     )
                 }
                 if (success) {
-                    refreshCounterStock(counterId)
+                    runCatching { refreshCounterStock(counterId) }
                     val product = products.value.firstOrNull { it.catalogCode == code }
                     val total = state.selectedUnitPrice * state.saleQuantity
                     _uiState.update {
@@ -996,9 +1174,17 @@ class CounterPosViewModel(
                             saleQuantity = 1,
                             actionError = null,
                             notice = if (tableId != null) {
-                                "✓ Added ${state.saleQuantity} × ${product?.name ?: ""} to table from $counterName · KSh $total"
+                                if (counters.size > 1) {
+                                    "Added ${state.saleQuantity} × ${product?.name.orEmpty()} to table from $counterName · KSh $total"
+                                } else {
+                                    "Added ${state.saleQuantity} × ${product?.name.orEmpty()} to table · KSh $total"
+                                }
                             } else {
-                                "✓ Sold ${state.saleQuantity} × ${product?.name ?: ""} from $counterName (Waiter: $waiterName) · KSh $total"
+                                if (counters.size > 1) {
+                                    "Sold ${state.saleQuantity} × ${product?.name.orEmpty()} from $counterName · KSh $total"
+                                } else {
+                                    "Sold ${state.saleQuantity} × ${product?.name.orEmpty()} · KSh $total"
+                                }
                             }
                         )
                     }

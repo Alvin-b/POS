@@ -74,7 +74,11 @@ import com.alvinb.counterpos.ui.scanner.BarcodeScannerScreen
 import com.alvinb.counterpos.ui.scanner.ScannerMode
 
 @Composable
-fun CounterPosApp(viewModel: CounterPosViewModel) {
+fun CounterPosApp(
+    viewModel: CounterPosViewModel,
+    themeMode: String = "system",
+    onThemeModeChange: (String) -> Unit = {}
+) {
     val session by viewModel.session.collectAsStateWithLifecycle()
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -109,7 +113,7 @@ fun CounterPosApp(viewModel: CounterPosViewModel) {
             )
             session.activeBusiness != null && !session.activeBusiness?.role.equals("owner", ignoreCase = true) && shouldShowEmployeeAccessLocked(session.activeBusiness?.employmentStatus) -> EmployeeAccessBlockedScreen(session.activeBusiness, viewModel::signOut)
             session.activeBusiness != null && !session.activeBusiness?.role.equals("owner", ignoreCase = true) && state.isAccessLocked -> WorkingHoursLockedScreen(state.accessLockMessage.orEmpty(), viewModel::refreshAccessNow, viewModel::signOut)
-            session.activeBusiness != null -> CounterPosWorkspace(viewModel)
+            session.activeBusiness != null -> CounterPosWorkspace(viewModel, themeMode, onThemeModeChange)
             session.isPlatformAdmin -> SuperadminDashboardScreen(
                 viewModel = viewModel,
                 email = session.email,

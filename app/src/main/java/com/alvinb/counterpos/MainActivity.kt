@@ -6,7 +6,12 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.view.WindowInsetsControllerCompat
@@ -33,21 +38,37 @@ class MainActivity : ComponentActivity() {
             remote = SupabaseRestClient(applicationContext)
         )
         val connectivityManager = getSystemService(ConnectivityManager::class.java)
+        val appearancePreferences = getSharedPreferences("counterpos_appearance", MODE_PRIVATE)
 
         setContent {
-            CounterPosTheme {
+            var themeMode by remember {
+                mutableStateOf(appearancePreferences.getString("theme_mode", "dark") ?: "dark")
+            }
+            val darkTheme = when (themeMode) {
+                "dark" -> true
+                "light" -> false
+                else -> isSystemInDarkTheme()
+            }
+            CounterPosTheme(darkTheme = darkTheme) {
                 SideEffect {
                     window.statusBarColor = Color.Transparent.toArgb()
                     window.navigationBarColor = Color.Transparent.toArgb()
                     WindowInsetsControllerCompat(window, window.decorView).apply {
-                        isAppearanceLightStatusBars = true
-                        isAppearanceLightNavigationBars = true
+                        isAppearanceLightStatusBars = !darkTheme
+                        isAppearanceLightNavigationBars = !darkTheme
                     }
                 }
                 val appViewModel: CounterPosViewModel = viewModel(
                     factory = CounterPosViewModelFactory(repository, connectivityManager)
                 )
-                CounterPosApp(viewModel = appViewModel)
+                CounterPosApp(
+                    viewModel = appViewModel,
+                    themeMode = themeMode,
+                    onThemeModeChange = { selectedMode ->
+                        themeMode = selectedMode
+                        appearancePreferences.edit().putString("theme_mode", selectedMode).apply()
+                    }
+                )
             }
         }
     }

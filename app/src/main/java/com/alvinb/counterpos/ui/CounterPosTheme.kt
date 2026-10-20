@@ -1,9 +1,11 @@
 package com.alvinb.counterpos.ui
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
@@ -11,7 +13,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-private val CounterPosColors = lightColorScheme(
+private val CounterPosLightColors = lightColorScheme(
     primary = Color(0xFF087F5B),
     onPrimary = Color.White,
     primaryContainer = Color(0xFFD8F3E8),
@@ -37,6 +39,33 @@ private val CounterPosColors = lightColorScheme(
     outlineVariant = Color(0xFFE3EBE6)
 )
 
+private val CounterPosDarkColors = darkColorScheme(
+    primary = Color(0xFF70D6A8),
+    onPrimary = Color(0xFF063D2B),
+    primaryContainer = Color(0xFF1F4B38),
+    onPrimaryContainer = Color(0xFFB9F2D4),
+    secondary = Color(0xFFFFB86B),
+    onSecondary = Color(0xFF482300),
+    secondaryContainer = Color(0xFF5A3517),
+    onSecondaryContainer = Color(0xFFFFDDB8),
+    tertiary = Color(0xFF9FD3BD),
+    onTertiary = Color(0xFF153B2C),
+    tertiaryContainer = Color(0xFF2C5140),
+    onTertiaryContainer = Color(0xFFBCEBD5),
+    error = Color(0xFFFFB4AB),
+    onError = Color(0xFF690005),
+    errorContainer = Color(0xFF93000A),
+    onErrorContainer = Color(0xFFFFDAD6),
+    background = Color(0xFF101612),
+    onBackground = Color(0xFFE8F0EA),
+    surface = Color(0xFF18211B),
+    onSurface = Color(0xFFE8F0EA),
+    surfaceVariant = Color(0xFF25312A),
+    onSurfaceVariant = Color(0xFFB2C0B7),
+    outline = Color(0xFF536258),
+    outlineVariant = Color(0xFF39483E)
+)
+
 private val CounterPosTypography = Typography().run {
     copy(
         displaySmall = displaySmall.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp),
@@ -59,9 +88,12 @@ private val CounterPosShapes = Shapes(
 )
 
 @Composable
-fun CounterPosTheme(content: @Composable () -> Unit) {
+fun CounterPosTheme(
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    content: @Composable () -> Unit
+) {
     MaterialTheme(
-        colorScheme = CounterPosColors,
+        colorScheme = if (darkTheme) CounterPosDarkColors else CounterPosLightColors,
         typography = CounterPosTypography,
         shapes = CounterPosShapes,
         content = content

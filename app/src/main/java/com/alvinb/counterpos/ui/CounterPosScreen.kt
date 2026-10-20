@@ -120,6 +120,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.alvinb.counterpos.data.local.entity.DiningTableEntity
@@ -140,7 +142,11 @@ import java.util.TimeZone
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
+fun CounterPosWorkspace(
+    viewModel: CounterPosViewModel,
+    themeMode: String = "system",
+    onThemeModeChange: (String) -> Unit = {}
+) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val session by viewModel.session.collectAsStateWithLifecycle()
     val cachedProducts by viewModel.products.collectAsStateWithLifecycle()
@@ -158,6 +164,7 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
         } else cachedProducts
     }
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -193,6 +200,16 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
     val role = session.activeBusiness?.role.orEmpty()
     val enabledFeatures = session.activeBusiness?.featureFlags.orEmpty()
     val supportsTables = "tables" in enabledFeatures
+    val registeredWaiterEmails = remember(state.employeeMembers) {
+        state.employeeMembers.asSequence()
+            .filter { it.optString("role").equals("cashier", ignoreCase = true) }
+            .map { it.optString("email").trim().lowercase(Locale.ROOT) }
+            .filter(String::isNotBlank)
+            .toSet()
+    }
+    LaunchedEffect(session.activeBusiness?.shopId, role) {
+        if (role in setOf("owner", "manager")) viewModel.loadEmployeeMembers()
+    }
     LaunchedEffect(supportsTables, state.tab) {
         if (!supportsTables && state.tab == PosTab.TABLES) viewModel.selectTab(PosTab.SCAN)
     }
@@ -200,8 +217,9 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
     val canEditProducts = role in setOf("owner", "manager")
 
     LaunchedEffect(session.activeBusiness?.shopId, serviceCounters, state.selectedCounterId) {
-        if (state.selectedCounterId !in serviceCounters.map { it.id }) {
-            serviceCounters.firstOrNull()?.let { viewModel.selectCounter(it.id) }
+        val selectedId = state.selectedServingCounterId ?: state.selectedCounterId
+        if (selectedId !in serviceCounters.map { it.id }) {
+            serviceCounters.firstOrNull()?.let { viewModel.selectServingCounter(it.id, it.name) }
         }
     }
     LaunchedEffect(state.selectedCounterId, session.activeBusiness?.counterInventoryMode, session.activeBusiness?.shopId) {
@@ -223,7 +241,10 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
         PosTab.STOCK -> "Manage your shelf"
         PosTab.SALES -> "Sales history and receipts"
         PosTab.REPORTS -> "Counter and waiter activity"
-        PosTab.TABLES -> "${serviceCounters.firstOrNull { it.id == state.selectedCounterId }?.name ?: "Counter 1"} · Service floor"
+        PosTab.TABLES -> serviceCounters.firstOrNull { it.id == state.selectedCounterId }
+            ?.takeIf { serviceCounters.size > 1 }
+            ?.let { "${it.name} · Service floor" }
+            ?: "Service floor"
     }
 
     // Camera Scanner view
@@ -390,6 +411,7 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
                 PosTab.REPORTS -> CounterReportScreen(
                     modifier = Modifier.fillMaxSize().padding(padding),
                     counters = serviceCounters,
+                    registeredWaiterEmails = registeredWaiterEmails,
                     sales = sales,
                     remoteRows = state.counterReport,
                     isLoading = state.isLoadingCounterReport,
@@ -415,7 +437,9 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
                     onOpenTable = viewModel::openTable,
                     onBackToTables = viewModel::backToTables,
                     onAddProduct = viewModel::openTableSale,
-                    onScanProduct = { viewModel.openScanner(ScannerMode.TABLE_ADD) }
+                    onScanProduct = { viewModel.openScanner(ScannerMode.TABLE_ADD) },
+                    showCounterLabels = serviceCounters.size > 1,
+                    registeredWaiterEmails = registeredWaiterEmails
                 )
             }
         }
@@ -428,8 +452,7 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
             initialCounterId = state.selectedServingCounterId ?: state.selectedCounterId ?: serviceCounters.firstOrNull()?.id,
             diningTables = diningTables,
             products = products.filter { it.inMyStock && it.stockQuantity > 0 },
-            availableWaiters = state.availableWaiters,
-            initialWaiter = state.selectedWaiterName,
+            initialWaiter = session.email,
             initialTableId = state.selectedTableId,
             error = state.actionError,
             onDismiss = viewModel::dismissRecordDispensation,
@@ -466,9 +489,7 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
                     serviceCounters = serviceCounters,
                     selectedCounterId = state.selectedServingCounterId ?: state.selectedCounterId ?: serviceCounters.firstOrNull()?.id,
                     onSelectCounter = { id, name -> viewModel.selectServingCounter(id, name) },
-                    availableWaiters = state.availableWaiters,
-                    selectedWaiter = state.selectedWaiterName,
-                    onSelectWaiter = viewModel::selectWaiter,
+                    selectedWaiter = session.email,
                     selectedTableName = selectedTable?.name,
                     onSelectUnit = viewModel::selectSaleUnit,
                     onQuantityChange = viewModel::adjustSaleQuantity,
@@ -573,128 +594,43 @@ fun CounterPosWorkspace(viewModel: CounterPosViewModel) {
     }
 
     if (state.isTeamPanelOpen && role in setOf("owner", "manager") && "employee_management" in enabledFeatures) {
-        var selectedEmployeeId by remember { mutableStateOf<String?>(null) }
-        var startTime by remember { mutableStateOf("09:00") }
-        var endTime by remember { mutableStateOf("17:00") }
-        var removeEmployeeId by remember { mutableStateOf<String?>(null) }
-        var editingCounterId by remember { mutableStateOf<String?>(null) }
-        var counterNameDraft by remember { mutableStateOf("") }
-        var newCounterName by remember { mutableStateOf("") }
-        var businessNameDraft by remember(session.activeBusiness?.shopId, session.activeBusiness?.shopName) {
-            mutableStateOf(session.activeBusiness?.shopName.orEmpty())
-        }
-        LaunchedEffect(Unit) { viewModel.loadEmployeeMembers() }
-        removeEmployeeId?.let { userId ->
-            AlertDialog(
-                onDismissRequest = { removeEmployeeId = null },
-                title = { Text("Remove employee access?") },
-                text = { Text("This disables the employee's access to this business. Their membership record and sales history are retained for audit purposes.") },
-                confirmButton = { Button(onClick = { viewModel.removeEmployeeAccess(userId); removeEmployeeId = null; selectedEmployeeId = null }) { Text("Remove access") } },
-                dismissButton = { TextButton(onClick = { removeEmployeeId = null }) { Text("Cancel") } }
+        Dialog(
+            onDismissRequest = viewModel::closeTeamPanel,
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            OwnerSettingsScreen(
+                state = state,
+                businessName = session.activeBusiness?.shopName.orEmpty(),
+                role = role,
+                registeredCounters = serviceCounters,
+                themeMode = themeMode,
+                onClose = viewModel::closeTeamPanel,
+            onBusinessNameSave = { viewModel.updateBusinessName(it) },
+            onIssueWaiterPass = { viewModel.issueEmployeePass("cashier") },
+            onCopyWaiterPass = { passkey -> clipboardManager.setText(AnnotatedString(passkey)) },
+            onShareWaiterPass = { passkey ->
+                val businessName = session.activeBusiness?.shopName.orEmpty()
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_SUBJECT, "One-time waiter passkey for $businessName")
+                    putExtra(Intent.EXTRA_TEXT, "One-time waiter passkey for $businessName: $passkey\nShare privately. This passkey can be redeemed once.")
+                }
+                context.startActivity(Intent.createChooser(shareIntent, "Share waiter passkey"))
+            },
+            onScanWaiterQr = {
+                viewModel.closeTeamPanel()
+                viewModel.openScanner(ScannerMode.ADMIN_QR)
+            },
+            onLoadMembers = { viewModel.loadEmployeeMembers() },
+            onWaiterStatusChange = { userId, status -> viewModel.setEmployeeStatus(userId, status) },
+            onRemoveWaiter = { userId -> viewModel.removeEmployeeAccess(userId) },
+            onScheduleSave = { userId, schedule -> viewModel.saveEmployeeSchedule(userId, schedule) },
+            onScheduleClear = { userId -> viewModel.clearEmployeeSchedule(userId) },
+            onCounterCreate = { name -> viewModel.createServiceCounter(name) },
+            onCounterRename = { id, name -> viewModel.renameServiceCounter(id, name) },
+                onThemeModeChange = onThemeModeChange
             )
         }
-        AlertDialog(
-            onDismissRequest = viewModel::closeTeamPanel,
-            title = { Text("Manage business team") },
-            text = {
-                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (role == "owner") {
-                        Text("Business profile", fontWeight = FontWeight.SemiBold)
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedTextField(
-                                value = businessNameDraft,
-                                onValueChange = { businessNameDraft = it.take(120) },
-                                label = { Text("Business name") },
-                                singleLine = true,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Button(
-                                onClick = { viewModel.updateBusinessName(businessNameDraft) },
-                                enabled = !state.isSavingBusinessName && businessNameDraft.isNotBlank()
-                            ) { Text(if (state.isSavingBusinessName) "Saving" else "Save") }
-                        }
-                    }
-                    Text("Service counters", fontWeight = FontWeight.SemiBold)
-                    Text("Name each bar or counter. The selected counter is used for sales, stock, and reporting.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    serviceCounters.forEach { counter ->
-                        if (editingCounterId == counter.id) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                OutlinedTextField(value = counterNameDraft, onValueChange = { counterNameDraft = it.take(60) }, label = { Text("Counter name") }, singleLine = true, modifier = Modifier.weight(1f))
-                                Button(onClick = { viewModel.renameServiceCounter(counter.id, counterNameDraft); editingCounterId = null }, enabled = counterNameDraft.isNotBlank()) { Text("Save") }
-                            }
-                        } else {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Text(counter.name, fontWeight = FontWeight.Medium)
-                                TextButton(onClick = { editingCounterId = counter.id; counterNameDraft = counter.name }) { Text("Rename") }
-                            }
-                        }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(value = newCounterName, onValueChange = { newCounterName = it.take(60) }, label = { Text("New counter name") }, singleLine = true, modifier = Modifier.weight(1f))
-                        Button(onClick = { viewModel.createServiceCounter(newCounterName); newCounterName = "" }, enabled = newCounterName.isNotBlank()) { Text("Add") }
-                    }
-                    state.actionError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
-                    Text("Waiter access", fontWeight = FontWeight.SemiBold)
-                    Text(if ("working_hours" in enabledFeatures) "Scan a waiter's secure QR to approve their device, then control whether they can sell and when." else "Scan a waiter's secure QR to approve their device and control whether they can sell.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Issue waiter access", fontWeight = FontWeight.SemiBold)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { viewModel.issueEmployeePass("cashier") }, modifier = Modifier.weight(1f)) { Text("Waiter passkey") }
-                    }
-                    state.employeePasskey?.let { passkey ->
-                        val clipboard = LocalClipboardManager.current
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("One-time passkey", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                Text(passkey, fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(onClick = { clipboard.setText(AnnotatedString(passkey)) }, modifier = Modifier.weight(1f)) { Text("Copy") }
-                                    TextButton(onClick = viewModel::clearEmployeePass, modifier = Modifier.weight(1f)) { Text("Hide") }
-                                }
-                                Text("Send it privately. It can be redeemed once and expires automatically.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                    }
-                    state.employeeMembers.forEach { employee ->
-                        val userId = employee.optString("member_user_id")
-                        val employeeStatus = employee.optString("employment_status", "active")
-                        val employeeRole = employee.optString("role")
-                        val employeeRoleLabel = if (employeeRole == "cashier") "Waiter" else employeeRole.replace('_', ' ').replaceFirstChar { it.uppercase() }
-                            Card(onClick = {
-                                selectedEmployeeId = userId
-                            }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                                Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(employee.optString("email", "Employee"), fontWeight = FontWeight.SemiBold)
-                                Text("$employeeRoleLabel · ${employeeStatus.uppercase()}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    if (employeeStatus == "active") OutlinedButton(onClick = { viewModel.setEmployeeStatus(userId, "suspended") }) { Text("Lock sales") }
-                                    else Button(onClick = { viewModel.setEmployeeStatus(userId, "active") }) { Text("Reactivate") }
-                                    if ("working_hours" in enabledFeatures) OutlinedButton(onClick = { selectedEmployeeId = userId }) { Text("Hours") }
-                                }
-                                if (selectedEmployeeId == userId) {
-                                    Text("Employee details", fontWeight = FontWeight.SemiBold)
-                                    Text("Position: $employeeRoleLabel", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        OutlinedTextField(value = startTime, onValueChange = { startTime = it }, label = { Text("Start") }, singleLine = true, modifier = Modifier.weight(1f))
-                                        OutlinedTextField(value = endTime, onValueChange = { endTime = it }, label = { Text("End") }, singleLine = true, modifier = Modifier.weight(1f))
-                                    }
-                                    Text("Applies Monday–Friday. The server blocks sales outside these hours.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Button(onClick = { (1..5).forEach { day -> viewModel.setEmployeeHours(userId, day, startTime, endTime, true) }; selectedEmployeeId = null }, modifier = Modifier.fillMaxWidth()) { Text("Save weekday hours") }
-                                    if (employeeStatus != "terminated") OutlinedButton(onClick = { removeEmployeeId = userId }, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error), modifier = Modifier.fillMaxWidth()) { Text("Remove employee access") }
-                                }
-                            }
-                        }
-                    }
-                    if (state.employeeMembers.isEmpty()) Text("No waiters enrolled yet. Use Scan employee QR below.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    viewModel.closeTeamPanel()
-                    viewModel.openScanner(ScannerMode.ADMIN_QR)
-                }) { Text("Scan employee QR") }
-            },
-            dismissButton = { TextButton(onClick = viewModel::closeTeamPanel) { Text("Close") } }
-        )
     }
 }
 
@@ -1410,6 +1346,7 @@ private data class ServiceCounterReportData(
 private fun CounterReportScreen(
     modifier: Modifier,
     counters: List<ServiceCounter>,
+    registeredWaiterEmails: Set<String>,
     sales: List<SaleEntity>,
     remoteRows: List<com.alvinb.counterpos.data.remote.CounterReportRow>,
     isLoading: Boolean,
@@ -1425,17 +1362,9 @@ private fun CounterReportScreen(
     val clipboard = LocalClipboardManager.current
     val todayStart = remember { startOfReportDay(System.currentTimeMillis()) }
 
-    val effectiveCounters = remember(counters) {
-        if (counters.isNotEmpty()) counters
-        else listOf(
-            ServiceCounter("counter_1", "Counter 1"),
-            ServiceCounter("counter_2", "Counter 2"),
-            ServiceCounter("counter_3", "Counter 3"),
-            ServiceCounter("counter_4", "Counter 4")
-        )
-    }
+    val effectiveCounters = counters
 
-    val counterReports = remember(effectiveCounters, sales, remoteRows, reportFilter) {
+    val counterReports = remember(effectiveCounters, registeredWaiterEmails, sales, remoteRows, reportFilter) {
         val effectiveSales = if (reportFilter == "today") {
             sales.filter { !it.undone && it.createdAt >= todayStart }
         } else {
@@ -1445,8 +1374,7 @@ private fun CounterReportScreen(
         effectiveCounters.map { counter ->
             val matchingSales = effectiveSales.filter { sale ->
                 sale.counterId == counter.id ||
-                sale.counterName.equals(counter.name, ignoreCase = true) ||
-                (counter.id == "counter_1" && sale.counterId.isNullOrBlank())
+                sale.counterName.equals(counter.name, ignoreCase = true)
             }
 
             val productsMap = matchingSales.groupBy { it.productName to it.unitName }
@@ -1459,7 +1387,9 @@ private fun CounterReportScreen(
                     )
                 }.sortedByDescending { it.totalQuantity }
 
-            val waitersMap = matchingSales.groupBy { it.waiterName?.takeIf(String::isNotBlank) ?: "Amina" }
+            val waitersMap = matchingSales
+                .filter { sale -> sale.waiterName?.trim()?.lowercase(Locale.ROOT)?.let { it in registeredWaiterEmails } == true }
+                .groupBy { sale -> sale.waiterName!!.trim() }
                 .map { (waiter, group) ->
                     val tables = group.mapNotNull { it.tableName?.takeIf(String::isNotBlank) }.distinct()
                     CounterWaiterSummary(
@@ -1483,7 +1413,7 @@ private fun CounterReportScreen(
 
             ServiceCounterReportData(
                 counterId = counter.id,
-                counterName = counter.name,
+                counterName = if (effectiveCounters.size == 1) "Sales" else counter.name,
                 totalItems = finalItems,
                 totalKsh = finalKsh,
                 salesCount = finalSalesCount,
@@ -1561,7 +1491,8 @@ private fun CounterReportScreen(
             ) {
                 Button(
                     onClick = onOpenRecordDispensation,
-                    modifier = Modifier.weight(1.3f)
+                    modifier = Modifier.weight(1.3f),
+                    enabled = counters.isNotEmpty()
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(17.dp))
                     Spacer(Modifier.width(6.dp))
@@ -1618,21 +1549,23 @@ private fun CounterReportScreen(
                         )
                     }
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    FilterChip(
-                        selected = reportCounterFilter == "all",
-                        onClick = { onSetReportCounterFilter("all") },
-                        label = { Text("All Counters (${counterReports.size})", fontSize = 12.sp) }
-                    )
-                    effectiveCounters.forEach { counter ->
+                if (effectiveCounters.size > 1) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
                         FilterChip(
-                            selected = reportCounterFilter == counter.id,
-                            onClick = { onSetReportCounterFilter(counter.id) },
-                            label = { Text(counter.name, fontSize = 12.sp) }
+                            selected = reportCounterFilter == "all",
+                            onClick = { onSetReportCounterFilter("all") },
+                            label = { Text("All counters (${counterReports.size})", fontSize = 12.sp) }
                         )
+                        effectiveCounters.forEach { counter ->
+                            FilterChip(
+                                selected = reportCounterFilter == counter.id,
+                                onClick = { onSetReportCounterFilter(counter.id) },
+                                label = { Text(counter.name, fontSize = 12.sp) }
+                            )
+                        }
                     }
                 }
             }
@@ -1646,6 +1579,16 @@ private fun CounterReportScreen(
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(top = 4.dp)
             )
+        }
+
+        if (effectiveCounters.isEmpty()) {
+            item {
+                Text(
+                    "No service counter is registered for this business yet. Add one in Settings to record sales.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
+                )
+            }
         }
 
         // List of Per-Counter Cards
@@ -1692,7 +1635,7 @@ private fun CounterReportScreen(
                     ) {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Log drink taken from ${counterData.counterName}", fontSize = 12.sp)
+                        Text(if (effectiveCounters.size > 1) "Log drink taken from ${counterData.counterName}" else "Record sale", fontSize = 12.sp)
                     }
 
                     // Products Breakdown
@@ -1703,7 +1646,7 @@ private fun CounterReportScreen(
                     ) {
                         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
-                                "PRODUCTS TAKEN FROM ${counterData.counterName.uppercase()}",
+                                if (effectiveCounters.size > 1) "PRODUCTS TAKEN FROM ${counterData.counterName.uppercase()}" else "PRODUCTS SOLD",
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
@@ -1741,7 +1684,7 @@ private fun CounterReportScreen(
                     ) {
                         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
-                                "ROTATING WAITERS SERVING FROM THIS COUNTER",
+                                if (effectiveCounters.size > 1) "REGISTERED WAITERS SERVING FROM THIS COUNTER" else "REGISTERED WAITERS",
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.secondary
@@ -1756,7 +1699,7 @@ private fun CounterReportScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Column(Modifier.weight(1f)) {
-                                            Text("👤 Waiter ${waiter.waiterName}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            Text(waiter.waiterName, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                             val tablesText = if (waiter.tablesServed.isNotEmpty()) {
                                                 "Served: ${waiter.tablesServed.joinToString(", ")}"
                                             } else {
@@ -2266,9 +2209,7 @@ private fun SaleWithUnitsSheet(
     serviceCounters: List<ServiceCounter> = emptyList(),
     selectedCounterId: String? = null,
     onSelectCounter: ((String, String) -> Unit)? = null,
-    availableWaiters: List<String> = emptyList(),
-    selectedWaiter: String = "Amina",
-    onSelectWaiter: ((String) -> Unit)? = null,
+    selectedWaiter: String = "",
     selectedTableName: String? = null,
     onSelectUnit: (SaleUnit) -> Unit,
     onQuantityChange: (Int) -> Unit,
@@ -2324,7 +2265,7 @@ private fun SaleWithUnitsSheet(
         }
 
         // Source Counter Selector
-        if (serviceCounters.isNotEmpty()) {
+        if (serviceCounters.size > 1) {
             Text(
                 "Source Counter (where drink is taken):",
                 fontWeight = FontWeight.SemiBold,
@@ -2350,32 +2291,12 @@ private fun SaleWithUnitsSheet(
                     )
                 }
             }
+        } else if (serviceCounters.isEmpty()) {
+            Text("No service counter is registered. Ask the owner to configure one in Settings.", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
         }
 
-        // Serving Waiter Selector
-        if (availableWaiters.isNotEmpty()) {
-            Text(
-                "Serving Waiter:",
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp, bottom = 12.dp)
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                availableWaiters.forEach { waiter ->
-                    val isWaiterSelected = waiter.equals(selectedWaiter, ignoreCase = true)
-                    FilterChip(
-                        selected = isWaiterSelected,
-                        onClick = { onSelectWaiter?.invoke(waiter) },
-                        label = { Text(waiter) }
-                    )
-                }
-            }
+        if (selectedWaiter.isNotBlank()) {
+            Text("Recorded by ${selectedWaiter}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
         }
 
         // Unit of Sale Selector (Bottle, Glass, Cup, etc.)
@@ -2471,6 +2392,7 @@ private fun SaleWithUnitsSheet(
 
         Button(
             onClick = onConfirm,
+            enabled = serviceCounters.isNotEmpty() && selectedCounterId != null && units.isNotEmpty() && selectedUnitPrice > 0,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 20.dp)
@@ -2493,21 +2415,17 @@ private fun RecordDispensationBottomSheet(
     initialCounterId: String?,
     diningTables: List<DiningTableEntity>,
     products: List<ProductEntity>,
-    availableWaiters: List<String>,
     initialWaiter: String,
     initialTableId: String?,
     error: String?,
     onDismiss: () -> Unit,
     onRecord: (counterId: String, counterName: String, waiterName: String, tableId: String?, tableName: String?, productCode: String, quantity: Int, unitName: String, unitPriceKsh: Int) -> Unit
 ) {
-    val counters = if (serviceCounters.isNotEmpty()) serviceCounters else listOf(
-        ServiceCounter("counter_1", "Counter 1"),
-        ServiceCounter("counter_2", "Counter 2"),
-        ServiceCounter("counter_3", "Counter 3"),
-        ServiceCounter("counter_4", "Counter 4")
-    )
-    var selectedCounterId by remember(initialCounterId) { mutableStateOf(initialCounterId ?: counters.first().id) }
-    var selectedWaiter by remember(initialWaiter) { mutableStateOf(initialWaiter.ifBlank { "Amina" }) }
+    val counters = serviceCounters
+    var selectedCounterId by remember(initialCounterId, counters) {
+        mutableStateOf(initialCounterId ?: counters.singleOrNull()?.id.orEmpty())
+    }
+    var selectedWaiter by remember(initialWaiter) { mutableStateOf(initialWaiter) }
     var destinationMode by remember { mutableStateOf(if (initialTableId != null) "table" else "walk_in") }
     var selectedTableId by remember(initialTableId) { mutableStateOf(initialTableId ?: diningTables.firstOrNull()?.id) }
     var selectedProductCode by remember(products) { mutableStateOf(products.firstOrNull()?.catalogCode.orEmpty()) }
@@ -2518,9 +2436,9 @@ private fun RecordDispensationBottomSheet(
         if (selectedProduct != null) parseSaleUnits(selectedProduct.salesUnitsJson, selectedProduct.sellingPriceKsh)
         else emptyList()
     }
-    var selectedUnit by remember(units) { mutableStateOf(units.firstOrNull() ?: SaleUnit("Bottle", selectedProduct?.sellingPriceKsh ?: 300)) }
+    var selectedUnit by remember(units) { mutableStateOf(units.firstOrNull() ?: SaleUnit("Bottle", selectedProduct?.sellingPriceKsh ?: 0)) }
 
-    val resolvedCounter = counters.firstOrNull { it.id == selectedCounterId } ?: counters.first()
+    val resolvedCounter = counters.firstOrNull { it.id == selectedCounterId }
     val resolvedTable = if (destinationMode == "table") diningTables.firstOrNull { it.id == selectedTableId } else null
     val totalAmount = selectedUnit.priceKsh * quantity
 
@@ -2545,38 +2463,30 @@ private fun RecordDispensationBottomSheet(
                 }
             }
 
-            // 1. Source Counter
-            Text("1. Source Counter (Where drink is taken):", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                counters.forEach { counter ->
-                    FilterChip(
-                        selected = counter.id == selectedCounterId,
-                        onClick = { selectedCounterId = counter.id },
-                        label = { Text(counter.name) },
-                        leadingIcon = if (counter.id == selectedCounterId) {
-                            { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
-                        } else null
-                    )
+            // A lone counter is implicit; only ask for a source when there is a real choice.
+            if (counters.size > 1) {
+                Text("1. Source counter:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    counters.forEach { counter ->
+                        FilterChip(
+                            selected = counter.id == selectedCounterId,
+                            onClick = { selectedCounterId = counter.id },
+                            label = { Text(counter.name) },
+                            leadingIcon = if (counter.id == selectedCounterId) {
+                                { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                            } else null
+                        )
+                    }
                 }
+            } else if (counters.isEmpty()) {
+                Text("No service counter is configured. Add one in Settings before recording sales.", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
             }
 
-            // 2. Serving Waiter
-            Text("2. Serving Waiter:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                availableWaiters.forEach { waiter ->
-                    FilterChip(
-                        selected = waiter.equals(selectedWaiter, ignoreCase = true),
-                        onClick = { selectedWaiter = waiter },
-                        label = { Text(waiter) }
-                    )
-                }
-            }
+            Text("2. Recorded by:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Text(selectedWaiter.ifBlank { "Signed-in account required" }, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
 
             // 3. Destination (Table vs Direct Walk-in)
             Text("3. Served Destination:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
@@ -2607,7 +2517,7 @@ private fun RecordDispensationBottomSheet(
                         }
                     }
                 } else {
-                    Text("No dining tables set up yet. Will record as Table 1.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("No dining tables yet. Create one in the Tables tab, or choose Direct Walk-in / Bar.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
 
@@ -2658,7 +2568,7 @@ private fun RecordDispensationBottomSheet(
             }
 
             // Summary Card
-            val destinationName = if (destinationMode == "table") resolvedTable?.name ?: "Table" else "Walk-in Client"
+            val destinationName = if (destinationMode == "table") resolvedTable?.name ?: "Select a real table" else "Walk-in Client"
             Surface(
                 shape = RoundedCornerShape(10.dp),
                 color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
@@ -2671,7 +2581,10 @@ private fun RecordDispensationBottomSheet(
                         fontSize = 14.sp
                     )
                     Text(
-                        "Taken from ${resolvedCounter.name} by Waiter $selectedWaiter → Serving $destinationName",
+                        buildString {
+                            if (counters.size > 1) append("${resolvedCounter?.name ?: "Select counter"} · ")
+                            append("Recorded by $selectedWaiter → $destinationName")
+                        },
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
@@ -2692,11 +2605,12 @@ private fun RecordDispensationBottomSheet(
             Button(
                 onClick = {
                     val prodCode = selectedProduct?.catalogCode ?: return@Button
-                    val tId = if (destinationMode == "table") (resolvedTable?.id ?: "table_1") else null
-                    val tName = if (destinationMode == "table") (resolvedTable?.name ?: "Table 1") else "Direct Walk-in"
+                    val counter = resolvedCounter ?: return@Button
+                    val tId = if (destinationMode == "table") resolvedTable?.id ?: return@Button else null
+                    val tName = if (destinationMode == "table") resolvedTable?.name else "Direct Walk-in"
                     onRecord(
-                        resolvedCounter.id,
-                        resolvedCounter.name,
+                        counter.id,
+                        counter.name,
                         selectedWaiter,
                         tId,
                         tName,
@@ -2706,10 +2620,12 @@ private fun RecordDispensationBottomSheet(
                         selectedUnit.priceKsh
                     )
                 },
-                enabled = selectedProduct != null,
+                enabled = selectedProduct != null && resolvedCounter != null && selectedWaiter.isNotBlank() &&
+                    units.isNotEmpty() && selectedUnit.priceKsh > 0 &&
+                    (destinationMode != "table" || resolvedTable != null),
                 modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp)
             ) {
-                Text("Record Dispensation · ${ksh(totalAmount)}", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text("Record sale · ${ksh(totalAmount)}", fontSize = 15.sp, fontWeight = FontWeight.Bold)
             }
         }
     }

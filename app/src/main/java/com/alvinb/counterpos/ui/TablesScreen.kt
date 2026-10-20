@@ -76,7 +76,9 @@ internal fun TablesScreen(
     onOpenTable: (DiningTableEntity) -> Unit,
     onBackToTables: () -> Unit,
     onAddProduct: (String, ProductEntity) -> Unit,
-    onScanProduct: () -> Unit
+    onScanProduct: () -> Unit,
+    showCounterLabels: Boolean = false,
+    registeredWaiterEmails: Set<String> = emptySet()
 ) {
     val context = LocalContext.current
     val selected = tables.firstOrNull { it.id == selectedTableId }
@@ -103,7 +105,7 @@ internal fun TablesScreen(
                         value = newTableName,
                         onValueChange = { newTableName = it.take(40) },
                         label = { Text("Table name") },
-                        placeholder = { Text("e.g. Table 1, Patio A") },
+                        placeholder = { Text("e.g. Patio A, Window 2") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                     )
@@ -269,10 +271,17 @@ internal fun TablesScreen(
                             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
                                     Text(line.productName, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    val counterLabel = line.counterName?.takeIf { it.isNotBlank() } ?: "Counter 1"
-                                    val waiterLabel = line.waiterName?.takeIf { it.isNotBlank() } ?: "Amina"
+                                    val counterLabel = if (showCounterLabels) line.counterName?.takeIf { it.isNotBlank() } else null
+                                    val waiterLabel = line.waiterName?.takeIf {
+                                        it.trim().lowercase(Locale.ROOT) in registeredWaiterEmails
+                                    }
+                                    val attribution = listOfNotNull(
+                                        counterLabel,
+                                        waiterLabel?.let { "Recorded by $it" },
+                                        time(line.servedAt)
+                                    ).joinToString(" · ")
                                     Text(
-                                        "${line.quantity} × ${line.unitName} · ${ksh(line.unitPriceKsh)} · $counterLabel · Waiter: $waiterLabel · ${time(line.servedAt)}",
+                                        "${line.quantity} × ${line.unitName} · ${ksh(line.unitPriceKsh)} · $attribution",
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
