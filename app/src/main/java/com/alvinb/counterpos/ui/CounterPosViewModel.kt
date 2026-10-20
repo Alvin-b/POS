@@ -552,11 +552,12 @@ class CounterPosViewModel(
                                     isScannerOpen = false,
                                     startupError = null,
                                     actionError = null,
-                                    notice = "Approved and enrolled for $businessName as ${role.replace('_', ' ')}."
+                                    notice = if (isPlatformAdmin) {
+                                        "Approved and enrolled the other phone for $businessName as ${role.replace('_', ' ')}. You remain in Superadmin."
+                                    } else {
+                                        "Approved and enrolled for $businessName as ${role.replace('_', ' ')}."
+                                    }
                                 )
-                            }
-                            if (isPlatformAdmin) {
-                                launchBusinessWorkspace(shopId)
                             }
                         }
                         .onFailure { error ->
