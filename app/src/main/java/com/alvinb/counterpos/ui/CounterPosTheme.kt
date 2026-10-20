@@ -2,53 +2,72 @@ package com.alvinb.counterpos.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 private val CounterPosLight = lightColorScheme(
-    primary = Color(0xFF059669),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFD1FAE5),
-    onPrimaryContainer = Color(0xFF064E3B),
-    secondary = Color(0xFFD97706),
-    onSecondary = Color.White,
-    secondaryContainer = Color(0xFFFEF3C7),
-    onSecondaryContainer = Color(0xFF78350F),
-    error = Color(0xFFDC2626),
-    background = Color(0xFFF8FAFC),
-    onBackground = Color(0xFF0F172A),
-    surface = Color.White,
-    onSurface = Color(0xFF0F172A),
-    surfaceVariant = Color(0xFFF1F5F9),
-    onSurfaceVariant = Color(0xFF64748B),
-    outline = Color(0xFFCBD5E1)
+    primary = Color(0xFF087F5B), onPrimary = Color.White,
+    primaryContainer = Color(0xFFD8F3E8), onPrimaryContainer = Color(0xFF07553F),
+    secondary = Color(0xFFE07A22), onSecondary = Color.White,
+    secondaryContainer = Color(0xFFFFE8D2), onSecondaryContainer = Color(0xFF7A3B0A),
+    tertiary = Color(0xFF356859), onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFDDEDE6), onTertiaryContainer = Color(0xFF183B31),
+    error = Color(0xFFB42318), errorContainer = Color(0xFFFEE4E2), onErrorContainer = Color(0xFF7A271A),
+    background = Color(0xFFF5F7F6), onBackground = Color(0xFF17211D),
+    surface = Color(0xFFFFFFFF), onSurface = Color(0xFF17211D),
+    surfaceVariant = Color(0xFFEAF0ED), onSurfaceVariant = Color(0xFF65736C),
+    outline = Color(0xFFD2DDD7), outlineVariant = Color(0xFFE3EBE6)
 )
 
 private val CounterPosDark = darkColorScheme(
-    primary = Color(0xFF10B981),
-    onPrimary = Color(0xFF022C22),
-    primaryContainer = Color(0xFF064E3B),
-    onPrimaryContainer = Color(0xFFA7F3D0),
-    secondary = Color(0xFFF59E0B),
-    onSecondary = Color(0xFF451A03),
-    secondaryContainer = Color(0xFF78350F),
-    onSecondaryContainer = Color(0xFFFDE68A),
-    error = Color(0xFFF87171),
-    background = Color(0xFF0B0F17),
-    onBackground = Color(0xFFF1F5F9),
-    surface = Color(0xFF131B26),
-    onSurface = Color(0xFFF1F5F9),
-    surfaceVariant = Color(0xFF1E293B),
-    onSurfaceVariant = Color(0xFF94A3B8),
-    outline = Color(0xFF334155)
+    primary = Color(0xFF53D39F), onPrimary = Color(0xFF003828),
+    primaryContainer = Color(0xFF07553F), onPrimaryContainer = Color(0xFFB4F2D7),
+    secondary = Color(0xFFFFB36C), onSecondary = Color(0xFF4A2000),
+    secondaryContainer = Color(0xFF713B13), onSecondaryContainer = Color(0xFFFFDCC0),
+    tertiary = Color(0xFFA8D5C4), onTertiary = Color(0xFF11372C),
+    tertiaryContainer = Color(0xFF275447), onTertiaryContainer = Color(0xFFC8EBDD),
+    error = Color(0xFFFFB4AB), errorContainer = Color(0xFF690005), onErrorContainer = Color(0xFFFFDAD6),
+    background = Color(0xFF111815), onBackground = Color(0xFFE5EEE9),
+    surface = Color(0xFF19221E), onSurface = Color(0xFFE5EEE9),
+    surfaceVariant = Color(0xFF25322C), onSurfaceVariant = Color(0xFFB4C4BC),
+    outline = Color(0xFF52635A), outlineVariant = Color(0xFF34433C)
+)
+
+private val CounterPosTypography = Typography().run {
+    copy(
+        displaySmall = displaySmall.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp),
+        headlineSmall = headlineSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.2).sp),
+        titleLarge = titleLarge.copy(fontWeight = FontWeight.Bold),
+        titleMedium = titleMedium.copy(fontWeight = FontWeight.SemiBold),
+        titleSmall = titleSmall.copy(fontWeight = FontWeight.SemiBold),
+        bodyLarge = bodyLarge.copy(lineHeight = 24.sp),
+        bodyMedium = bodyMedium.copy(lineHeight = 21.sp),
+        labelLarge = labelLarge.copy(fontWeight = FontWeight.Bold)
+    )
+}
+
+private val CounterPosShapes = Shapes(
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(20.dp),
+    extraLarge = RoundedCornerShape(28.dp)
 )
 
 @Composable
 fun CounterPosTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = if (isSystemInDarkTheme()) CounterPosDark else CounterPosLight,
+        typography = CounterPosTypography,
+        shapes = CounterPosShapes,
         content = content
     )
 }
