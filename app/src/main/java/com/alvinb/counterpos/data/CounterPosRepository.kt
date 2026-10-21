@@ -747,7 +747,7 @@ class CounterPosRepository(
                 )
             }
         }
-        val tables = buildList {
+        val remoteTables = buildList {
             val rows = remote.diningTables(membership.shopId)
             for (index in 0 until rows.length()) {
                 rows.optJSONObject(index)?.let { row ->
@@ -800,6 +800,10 @@ class CounterPosRepository(
         dao.insertProducts(catalogProducts)
         dao.insertProducts(products)
         dao.insertSales(sales)
+        val seededTableNames = setOf("table 1", "table 2", "table 3", "vip 1", "vip 2")
+        val tables = remoteTables.filter { table ->
+            table.name.trim().lowercase() !in seededTableNames || orders.any { it.tableId == table.id }
+        }
         dao.clearTableOrders()
         dao.clearDiningTables()
         dao.insertDiningTables(tables)

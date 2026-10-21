@@ -17,9 +17,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -33,6 +35,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -88,7 +91,6 @@ internal fun TablesScreen(
     var productQuery by remember { mutableStateOf("") }
     val currentOrders = orders.filter { it.tableId == selectedTableId }
     val tableTotal = currentOrders.sumOf { it.totalKsh.toLong() }
-    val allTablesTotal = orders.sumOf { it.totalKsh.toLong() }
 
     LaunchedEffect(isCreatingTable, selectedTableId) {
         if (!isCreatingTable && selectedTableId != null) showCreateDialog = false
@@ -171,13 +173,10 @@ internal fun TablesScreen(
                     Text("Tables", fontSize = 26.sp, fontWeight = FontWeight.Bold)
                     Text("Open bills", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Button(
+                IconButton(
                     onClick = { newTableName = ""; showCreateDialog = true },
-                    shape = RoundedCornerShape(11.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp)
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Text("Add", modifier = Modifier.padding(start = 5.dp), fontWeight = FontWeight.Bold)
+                    Icon(Icons.Default.Add, contentDescription = "Add table", modifier = Modifier.size(22.dp))
                 }
             }
             if (!actionError.isNullOrBlank() && !showCreateDialog) {
@@ -220,22 +219,6 @@ internal fun TablesScreen(
                             }
                         }
                     }
-                    item(key = "running-total") {
-                        Card(
-                            modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                        ) {
-                            Row(
-                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 15.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("Running total", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                                Text(ksh(allTablesTotal), fontSize = 19.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -252,6 +235,18 @@ internal fun TablesScreen(
                 }
                 IconButton(onClick = { printTableReceipt(context, selected.name, currentOrders, tableTotal) }, enabled = currentOrders.isNotEmpty()) {
                     Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = "Print receipt for ${selected.name}", tint = if (currentOrders.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                tables.forEach { table ->
+                    FilterChip(
+                        selected = table.id == selected.id,
+                        onClick = { onOpenTable(table) },
+                        label = { Text(table.name, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    )
                 }
             }
             if (!actionError.isNullOrBlank()) Text(actionError, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))

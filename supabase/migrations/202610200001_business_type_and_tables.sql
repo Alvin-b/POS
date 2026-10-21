@@ -203,13 +203,6 @@ begin
             end loop;
         end if;
 
-        -- Create starter Dining Tables for Clubs by default
-        insert into public.dining_tables (shop_id, name, created_at) values
-            (v_new_shop_id, 'Table 1', now()),
-            (v_new_shop_id, 'Table 2', now()),
-            (v_new_shop_id, 'Table 3', now()),
-            (v_new_shop_id, 'VIP 1', now()),
-            (v_new_shop_id, 'VIP 2', now());
     end if;
 
     -- 5. Attach Owner if email was provided
