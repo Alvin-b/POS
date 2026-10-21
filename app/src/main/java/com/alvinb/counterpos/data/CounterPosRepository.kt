@@ -51,6 +51,11 @@ data class AdminCreateBusinessResult(
     val createdShopId: String?
 )
 
+private data class BundledProductMetadata(
+    val imageAssetName: String,
+    val verifiedBarcode: String?
+)
+
 class CounterPosRepository(
     context: Context,
     private val dao: CounterPosDao,
@@ -651,18 +656,40 @@ class CounterPosRepository(
             }
         }.getOrDefault(emptyMap())
 
-        // Remote catalog rows augment the bundled image fallback. The remote
+        val bundledMetadataByCode = mutableMapOf<String, BundledProductMetadata>()
+        val bundledMetadataByName = mutableMapOf<String, BundledProductMetadata>()
+        runCatching {
+            val bundledRows = assets.open("counterpos_catalog.json").bufferedReader().use { JSONArray(it.readText()) }
+            for (index in 0 until bundledRows.length()) {
+                val row = bundledRows.optJSONObject(index) ?: continue
+                val metadata = BundledProductMetadata(
+                    imageAssetName = row.optString("imageAssetName", "product_stock_001"),
+                    verifiedBarcode = row.optNullableString("verifiedBarcode")
+                )
+                row.optString("catalogCode").takeIf(String::isNotBlank)?.let { bundledMetadataByCode[it] = metadata }
+                row.optString("name").trim().lowercase(Locale.ROOT).takeIf(String::isNotBlank)?.let { bundledMetadataByName[it] = metadata }
+            }
+        }
+        fun metadataFor(row: JSONObject): BundledProductMetadata? {
+            val code = row.optString("code").ifBlank { row.optString("catalog_code") }
+            return bundledMetadataByCode[code]
+                ?: bundledMetadataByName[row.optString("name").trim().lowercase(Locale.ROOT)]
+        }
+        fun rowCode(row: JSONObject): String = row.optString("code").ifBlank { row.optString("catalog_code") }
+
+        // Remote catalog rows augment the bundled product metadata. The remote
         // product snapshot then replaces matching catalog rows with tenant data.
         val catalogRows = remote.catalog()
         val catalogProducts = buildList {
             for (index in 0 until catalogRows.length()) {
                 catalogRows.optJSONObject(index)?.let { row ->
-                    val code = row.optString("code")
-                    val fallback = dao.getProductByCode(code)?.imageAssetName ?: "product_stock_001"
+                    val code = rowCode(row)
+                    val bundled = metadataFor(row)
+                    val fallback = bundled?.imageAssetName ?: dao.getProductByCode(code)?.imageAssetName ?: "product_stock_001"
                     add(
                         ProductEntity(
                             catalogCode = code,
-                            verifiedBarcode = row.optNullableString("barcode"),
+                            verifiedBarcode = row.optNullableString("barcode") ?: bundled?.verifiedBarcode,
                             name = row.optString("name"),
                             brand = row.optString("brand"),
                             size = row.optString("size"),
@@ -686,12 +713,13 @@ class CounterPosRepository(
         val products = buildList {
             for (index in 0 until productRows.length()) {
                 productRows.optJSONObject(index)?.let { row ->
-                    val code = row.optString("code")
-                    val fallback = dao.getProductByCode(code)?.imageAssetName ?: "product_stock_001"
+                    val code = rowCode(row)
+                    val bundled = metadataFor(row)
+                    val fallback = bundled?.imageAssetName ?: dao.getProductByCode(code)?.imageAssetName ?: "product_stock_001"
                     add(
                         ProductEntity(
                             catalogCode = code,
-                            verifiedBarcode = row.optNullableString("barcode"),
+                            verifiedBarcode = row.optNullableString("barcode") ?: bundled?.verifiedBarcode,
                             name = row.optString("name"),
                             brand = row.optString("brand"),
                             size = row.optString("size"),
