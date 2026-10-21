@@ -107,7 +107,6 @@ fun CounterPosApp(
                 notice = state.notice,
                 onCredentialSignIn = viewModel::signInWithCredential,
                 onQrSignIn = viewModel::signInWithQrRequested,
-                onScanAccessQr = { viewModel.openScanner(ScannerMode.ADMIN_QR) },
                 qrPayload = state.loginQrPayload,
                 onClearError = viewModel::clearStartupError
             )
@@ -160,7 +159,6 @@ private fun AuthScreen(
     notice: String?,
     onCredentialSignIn: (String) -> Unit,
     onQrSignIn: () -> Unit,
-    onScanAccessQr: () -> Unit,
     qrPayload: String?,
     onClearError: () -> Unit
 ) {
@@ -247,7 +245,7 @@ private fun AuthScreen(
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Welcome back", fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     Text(
-                        "Use your passkey or QR code to continue.",
+                        "Enter your access passkey to continue.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 13.sp,
                         lineHeight = 19.sp
@@ -298,7 +296,9 @@ private fun AuthScreen(
                             modifier = Modifier.weight(1f)
                         ) { Text("Continue") }
                     }
-                    if (!notice.isNullOrBlank()) Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                    if (!notice.isNullOrBlank() && !notice.contains("QR", ignoreCase = true)) {
+                        Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                    }
                 }
             }
             }

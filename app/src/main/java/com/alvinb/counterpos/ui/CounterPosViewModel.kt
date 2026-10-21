@@ -62,6 +62,7 @@ private fun isValidHourMinute(value: String): Boolean = HourMinutePattern.matche
 
 data class CounterPosUiState(
     val tab: PosTab = PosTab.SCAN,
+    val previousTab: PosTab? = null,
     val stockMode: StockMode = StockMode.MY_STOCK,
     val searchQuery: String = "",
     val isSearchActive: Boolean = false,
@@ -262,7 +263,9 @@ class CounterPosViewModel(
             }
             .onFailure { error ->
                 val message = error.message.orEmpty()
-                val friendly = if (message.contains("function was not found", ignoreCase = true) || message.contains("404")) {
+                val friendly = if (message.contains("401") || message.contains("unauthorized", ignoreCase = true)) {
+                    "QR sign-in is unavailable right now. Tap Refresh QR to try again."
+                } else if (message.contains("function was not found", ignoreCase = true) || message.contains("404")) {
                     "Secure QR sign-in is not deployed on this Supabase project. Deploy create-access-challenge, then tap Retry."
                 } else if (message.contains("dining_tables", ignoreCase = true) || message.contains("schema cache", ignoreCase = true)) {
                     "QR sign-in cannot start because public.dining_tables is missing in Supabase. Apply supabase/migrations/202610190001_tables.sql, then refresh QR setup. Passkey sign-in is still available."
@@ -322,7 +325,9 @@ class CounterPosViewModel(
                         return pollAccessChallengeUntilApproved(replacement.token, missingQrRetries + 1)
                     }
                 }
-                val friendly = if (qrNotFound) {
+                val friendly = if (message.contains("401") || message.contains("unauthorized", ignoreCase = true)) {
+                    "QR sign-in is unavailable right now. Tap Refresh QR to try again."
+                } else if (qrNotFound) {
                     "The login QR is not registered by the connected backend. Deploy the current create-access-challenge and poll-access-challenge functions to this Supabase project, then tap Retry QR setup."
                 } else if (message.contains("expired", ignoreCase = true) || message.contains("used", ignoreCase = true)) {
                     "This QR code has expired or was already used. Tap Refresh QR to generate a new one."
@@ -943,7 +948,19 @@ class CounterPosViewModel(
     }
 
     fun selectTab(tab: PosTab) = _uiState.update {
-        it.copy(tab = tab, actionError = null, isSearchActive = false, searchQuery = "")
+        if (it.tab == tab) it
+        else it.copy(
+            tab = tab,
+            previousTab = it.tab,
+            actionError = null,
+            isSearchActive = false,
+            searchQuery = ""
+        )
+    }
+
+    fun goBackToPreviousTab() = _uiState.update {
+        val previous = it.previousTab ?: return@update it
+        it.copy(tab = previous, previousTab = null, actionError = null, isSearchActive = false, searchQuery = "")
     }
 
     fun selectCounter(counterId: String) {

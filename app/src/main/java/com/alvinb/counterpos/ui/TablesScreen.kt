@@ -166,17 +166,18 @@ internal fun TablesScreen(
 
     if (selected == null) {
         Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 14.dp)) {
-            Column(Modifier.fillMaxWidth()) {
-                Text("Tables", fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                Text("Open bills", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Tables", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                    Text("Open bills", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 Button(
                     onClick = { newTableName = ""; showCreateDialog = true },
                     shape = RoundedCornerShape(11.dp),
-                    contentPadding = PaddingValues(vertical = 10.dp),
-                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp)
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Text("Add table", modifier = Modifier.padding(start = 5.dp), fontWeight = FontWeight.Bold)
+                    Text("Add", modifier = Modifier.padding(start = 5.dp), fontWeight = FontWeight.Bold)
                 }
             }
             if (!actionError.isNullOrBlank() && !showCreateDialog) {
@@ -245,6 +246,9 @@ internal fun TablesScreen(
                 Column(Modifier.weight(1f)) {
                     Text(selected.name, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     Text("${currentOrders.size} item line${if (currentOrders.size == 1) "" else "s"} served", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = { newTableName = ""; showCreateDialog = true }) {
+                    Icon(Icons.Default.Add, contentDescription = "Add table")
                 }
                 IconButton(onClick = { printTableReceipt(context, selected.name, currentOrders, tableTotal) }, enabled = currentOrders.isNotEmpty()) {
                     Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = "Print receipt for ${selected.name}", tint = if (currentOrders.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)

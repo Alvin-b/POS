@@ -572,7 +572,7 @@ private fun EnrollWaitersTabContent(
             } else {
                 // QR Code Generation Mode
                 Text(
-                    text = "Display this QR code for the waiter. The waiter opens Counter POS on their phone, taps 'Scan access pass QR' on sign-in, and scans this screen to join immediately.",
+                        text = "Display this QR code for the waiter to join the business.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

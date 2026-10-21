@@ -1,5 +1,6 @@
 package com.alvinb.counterpos.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -102,6 +103,7 @@ fun OwnerSettingsScreen(
     onThemeModeChange: (String) -> Unit,
     onOpenStaffManagement: () -> Unit = {}
 ) {
+    BackHandler(onBack = onClose)
     val ownerCanEdit = role.equals("owner", ignoreCase = true)
     val isLiquorStore = businessType.equals("counter_seller", ignoreCase = true)
     var businessNameDraft by remember(businessName) { mutableStateOf(businessName) }
@@ -180,7 +182,7 @@ fun OwnerSettingsScreen(
 
                 SettingsSection(
                     title = "Business profile",
-                    description = "Keep the name your team sees on the workspace.",
+                    description = "Change the business name.",
                     icon = Icons.Default.Business
                 ) {
                     OutlinedTextField(
@@ -208,7 +210,7 @@ fun OwnerSettingsScreen(
 
                 SettingsSection(
                     title = "Waiter access",
-                    description = "Issue a one-time cashier passkey or approve a waiter phone from its pending QR.",
+                    description = "Invite staff or approve a phone.",
                     icon = Icons.Default.Key
                 ) {
                     Button(
@@ -249,11 +251,6 @@ fun OwnerSettingsScreen(
                             Text("Scan waiter QR")
                         }
                     }
-                    Text(
-                        "A passkey creates the waiter account only when the waiter redeems it. Keep it private and share it once.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall
-                    )
                     state.employeePasskey?.takeIf { it.isNotBlank() }?.let { passkey ->
                         Card(
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
@@ -288,7 +285,7 @@ fun OwnerSettingsScreen(
 
                 SettingsSection(
                     title = "Registered waiters",
-                    description = "Only cashier members with a real registered email appear here.",
+                    description = "Manage staff access.",
                     icon = Icons.Default.Store
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -307,7 +304,7 @@ fun OwnerSettingsScreen(
                     }
                     if (waiters.isEmpty()) {
                         Text(
-                            "No waiter account is currently registered for this business. Issue a passkey or scan a waiter QR to add one.",
+                            "No staff yet. Use the actions above to add one.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodyMedium
                         )
@@ -332,20 +329,8 @@ fun OwnerSettingsScreen(
                 }
 
                 SettingsSection(
-                    title = "Duty schedules",
-                    description = "Schedules are evaluated by the server when the waiter authorizes access.",
-                    icon = Icons.Default.Schedule
-                ) {
-                    Text(
-                        "Open a waiter above to edit Sunday–Saturday duty hours. A waiter with no enabled saved schedule has unrestricted access.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-
-                SettingsSection(
                     title = if (isLiquorStore) "Service counter" else "Service counters",
-                    description = if (isLiquorStore) "Liquor store operates with a single register counter." else "Manage multiple counters registered for this club.",
+                    description = if (isLiquorStore) "Your checkout point." else "Manage checkout points.",
                     icon = Icons.Default.Tune
                 ) {
                     if (isLiquorStore) {
@@ -361,7 +346,7 @@ fun OwnerSettingsScreen(
                                     fontSize = 14.sp
                                 )
                                 Text(
-                                    text = "This liquor store uses one checkout register with shared stock. Waiters and cashiers dispense directly from here.",
+                                    text = "Single checkout with shared stock.",
                                     fontSize = 12.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -419,7 +404,7 @@ fun OwnerSettingsScreen(
 
                 SettingsSection(
                     title = "Appearance",
-                    description = "Choose how Counter POS follows the device and business display preference.",
+                    description = "Choose the app theme.",
                     icon = Icons.Default.DarkMode
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -433,11 +418,6 @@ fun OwnerSettingsScreen(
                             )
                         }
                     }
-                    Text(
-                        "The settings surface uses the active Material color scheme, including dark mode.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall
-                    )
                     if (!ownerCanEdit) ReadOnlyHint()
                 }
                 Spacer(Modifier.size(6.dp))

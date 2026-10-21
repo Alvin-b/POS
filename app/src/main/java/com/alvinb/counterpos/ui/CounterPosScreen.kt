@@ -6,6 +6,7 @@ import android.widget.Toast
 import android.graphics.pdf.PdfDocument
 import android.graphics.Paint
 import android.net.Uri
+import androidx.core.content.FileProvider
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -61,6 +62,8 @@ import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.TableRestaurant
 import androidx.compose.material3.AlertDialog
@@ -136,6 +139,7 @@ import com.alvinb.counterpos.ui.scanner.ScannerMode
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
@@ -202,7 +206,7 @@ fun CounterPosWorkspace(
     val enabledFeatures = session.activeBusiness?.featureFlags.orEmpty()
     val rawBusinessType = session.activeBusiness?.businessType.orEmpty().trim().lowercase()
     val isClub = rawBusinessType in setOf("big_club", "club")
-    val supportsTables = isClub && ("tables" in enabledFeatures)
+    val supportsTables = isClub && ("tables" in enabledFeatures || diningTables.isNotEmpty())
     val registeredWaiterEmails = remember(state.employeeMembers) {
         state.employeeMembers.asSequence()
             .filter { it.optString("role").equals("cashier", ignoreCase = true) }
@@ -264,6 +268,16 @@ fun CounterPosWorkspace(
             onBarcodeNotRecognized = viewModel::handleUnrecognizedBarcode
         )
         return
+    }
+
+    BackHandler {
+        when {
+            state.isTeamPanelOpen -> viewModel.closeTeamPanel()
+            state.isStaffManagementOpen -> viewModel.closeStaffManagement()
+            state.tab != PosTab.SCAN && state.previousTab != null -> viewModel.goBackToPreviousTab()
+            state.tab != PosTab.SCAN -> viewModel.selectTab(PosTab.SCAN)
+            else -> Unit
+        }
     }
 
     Scaffold(
@@ -408,8 +422,12 @@ fun CounterPosWorkspace(
                     onUndo = viewModel::undoLastSale,
                     onExportPdf = { start, end ->
                         val filtered = sales.filter { it.createdAt in start..end }
-                        pendingSalesPdf = buildSalesPdf(filtered, start, end)
+                        pendingSalesPdf = buildSalesPdf(filtered, start, end, "Sales report")
                         salesPdfPicker.launch("sales-${formatReportDate(start)}-${formatReportDate(end)}.pdf")
+                    },
+                    onSharePdf = { start, end ->
+                        val filtered = sales.filter { it.createdAt in start..end }
+                        sharePdf(context, buildSalesPdf(filtered, start, end, "Sales report"), "sales-${formatReportDate(start)}.pdf")
                     }
                 )
                 PosTab.REPORTS -> CounterReportScreen(
@@ -428,6 +446,17 @@ fun CounterPosWorkspace(
                     onQuickDispenseForCounter = { counter ->
                         viewModel.selectServingCounter(counter.id, counter.name)
                         viewModel.openRecordDispensation()
+                    },
+                    onExportPdf = {
+                        val start = if (state.reportFilter == "today") startOfReportDay(System.currentTimeMillis()) else sales.minOfOrNull { it.createdAt } ?: startOfReportDay(System.currentTimeMillis())
+                        val end = if (state.reportFilter == "today") endOfReportDay(System.currentTimeMillis()) else System.currentTimeMillis()
+                        pendingSalesPdf = buildSalesPdf(sales.filter { it.createdAt in start..end }, start, end, "Performance report")
+                        salesPdfPicker.launch("report-${formatReportDate(start)}.pdf")
+                    },
+                    onSharePdf = {
+                        val start = if (state.reportFilter == "today") startOfReportDay(System.currentTimeMillis()) else sales.minOfOrNull { it.createdAt } ?: startOfReportDay(System.currentTimeMillis())
+                        val end = if (state.reportFilter == "today") endOfReportDay(System.currentTimeMillis()) else System.currentTimeMillis()
+                        sharePdf(context, buildSalesPdf(sales.filter { it.createdAt in start..end }, start, end, "Performance report"), "report-${formatReportDate(start)}.pdf")
                     }
                 )
                 PosTab.TABLES -> TablesScreen(
@@ -1385,9 +1414,28 @@ private data class ServiceCounterReportData(
 
 /**
  * Reports Screen
- * Tracks drinks taken from each counter (Counter 1, Counter 2, Counter 3, Counter 4)
- * and which rotating waiters served clients/tables.
+ * Focused on sales performance: revenue, drinks sold, top products, and counters.
  */
+@Composable
+private fun ReportMetricCard(
+    label: String,
+    value: String,
+    containerColor: Color,
+    contentColor: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        color = containerColor
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(label, fontSize = 11.sp, color = contentColor.copy(alpha = 0.8f))
+            Text(value, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = contentColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
 @Composable
 private fun CounterReportScreen(
     modifier: Modifier,
@@ -1402,7 +1450,9 @@ private fun CounterReportScreen(
     onSetReportCounterFilter: (String) -> Unit,
     onRefresh: () -> Unit,
     onOpenRecordDispensation: () -> Unit,
-    onQuickDispenseForCounter: (ServiceCounter) -> Unit
+    onQuickDispenseForCounter: (ServiceCounter) -> Unit,
+    onExportPdf: () -> Unit,
+    onSharePdf: () -> Unit
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -1476,7 +1526,21 @@ private fun CounterReportScreen(
 
     val totalClubUnits = counterReports.sumOf { it.totalItems }
     val totalClubRevenue = counterReports.sumOf { it.totalKsh }
-    val activeWaitersCount = counterReports.flatMap { it.waiters }.map { it.waiterName }.distinct().size
+    val totalSalesCount = counterReports.sumOf { it.salesCount }
+    val topProducts = remember(counterReports) {
+        counterReports.flatMap { it.products }
+            .groupBy { it.productName to it.unitName }
+            .map { (key, rows) ->
+                CounterProductSummary(
+                    productName = key.first,
+                    unitName = key.second,
+                    totalQuantity = rows.sumOf { it.totalQuantity },
+                    totalKsh = rows.sumOf { it.totalKsh }
+                )
+            }
+            .sortedByDescending { it.totalQuantity }
+            .take(6)
+    }
 
     fun copyShareableReport() {
         val dateLabel = if (reportFilter == "today") "Today (${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date())})" else "All-Time"
@@ -1485,7 +1549,7 @@ private fun CounterReportScreen(
         sb.appendLine("Period: $dateLabel")
         sb.appendLine("Total Drinks Dispensed: $totalClubUnits")
         sb.appendLine("Total Revenue: ${kshLong(totalClubRevenue)}")
-        sb.appendLine("Active Counters: ${counterReports.size} | Rotating Waiters: $activeWaitersCount")
+        sb.appendLine("Sales: $totalSalesCount | Counters: ${counterReports.size}")
         sb.appendLine("========================================")
         counterReports.forEach { c ->
             sb.appendLine("\n📍 ${c.counterName.uppercase()}:")
@@ -1512,256 +1576,109 @@ private fun CounterReportScreen(
 
     LazyColumn(
         modifier = modifier,
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Title & Refresh
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Reports", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                    Text("Today at a glance", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("Reports", fontSize = 25.sp, fontWeight = FontWeight.Bold)
+                    Text("The numbers that matter", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = onRefresh, enabled = !isLoading) {
                     if (isLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Default.Assessment, contentDescription = "Refresh report")
+                    else Icon(Icons.Default.Refresh, contentDescription = "Refresh reports")
                 }
             }
         }
 
-        // Quick Actions Bar: Log drink + Share Summary
         item {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Button(
-                    onClick = onOpenRecordDispensation,
-                    modifier = Modifier.weight(1.3f),
-                    enabled = counters.isNotEmpty()
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(17.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Log drink", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                }
-                OutlinedButton(
-                    onClick = { copyShareableReport() },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Share", fontSize = 13.sp)
+                listOf("today" to "Today", "all" to "All-time").forEach { (value, label) ->
+                    FilterChip(
+                        selected = reportFilter == value,
+                        onClick = { onSetReportFilter(value) },
+                        label = { Text(label, fontSize = 12.sp) }
+                    )
                 }
             }
         }
 
-        // Overall Club Metric Summary Card
         item {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-            ) {
-                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column {
-                            Text("Drinks", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                            Text("$totalClubUnits", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                        }
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text("Revenue", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                            Text(kshLong(totalClubRevenue), fontSize = 24.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                        }
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("${counterReports.size} counters", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f))
-                        Text("$activeWaitersCount waiters", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f))
-                    }
-                }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ReportMetricCard("Revenue", kshLong(totalClubRevenue), MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer, Modifier.weight(1.2f))
+                ReportMetricCard("Drinks", totalClubUnits.toString(), MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant, Modifier.weight(0.8f))
+                ReportMetricCard("Sales", totalSalesCount.toString(), MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer, Modifier.weight(0.8f))
             }
         }
 
-        // Period & Counter Filters
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    listOf("today" to "Today", "all" to "All-Time").forEach { (filterVal, label) ->
-                        FilterChip(
-                            selected = reportFilter == filterVal,
-                            onClick = { onSetReportFilter(filterVal) },
-                            label = { Text(label, fontSize = 12.sp) }
-                        )
-                    }
-                }
-                if (effectiveCounters.size > 1) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        FilterChip(
-                            selected = reportCounterFilter == "all",
-                            onClick = { onSetReportCounterFilter("all") },
-                            label = { Text("All", fontSize = 12.sp) }
-                        )
-                        effectiveCounters.forEach { counter ->
-                            FilterChip(
-                                selected = reportCounterFilter == counter.id,
-                                onClick = { onSetReportCounterFilter(counter.id) },
-                                label = { Text(counter.name, fontSize = 12.sp) }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // Section label
-        item {
-            Text(
-                "Counters",
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-        }
-
-        if (effectiveCounters.isEmpty()) {
+        item { Text("Top drinks", fontSize = 16.sp, fontWeight = FontWeight.Bold) }
+        if (topProducts.isEmpty()) {
+            item { EmptyStateMessage("No sales recorded for this period.") }
+        } else {
             item {
-                Text(
-                    "No service counter is registered for this business yet. Add one in Settings to record sales.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
-                )
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
+                        topProducts.forEachIndexed { index, product ->
+                            Row(
+                                Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("${index + 1}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.width(24.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(product.productName, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(product.unitName, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text("${product.totalQuantity} sold", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    Text(kshLong(product.totalKsh), fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                            if (index < topProducts.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                        }
+                    }
+                }
             }
         }
 
-        // List of Per-Counter Cards
-        items(visibleReports, key = { it.counterId }) { counterData ->
-            val counterObj = effectiveCounters.firstOrNull { it.id == counterData.counterId } ?: ServiceCounter(counterData.counterId, counterData.counterName)
-            Card(
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), RoundedCornerShape(14.dp))
-            ) {
-                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    // Counter Header
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Surface(
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Default.LocalDrink, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+        if (counterReports.size > 1) {
+            item { Text("By counter", fontSize = 16.sp, fontWeight = FontWeight.Bold) }
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
+                        counterReports.sortedByDescending { it.totalKsh }.forEachIndexed { index, counter ->
+                            Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(counter.counterName, fontWeight = FontWeight.SemiBold)
+                                    Text("${counter.totalItems} drinks · ${counter.salesCount} sales", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
+                                Text(kshLong(counter.totalKsh), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                             }
-                            Spacer(Modifier.width(10.dp))
-                            Column {
-                                Text(counterData.counterName, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                Text("${counterData.salesCount} sales", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text(kshLong(counterData.totalKsh), fontWeight = FontWeight.Bold, fontSize = 17.sp, color = MaterialTheme.colorScheme.primary)
-                            Text("${counterData.totalItems} drinks", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (index < counterReports.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
                         }
                     }
+                }
+            }
+        }
 
-                    // Quick Dispense Button for this counter
-                    OutlinedButton(
-                        onClick = { onQuickDispenseForCounter(counterObj) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (effectiveCounters.size > 1) "Log drink taken from ${counterData.counterName}" else "Record sale", fontSize = 12.sp)
-                    }
-
-                    // Products Breakdown
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(
-                                if (effectiveCounters.size > 1) "DRINKS" else "PRODUCTS SOLD",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            if (counterData.products.isEmpty()) {
-                                Text("No drinks yet", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            } else {
-                                counterData.products.forEach { prod ->
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            "• ${prod.productName} (${prod.unitName})",
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            Text("${prod.totalQuantity} taken", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                            Text(kshLong(prod.totalKsh), fontSize = 12.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Waiter Breakdown for this counter
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(
-                                if (effectiveCounters.size > 1) "WAITERS" else "REGISTERED WAITERS",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.secondary
-                            )
-                            if (counterData.waiters.isEmpty()) {
-                                Text("No waiter activity yet", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            } else {
-                                counterData.waiters.forEach { waiter ->
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(Modifier.weight(1f)) {
-                                            Text(waiter.waiterName, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                            val tablesText = if (waiter.tablesServed.isNotEmpty()) {
-                                                "Served: ${waiter.tablesServed.joinToString(", ")}"
-                                            } else {
-                                                "Walk-in direct clients"
-                                            }
-                                            Text(tablesText, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                        Column(horizontalAlignment = Alignment.End) {
-                                            Text("${waiter.itemsServed} drinks", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                            Text(kshLong(waiter.totalKsh), fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                IconButton(onClick = onSharePdf) {
+                    Icon(Icons.Default.Share, contentDescription = "Share report")
+                }
+                IconButton(onClick = onExportPdf) {
+                    Icon(Icons.Default.FileDownload, contentDescription = "Download report PDF")
                 }
             }
         }
@@ -1776,9 +1693,11 @@ private fun FullscreenSalesScreen(
     sales: List<SaleEntity>,
     todaySummary: Pair<Int, Int>,
     onUndo: () -> Unit,
-    onExportPdf: (Long, Long) -> Unit
+    onExportPdf: (Long, Long) -> Unit,
+    onSharePdf: (Long, Long) -> Unit
 ) {
     var showDateRange by remember { mutableStateOf(false) }
+    var shareAfterDateSelection by remember { mutableStateOf(false) }
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
@@ -1826,13 +1745,18 @@ private fun FullscreenSalesScreen(
                     Text("Undo sale", fontSize = 11.sp, maxLines = 1)
                 }
                 OutlinedButton(
-                    onClick = { showDateRange = true },
-                    modifier = Modifier.weight(1f),
+                    onClick = { shareAfterDateSelection = true; showDateRange = true },
+                    modifier = Modifier.weight(0.5f),
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 9.dp)
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(5.dp))
-                    Text("Export PDF", fontSize = 11.sp, maxLines = 1)
+                    Icon(Icons.Default.Share, contentDescription = "Share sales", modifier = Modifier.size(18.dp))
+                }
+                OutlinedButton(
+                    onClick = { shareAfterDateSelection = false; showDateRange = true },
+                    modifier = Modifier.weight(0.5f),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 9.dp)
+                ) {
+                    Icon(Icons.Default.FileDownload, contentDescription = "Download sales PDF", modifier = Modifier.size(18.dp))
                 }
             }
         }
@@ -1855,7 +1779,7 @@ private fun FullscreenSalesScreen(
             onDismiss = { showDateRange = false },
             onExport = { start, end ->
                 showDateRange = false
-                onExportPdf(start, end)
+                if (shareAfterDateSelection) onSharePdf(start, end) else onExportPdf(start, end)
             }
         )
     }
@@ -1932,38 +1856,73 @@ private fun endOfReportDay(year: Int, month: Int, day: Int): Long = Calendar.get
 
 private fun formatReportDate(time: Long): String = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(time))
 
-private fun buildSalesPdf(sales: List<SaleEntity>, start: Long, end: Long): ByteArray {
+private fun buildSalesPdf(sales: List<SaleEntity>, start: Long, end: Long, title: String): ByteArray {
     val document = PdfDocument()
-    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.BLACK }
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    val navy = android.graphics.Color.rgb(25, 32, 48)
+    val accent = android.graphics.Color.rgb(38, 125, 105)
+    val muted = android.graphics.Color.rgb(100, 108, 120)
     var pageNumber = 1
     var page = document.startPage(PdfDocument.PageInfo.Builder(595, 842, pageNumber).create())
-    var y = 42f
-    fun line(text: String, size: Float = 11f) {
+    var y = 48f
+    fun line(text: String, size: Float = 10f, color: Int = navy, bold: Boolean = false) {
         paint.textSize = size
+        paint.color = color
+        paint.typeface = if (bold) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
         page.canvas.drawText(text, 32f, y, paint)
         y += size + 9f
     }
-    line("Counter POS Sales Report", 18f)
-    line("${formatReportDate(start)} to ${formatReportDate(end)}", 12f)
+    fun divider() {
+        paint.color = android.graphics.Color.rgb(225, 228, 233)
+        paint.strokeWidth = 1f
+        page.canvas.drawLine(32f, y, 563f, y, paint)
+        y += 16f
+    }
+    line("COUNTER POS", 11f, accent, true)
+    line(title, 22f, navy, true)
+    line("${formatReportDate(start)}  —  ${formatReportDate(end)}", 10f, muted)
     y += 8f
+    divider()
+    line("SUMMARY", 10f, accent, true)
+    line("Revenue        KSh ${NumberFormat.getIntegerInstance(Locale.US).format(sales.sumOf { it.totalKsh })}", 12f, navy, true)
+    line("Units sold     ${sales.sumOf { it.quantity }}        Transactions     ${sales.size}", 10f, muted)
+    y += 8f
+    divider()
+    line("SALES DETAIL", 10f, accent, true)
+    line("Date                         Item                                      Total", 9f, muted, true)
     sales.forEach { sale ->
         if (y > 790f) {
             document.finishPage(page)
             pageNumber++
             page = document.startPage(PdfDocument.PageInfo.Builder(595, 842, pageNumber).create())
-            y = 42f
+            y = 48f
+            line("COUNTER POS  ·  $title", 10f, accent, true)
+            divider()
         }
-        line("${formatReportDate(sale.createdAt)}  ${sale.productName.take(34)}")
-        line("  ${sale.quantity} x ${sale.unitName} @ KSh ${sale.unitPriceKsh} = KSh ${sale.totalKsh}", 10f)
+        val product = sale.productName.take(27)
+        line("${formatReportDate(sale.createdAt)}   ${product.padEnd(29)}  KSh ${sale.totalKsh}", 9f)
+        line("                         ${sale.quantity} × ${sale.unitName}", 8f, muted)
     }
     y += 8f
-    line("Total units: ${sales.sumOf { it.quantity }}", 12f)
-    line("Total revenue: KSh ${sales.sumOf { it.totalKsh }}", 12f)
+    divider()
+    line("Generated by Counter POS", 8f, muted)
     document.finishPage(page)
     val output = ByteArrayOutputStream()
     document.writeTo(output)
     document.close()
     return output.toByteArray()
+}
+
+private fun sharePdf(context: android.content.Context, bytes: ByteArray, filename: String) {
+    val directory = File(context.cacheDir, "shared_reports").apply { mkdirs() }
+    val file = File(directory, filename).apply { writeBytes(bytes) }
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "application/pdf"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, "Share PDF report"))
 }
 
 /**
