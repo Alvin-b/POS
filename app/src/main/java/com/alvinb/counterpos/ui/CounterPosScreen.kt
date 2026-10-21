@@ -130,6 +130,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
@@ -3379,9 +3380,25 @@ private fun ProductThumbnail(product: ProductEntity, modifier: Modifier = Modifi
     val imageId = remember(product.imageAssetName) {
         context.resources.getIdentifier(product.imageAssetName, "drawable", context.packageName)
     }
-    if (!product.photoOverrideUri.isNullOrBlank()) {
+    val imageUrl = product.photoOverrideUri?.takeIf(String::isNotBlank)
+        ?: product.imageSourceUrl?.trim()?.takeIf {
+            it.startsWith("https://", ignoreCase = true) || it.startsWith("http://", ignoreCase = true)
+        }
+    if (imageUrl != null) {
+        val request = remember(imageUrl, imageId) {
+            ImageRequest.Builder(context)
+                .data(imageUrl)
+                .crossfade(true)
+                .apply {
+                    if (imageId != 0) {
+                        placeholder(imageId)
+                        error(imageId)
+                    }
+                }
+                .build()
+        }
         AsyncImage(
-            model = product.photoOverrideUri,
+            model = request,
             contentDescription = product.name,
             modifier = modifier,
             contentScale = ContentScale.Fit

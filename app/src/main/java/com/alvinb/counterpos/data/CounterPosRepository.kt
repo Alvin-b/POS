@@ -56,6 +56,13 @@ data class AdminBusinessCreationResult(
     val businesses: List<AdminBusiness>
 )
 
+private data class BundledProductMetadata(
+    val imageAssetName: String,
+    val verifiedBarcode: String?,
+    val productSourceUrl: String?,
+    val imageSourceUrl: String?
+)
+
 class CounterPosRepository(
     private val context: Context,
     private val dao: CounterPosDao,
@@ -622,17 +629,41 @@ class CounterPosRepository(
         dao.insertServiceCounters(counters.map { com.alvinb.counterpos.data.local.entity.ServiceCounterEntity(it.id, membership.shopId, it.name, it.active) })
         dao.clearCounterStockForShop(membership.shopId)
 
+        val bundledMetadataByCode = mutableMapOf<String, BundledProductMetadata>()
+        val bundledMetadataByName = mutableMapOf<String, BundledProductMetadata>()
+        runCatching {
+            val bundledRows = assets.open("counterpos_catalog.json").bufferedReader().use { JSONArray(it.readText()) }
+            for (index in 0 until bundledRows.length()) {
+                val row = bundledRows.optJSONObject(index) ?: continue
+                val metadata = BundledProductMetadata(
+                    imageAssetName = row.optString("imageAssetName", "product_stock_001"),
+                    verifiedBarcode = row.optNullableString("verifiedBarcode"),
+                    productSourceUrl = row.optNullableString("productSourceUrl"),
+                    imageSourceUrl = row.optNullableString("imageSourceUrl")
+                )
+                row.optString("catalogCode").takeIf(String::isNotBlank)?.let { bundledMetadataByCode[it] = metadata }
+                row.optString("name").trim().lowercase(Locale.ROOT).takeIf(String::isNotBlank)?.let { bundledMetadataByName[it] = metadata }
+            }
+        }
+        fun metadataFor(row: JSONObject): BundledProductMetadata? {
+            val code = row.optString("code").ifBlank { row.optString("catalog_code") }
+            return bundledMetadataByCode[code]
+                ?: bundledMetadataByName[row.optString("name").trim().lowercase(Locale.ROOT)]
+        }
+
         // Remote catalog rows augment the bundled image fallback. The remote
         // product snapshot then replaces matching catalog rows with tenant data.
         val catalogProducts = buildList {
             for (index in 0 until catalogRows.length()) {
                 catalogRows.optJSONObject(index)?.let { row ->
-                    val code = row.optString("code")
-                    val fallback = dao.getProductByCode(code)?.imageAssetName ?: "product_stock_001"
+                    val code = row.optString("code").ifBlank { row.optString("catalog_code") }
+                    val bundled = metadataFor(row)
+                    val fallback = bundled?.imageAssetName ?: dao.getProductByCode(code)?.imageAssetName ?: "product_stock_001"
+                    val imageUrl = row.optNullableString("image_url") ?: bundled?.imageSourceUrl
                     add(
                         ProductEntity(
                             catalogCode = code,
-                            verifiedBarcode = row.optNullableString("barcode"),
+                            verifiedBarcode = row.optNullableString("barcode") ?: bundled?.verifiedBarcode,
                             name = row.optString("name"),
                             brand = row.optString("brand"),
                             size = row.optString("size"),
@@ -643,8 +674,8 @@ class CounterPosRepository(
                             inMyStock = false,
                             lowStockThreshold = membership.lowStockThreshold,
                             imageAssetName = fallback,
-                            productSourceUrl = row.optNullableString("image_url"),
-                            imageSourceUrl = row.optNullableString("image_url"),
+                            productSourceUrl = row.optNullableString("product_source_url") ?: bundled?.productSourceUrl,
+                            imageSourceUrl = imageUrl,
                             verificationNote = "Shared backend catalog",
                             remoteId = row.optString("id").takeIf(String::isNotBlank)
                         )
@@ -657,12 +688,14 @@ class CounterPosRepository(
         val products = buildList {
             for (index in 0 until productRows.length()) {
                 productRows.optJSONObject(index)?.let { row ->
-                    val code = row.optString("code")
-                    val fallback = dao.getProductByCode(code)?.imageAssetName ?: "product_stock_001"
+                    val code = row.optString("code").ifBlank { row.optString("catalog_code") }
+                    val bundled = metadataFor(row)
+                    val fallback = bundled?.imageAssetName ?: dao.getProductByCode(code)?.imageAssetName ?: "product_stock_001"
+                    val imageUrl = row.optNullableString("photo_url") ?: bundled?.imageSourceUrl
                     add(
                         ProductEntity(
                             catalogCode = code,
-                            verifiedBarcode = row.optNullableString("barcode"),
+                            verifiedBarcode = row.optNullableString("barcode") ?: bundled?.verifiedBarcode,
                             name = row.optString("name"),
                             brand = row.optString("brand"),
                             size = row.optString("size"),
@@ -674,8 +707,8 @@ class CounterPosRepository(
                             lowStockThreshold = membership.lowStockThreshold,
                             imageAssetName = fallback,
                             photoOverrideUri = row.optNullableString("photo_url"),
-                            productSourceUrl = row.optNullableString("photo_url"),
-                            imageSourceUrl = row.optNullableString("photo_url"),
+                            productSourceUrl = row.optNullableString("product_source_url") ?: bundled?.productSourceUrl,
+                            imageSourceUrl = imageUrl,
                             verificationNote = "Business inventory",
                             salesUnitsJson = serializeSaleUnits(listOf(SaleUnit("Bottle", row.optInt("price", 0)))),
                             remoteId = row.optString("id").takeIf(String::isNotBlank),
