@@ -173,10 +173,13 @@ internal fun TablesScreen(
                     Text("Tables", fontSize = 26.sp, fontWeight = FontWeight.Bold)
                     Text("Open bills", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                IconButton(
+                Button(
                     onClick = { newTableName = ""; showCreateDialog = true },
+                    enabled = !isCreatingTable,
+                    shape = RoundedCornerShape(14.dp)
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = "Add table", modifier = Modifier.size(22.dp))
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(19.dp))
+                    Text("Add table", modifier = Modifier.padding(start = 6.dp), fontWeight = FontWeight.SemiBold)
                 }
             }
             if (!actionError.isNullOrBlank() && !showCreateDialog) {
@@ -188,6 +191,15 @@ internal fun TablesScreen(
                         Icon(Icons.Default.Home, contentDescription = null, modifier = Modifier.size(44.dp), tint = MaterialTheme.colorScheme.primary)
                         Text("No tables yet", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
                         Text("Add a table to start a bill.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        Button(
+                            onClick = { newTableName = ""; showCreateDialog = true },
+                            enabled = !isCreatingTable,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.padding(top = 16.dp)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(19.dp))
+                            Text("Create your first table", modifier = Modifier.padding(start = 6.dp), fontWeight = FontWeight.SemiBold)
+                        }
                     }
                 }
             } else {
