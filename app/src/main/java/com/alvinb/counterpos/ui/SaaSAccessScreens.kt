@@ -106,7 +106,7 @@ fun CounterPosApp(
                 error = state.startupError,
                 notice = state.notice,
                 onCredentialSignIn = viewModel::signInWithCredential,
-                onQrSignIn = viewModel::signInWithQrRequested,
+                onRefreshQr = viewModel::prepareQrChallenge,
                 qrPayload = state.loginQrPayload,
                 onClearError = viewModel::clearStartupError
             )
@@ -158,7 +158,7 @@ private fun AuthScreen(
     error: String?,
     notice: String?,
     onCredentialSignIn: (String) -> Unit,
-    onQrSignIn: () -> Unit,
+    onRefreshQr: () -> Unit,
     qrPayload: String?,
     onClearError: () -> Unit
 ) {
@@ -223,7 +223,7 @@ private fun AuthScreen(
                     message.contains("already used", ignoreCase = true) ||
                     message.contains("used", ignoreCase = true)
             } == true
-            if (qrPayload != null && !qrExpired) LoginQrCard(payload = qrPayload, onRefresh = { onClearError(); onQrSignIn() })
+            if (qrPayload != null && !qrExpired) LoginQrCard(payload = qrPayload, onRefresh = { onClearError(); onRefreshQr() })
             else Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(20.dp),
@@ -232,7 +232,7 @@ private fun AuthScreen(
             ) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(if (qrExpired) "QR code expired" else "QR sign-in unavailable", fontWeight = FontWeight.SemiBold)
-                    OutlinedButton(onClick = { onClearError(); onQrSignIn() }, modifier = Modifier.fillMaxWidth()) { Text("Refresh QR") }
+                    OutlinedButton(onClick = { onClearError(); onRefreshQr() }, modifier = Modifier.fillMaxWidth()) { Text("Refresh QR") }
                 }
             }
             Spacer(Modifier.height(12.dp))

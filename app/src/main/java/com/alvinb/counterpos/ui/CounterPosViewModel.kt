@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.Job
@@ -157,6 +158,7 @@ class CounterPosViewModel(
     val uiState = _uiState.asStateFlow()
     private var mutationInProgress = false
     private var reconnectSyncJob: Job? = null
+    private var loginQrJob: Job? = null
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             reconnectSyncJob?.cancel()
@@ -252,11 +254,14 @@ class CounterPosViewModel(
         }
     }
 
-    fun prepareQrChallenge() = viewModelScope.launch {
-        if (_uiState.value.isQrPolling) return@launch
-        _uiState.update { it.copy(loginQrPayload = null, isQrPolling = false, startupError = null, notice = "Connecting to secure QR sign-in…") }
-        runCatching { repository.createAccessChallenge() }
-            .onSuccess { challenge ->
+    fun prepareQrChallenge() {
+        loginQrJob?.cancel()
+        loginQrJob = viewModelScope.launch {
+            _uiState.update {
+                it.copy(loginQrPayload = null, isQrPolling = false, startupError = null, notice = "Connecting to secure QR sign-in…")
+            }
+            try {
+                val challenge = repository.createAccessChallenge()
                 _uiState.update {
                     it.copy(
                         loginQrPayload = challenge.token,
@@ -267,35 +272,13 @@ class CounterPosViewModel(
                     )
                 }
                 pollAccessChallengeUntilApproved(challenge.token)
-            }
-            .onFailure { error ->
-                val message = error.message.orEmpty()
-                val friendly = if (message.contains("401") || message.contains("unauthorized", ignoreCase = true)) {
-                    "QR sign-in is unavailable right now. Tap Refresh QR to try again."
-                } else if (message.contains("function was not found", ignoreCase = true) || message.contains("404")) {
-                    "Secure QR sign-in is not deployed on this Supabase project. Deploy create-access-challenge, then tap Retry."
-                } else if (message.contains("dining_tables", ignoreCase = true) || message.contains("schema cache", ignoreCase = true)) {
-                    "QR sign-in cannot start because public.dining_tables is missing in Supabase. Apply supabase/migrations/202610190001_tables.sql, then refresh QR setup. Passkey sign-in is still available."
-                } else message.ifBlank { "Could not prepare QR sign-in" }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                val friendly = "QR sign-in is unavailable right now. Tap Refresh QR to try again."
                 _uiState.update { it.copy(loginQrPayload = null, isQrPolling = false, startupError = friendly, notice = null) }
             }
-    }
-
-    fun signInWithQrRequested() = viewModelScope.launch {
-        if (_uiState.value.isQrPolling) return@launch
-        if (_uiState.value.startupError?.contains("expired", ignoreCase = true) == true ||
-            (_uiState.value.loginQrExpiresAtMillis ?: Long.MAX_VALUE) <= System.currentTimeMillis()
-        ) {
-            prepareQrChallenge()
-            return@launch
         }
-        val token = _uiState.value.loginQrPayload
-        if (token.isNullOrBlank()) {
-            prepareQrChallenge()
-            return@launch
-        }
-        _uiState.update { it.copy(isQrPolling = true, startupError = null, notice = "Waiting for administrator approval…") }
-        pollAccessChallengeUntilApproved(token)
     }
 
     private suspend fun pollAccessChallengeUntilApproved(token: String, missingQrRetries: Int = 0) {
@@ -314,6 +297,7 @@ class CounterPosViewModel(
                     return
                 }
             } catch (error: Exception) {
+                if (error is CancellationException) throw error
                 val message = error.message.orEmpty()
                 val qrNotFound = message.contains("qr_not_found", ignoreCase = true) ||
                     (message.contains("qr", ignoreCase = true) && message.contains("not found", ignoreCase = true))
@@ -332,13 +316,11 @@ class CounterPosViewModel(
                         return pollAccessChallengeUntilApproved(replacement.token, missingQrRetries + 1)
                     }
                 }
-                val friendly = if (message.contains("401") || message.contains("unauthorized", ignoreCase = true)) {
-                    "QR sign-in is unavailable right now. Tap Refresh QR to try again."
-                } else if (qrNotFound) {
-                    "The login QR is not registered by the connected backend. Deploy the current create-access-challenge and poll-access-challenge functions to this Supabase project, then tap Retry QR setup."
-                } else if (message.contains("expired", ignoreCase = true) || message.contains("used", ignoreCase = true)) {
+                val friendly = if (message.contains("expired", ignoreCase = true) || message.contains("used", ignoreCase = true)) {
                     "This QR code has expired or was already used. Tap Refresh QR to generate a new one."
-                } else message.ifBlank { "QR sign-in failed" }
+                } else {
+                    "QR sign-in is unavailable right now. Tap Refresh QR to try again."
+                }
                 _uiState.update { it.copy(loginQrPayload = null, isQrPolling = false, startupError = friendly, notice = null) }
                 return
             }
