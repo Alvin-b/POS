@@ -391,7 +391,7 @@ interface CounterPosDao {
         if (quantity < 1 || unitPriceKsh < 1) return false
         val product = getProductByCode(code) ?: return false
         if (!product.inMyStock || product.stockQuantity < 1) return false
-        val stockToDeduct = if (unitName.equals("Bottle", true) || unitName.equals("Can", true)) quantity else 1
+        val stockToDeduct = quantity
         if (product.stockQuantity < stockToDeduct || decrementStock(code, stockToDeduct) != 1) return false
         val total = unitPriceKsh * quantity
         val actualTableName = tableName ?: diningTable.name
@@ -472,7 +472,7 @@ interface CounterPosDao {
     @Transaction
     suspend fun undoLatestSale(): Boolean {
         val sale = getLatestActiveSale() ?: return false
-        val stockToRestore = if (sale.unitName.equals("Bottle", true) || sale.unitName.equals("Can", true)) sale.quantity else 1
+        val stockToRestore = sale.quantity
         if (restoreStock(sale.catalogCode, stockToRestore) != 1) return false
         deleteTableOrderBySaleId(sale.id)
         return markSaleUndone(sale.id) == 1

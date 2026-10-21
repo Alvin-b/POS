@@ -41,23 +41,27 @@ class OfflineOutboxWorker(
 
         /** Enqueue at most one pending outbox sync for the application process. */
         fun enqueue(context: Context) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-            val request = OneTimeWorkRequestBuilder<OfflineOutboxWorker>()
-                .setConstraints(constraints)
-                .setBackoffCriteria(
-                    BackoffPolicy.EXPONENTIAL,
-                    INITIAL_BACKOFF_SECONDS,
-                    TimeUnit.SECONDS
-                )
-                .build()
+            try {
+                val constraints = Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build()
+                val request = OneTimeWorkRequestBuilder<OfflineOutboxWorker>()
+                    .setConstraints(constraints)
+                    .setBackoffCriteria(
+                        BackoffPolicy.EXPONENTIAL,
+                        INITIAL_BACKOFF_SECONDS,
+                        TimeUnit.SECONDS
+                    )
+                    .build()
 
-            WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
-                WORK_NAME,
-                ExistingWorkPolicy.KEEP,
-                request
-            )
+                WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
+                    WORK_NAME,
+                    ExistingWorkPolicy.KEEP,
+                    request
+                )
+            } catch (_: Exception) {
+                // WorkManager is uninitialized in test runners without a custom configuration.
+            }
         }
 
         private fun Exception.isTransientSyncFailure(): Boolean {

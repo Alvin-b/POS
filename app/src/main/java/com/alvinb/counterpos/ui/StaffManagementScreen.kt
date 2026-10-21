@@ -613,7 +613,7 @@ private fun EnrollWaitersTabContent(
                             Surface(
                                 shape = RoundedCornerShape(14.dp),
                                 color = Color.White,
-                                modifier = Modifier.size(180.dp),
+                                modifier = Modifier.size(200.dp),
                                 shadowElevation = 3.dp
                             ) {
                                 Image(

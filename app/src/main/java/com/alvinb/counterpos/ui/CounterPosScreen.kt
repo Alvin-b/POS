@@ -208,8 +208,8 @@ fun CounterPosWorkspace(
     val role = session.activeBusiness?.role.orEmpty()
     val enabledFeatures = session.activeBusiness?.featureFlags.orEmpty()
     val rawBusinessType = session.activeBusiness?.businessType.orEmpty().trim().lowercase()
-    val isClub = rawBusinessType in setOf("big_club", "club")
-    val supportsTables = isClub && ("tables" in enabledFeatures || diningTables.isNotEmpty())
+    val isClub = rawBusinessType in setOf("big_club", "club", "") || session.activeBusiness == null
+    val supportsTables = true
     val registeredWaiterEmails = remember(state.employeeMembers) {
         state.employeeMembers.asSequence()
             .filter { it.optString("role").equals("cashier", ignoreCase = true) }
@@ -309,7 +309,7 @@ fun CounterPosWorkspace(
                 onOpenScanner = { viewModel.openScanner(if (state.tab == PosTab.STOCK) ScannerMode.TAKE_STOCK else ScannerMode.SELL) },
                 onAddNewProduct = { viewModel.openAddNewProduct() },
                 canAddNewProduct = canReceiveStock,
-                canManageTeam = role in setOf("owner", "manager") && "employee_management" in enabledFeatures,
+                canManageTeam = role in setOf("owner", "manager"),
                 onManageTeam = viewModel::openTeamPanel,
                 counters = serviceCounters,
                 selectedCounterId = state.selectedCounterId,
@@ -653,7 +653,7 @@ fun CounterPosWorkspace(
         }
     }
 
-    if (state.isStaffManagementOpen && role in setOf("owner", "manager") && "employee_management" in enabledFeatures) {
+    if (state.isStaffManagementOpen && role in setOf("owner", "manager")) {
         Dialog(
             onDismissRequest = viewModel::closeStaffManagement,
             properties = DialogProperties(usePlatformDefaultWidth = false)

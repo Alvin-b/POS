@@ -40,9 +40,10 @@ fun LoginQrCard(payload: String, onRefresh: () -> Unit = {}) {
         ) {
             Text("Scan to sign in", fontSize = 15.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
             androidx.compose.material3.Surface(
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(14.dp),
                 color = MaterialTheme.colorScheme.surface,
-                modifier = Modifier.size(118.dp)
+                modifier = Modifier.size(200.dp),
+                shadowElevation = 2.dp
             ) {
                 Image(
                     bitmap = bitmap.asImageBitmap(),
@@ -52,7 +53,7 @@ fun LoginQrCard(payload: String, onRefresh: () -> Unit = {}) {
             }
             Text(
                 "Ask the business administrator to scan this code.",
-                fontSize = 11.sp,
+                fontSize = 12.sp,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )

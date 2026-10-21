@@ -804,7 +804,15 @@ class CounterPosRepository(
         }
         dao.clearTableOrders()
         dao.clearDiningTables()
-        dao.insertDiningTables(tables)
+        val allTablesToInsert = buildList {
+            addAll(tables)
+            existingTables.forEach { existing ->
+                if (none { it.id == existing.id || (existing.remoteId != null && it.remoteId == existing.remoteId) }) {
+                    add(existing)
+                }
+            }
+        }
+        dao.insertDiningTables(allTablesToInsert)
         orders.forEach { dao.insertTableOrder(it) }
     }
 
