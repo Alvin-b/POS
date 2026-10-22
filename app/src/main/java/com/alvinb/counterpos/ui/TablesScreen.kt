@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.TableRestaurant
@@ -91,6 +92,7 @@ internal fun TablesScreen(
     var productQuery by remember { mutableStateOf("") }
     val currentOrders = orders.filter { it.tableId == selectedTableId }
     val tableTotal = currentOrders.sumOf { it.totalKsh.toLong() }
+    val productsByCode = remember(products) { products.associateBy { it.catalogCode } }
 
     LaunchedEffect(isCreatingTable, selectedTableId) {
         if (!isCreatingTable && selectedTableId != null) showCreateDialog = false
@@ -153,6 +155,8 @@ internal fun TablesScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            TableProductThumbnail(product = product, modifier = Modifier.size(44.dp))
+                            Spacer(Modifier.size(10.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(product.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text("${product.stockQuantity} in stock · ${product.category}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -188,18 +192,8 @@ internal fun TablesScreen(
             if (tables.isEmpty()) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.TableRestaurant, contentDescription = null, modifier = Modifier.size(44.dp), tint = MaterialTheme.colorScheme.primary)
                         Text("No tables yet", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
-                        Text("Add a table to start a bill.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                        Button(
-                            onClick = { newTableName = ""; showCreateDialog = true },
-                            enabled = !isCreatingTable,
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier.padding(top = 16.dp)
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(19.dp))
-                            Text("Create your first table", modifier = Modifier.padding(start = 6.dp), fontWeight = FontWeight.SemiBold)
-                        }
+                        Text("Tap Add table to create one.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                     }
                 }
             } else {
@@ -272,8 +266,11 @@ internal fun TablesScreen(
             } else {
                 LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                     items(currentOrders, key = { it.id }) { line ->
+                        val product = productsByCode[line.catalogCode]
                         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                TableProductThumbnail(product = product, modifier = Modifier.size(42.dp))
+                                Spacer(Modifier.size(10.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(line.productName, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     val counterLabel = if (showCounterLabels) line.counterName?.takeIf { it.isNotBlank() } else null
@@ -321,6 +318,28 @@ internal fun TablesScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
             )
+        }
+    }
+}
+
+@Composable
+private fun TableProductThumbnail(product: ProductEntity?, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(9.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant
+    ) {
+        Box(Modifier.fillMaxSize().padding(3.dp), contentAlignment = Alignment.Center) {
+            if (product != null) {
+                ProductThumbnail(product, Modifier.fillMaxSize())
+            } else {
+                Icon(
+                    Icons.Default.Inventory2,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
     }
 }

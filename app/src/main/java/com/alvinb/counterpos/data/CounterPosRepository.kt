@@ -811,15 +811,10 @@ class CounterPosRepository(
         }
         dao.clearTableOrders()
         dao.clearDiningTables()
-        val allTablesToInsert = buildList {
-            addAll(tables)
-            existingTables.forEach { existing ->
-                if (none { it.id == existing.id || (existing.remoteId != null && it.remoteId == existing.remoteId) }) {
-                    add(existing)
-                }
-            }
-        }
-        dao.insertDiningTables(allTablesToInsert)
+        // A successful server snapshot is authoritative. Do not carry tables
+        // from an earlier tenant/cache into a business with no server tables.
+        // Pending offline creations are preserved by the outbox guard above.
+        dao.insertDiningTables(tables)
         orders.forEach { dao.insertTableOrder(it) }
     }
 

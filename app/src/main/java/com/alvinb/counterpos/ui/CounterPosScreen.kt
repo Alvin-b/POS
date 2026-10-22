@@ -3375,7 +3375,7 @@ private fun SaleReceiptRow(sale: SaleEntity) {
 }
 
 @Composable
-private fun ProductThumbnail(product: ProductEntity, modifier: Modifier = Modifier) {
+internal fun ProductThumbnail(product: ProductEntity, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val imageId = remember(product.imageAssetName) {
         context.resources.getIdentifier(product.imageAssetName, "drawable", context.packageName)
