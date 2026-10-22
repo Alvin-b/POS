@@ -30,29 +30,35 @@ fun LoginQrCard(payload: String, onRefresh: () -> Unit = {}) {
     val bitmap = remember(payload) { createLoginQr(payload) }
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 18.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text("Scan to sign in", fontSize = 15.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+            Text(
+                "Scan to Sign In",
+                fontSize = 17.sp,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
             androidx.compose.material3.Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surface,
-                modifier = Modifier.size(200.dp),
-                shadowElevation = 2.dp
+                shape = RoundedCornerShape(16.dp),
+                color = androidx.compose.ui.graphics.Color.White,
+                modifier = Modifier.size(240.dp),
+                shadowElevation = 3.dp
             ) {
                 Image(
                     bitmap = bitmap.asImageBitmap(),
                     contentDescription = "Secure business sign-in QR code",
-                    modifier = Modifier.fillMaxSize().padding(10.dp)
+                    modifier = Modifier.fillMaxSize().padding(12.dp)
                 )
             }
             Text(
-                "Ask the business administrator to scan this code.",
+                "Ask the business owner or platform administrator to scan this QR code.",
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onPrimaryContainer

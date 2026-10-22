@@ -223,11 +223,15 @@ class CounterPosViewModel(
     }
 
     fun signInWithPasskey(passkey: String) = _uiState.update {
-        it.copy(startupError = null, notice = null)
+        it.copy(startupError = null, notice = "Verifying access passkey…")
     }.also {
         viewModelScope.launch {
             runCatching { repository.signInWithPasskey(passkey) }
-                .onFailure { error -> _uiState.update { state -> state.copy(startupError = error.message ?: "Passkey sign-in failed") } }
+                .onSuccess { session ->
+                    val shopName = session.activeBusiness?.shopName ?: "business"
+                    _uiState.update { state -> state.copy(startupError = null, notice = "Signed in to $shopName") }
+                }
+                .onFailure { error -> _uiState.update { state -> state.copy(notice = null, startupError = error.message ?: "Passkey sign-in failed") } }
         }
     }
 
@@ -426,18 +430,19 @@ class CounterPosViewModel(
 
     fun generateWaiterEnrollmentQr(role: String = "cashier") = viewModelScope.launch {
         if (_uiState.value.isGeneratingEnrollmentQr) return@launch
+        val normalizedRole = if (role.equals("waiter", ignoreCase = true)) "cashier" else role
         _uiState.update { it.copy(isGeneratingEnrollmentQr = true, actionError = null) }
         try {
-            val pass = repository.createEmployeeAccessPass(role)
+            val pass = repository.createEmployeeAccessPass(normalizedRole)
             val passkey = pass.optString("passkey").trim()
-            require(passkey.isNotBlank()) { "Server did not return a waiter passkey." }
+            require(passkey.isNotBlank()) { "Server did not return a staff passkey." }
             val payload = "CPX1.$passkey"
             _uiState.update {
                 it.copy(
                     waiterEnrollmentQrPayload = payload,
                     employeePasskey = passkey,
                     actionError = null,
-                    notice = "Waiter enrollment QR code generated. Waiter can scan it from their sign-in screen."
+                    notice = "Staff enrollment QR code generated. Staff can scan it from their sign-in screen."
                 )
             }
         } catch (e: Exception) {
@@ -507,24 +512,30 @@ class CounterPosViewModel(
 
     fun issueEmployeePass(role: String = "cashier") = viewModelScope.launch {
         if (_uiState.value.isIssuingEmployeePass) return@launch
-        if (role != "cashier") {
-            _uiState.update { it.copy(actionError = "Waiter is the only employee position currently available.") }
+        val normalizedRole = if (role.equals("waiter", ignoreCase = true)) "cashier" else role
+        if (normalizedRole !in setOf("cashier", "inventory_clerk", "manager")) {
+            _uiState.update { it.copy(actionError = "Choose a valid staff role: Waiter, Inventory, or Manager.") }
             return@launch
         }
         _uiState.update { it.copy(isIssuingEmployeePass = true, employeePasskey = null, actionError = null) }
         try {
-            val pass = repository.createEmployeeAccessPass("cashier")
+            val pass = repository.createEmployeeAccessPass(normalizedRole)
             val passkey = pass.optString("passkey").trim()
-            require(passkey.isNotBlank()) { "The server did not return a waiter passkey." }
+            require(passkey.isNotBlank()) { "The server did not return a staff passkey." }
+            val roleLabel = when (normalizedRole) {
+                "manager" -> "manager"
+                "inventory_clerk" -> "inventory clerk"
+                else -> "waiter"
+            }
             _uiState.update {
                 it.copy(
                     employeePasskey = passkey,
                     actionError = null,
-                    notice = "One-time waiter passkey created. Share it privately; the waiter account is created when it is redeemed."
+                    notice = "One-time $roleLabel passkey created. Share it privately; the account is activated when redeemed."
                 )
             }
         } catch (error: Exception) {
-            _uiState.update { it.copy(actionError = error.message ?: "Could not create waiter passkey") }
+            _uiState.update { it.copy(actionError = error.message ?: "Could not create staff passkey") }
         } finally {
             _uiState.update { it.copy(isIssuingEmployeePass = false) }
         }

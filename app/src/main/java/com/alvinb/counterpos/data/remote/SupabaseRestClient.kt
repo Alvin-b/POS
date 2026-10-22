@@ -116,12 +116,29 @@ class SupabaseRestClient(context: Context) {
     }
 
     suspend fun redeemAccessPass(passkey: String): AccessPassRedemption = withContext(Dispatchers.IO) {
-        val json = parseObject(request("/functions/v1/redeem-access-pass", "POST", JSONObject().put("passkey", passkey.trim()).toString(), false))
+        val rawResponse = try {
+            request("/functions/v1/redeem-access-pass", "POST", JSONObject().put("passkey", passkey.trim()).toString(), false)
+        } catch (e: SupabaseApiException) {
+            val friendly = when (e.message) {
+                "passkey_not_found" -> "Passkey not recognized or already redeemed. Ask the business owner for a new passkey."
+                "passkey_expired" -> "This passkey has expired. Ask the business owner to generate a new passkey."
+                else -> e.message ?: "Invalid passkey"
+            }
+            throw IOException(friendly, e)
+        }
+        val json = parseObject(rawResponse)
         val email = json.optString("email").takeIf(String::isNotBlank)
-            ?: throw IOException(json.optString("error", "Invalid passkey"))
+            ?: throw IOException(
+                when (val err = json.optString("error")) {
+                    "passkey_not_found" -> "Passkey not recognized or already redeemed. Ask the business owner for a new passkey."
+                    "passkey_expired" -> "This passkey has expired. Ask the business owner to generate a new passkey."
+                    else -> err.ifBlank { "Invalid passkey" }
+                }
+            )
+        val shopId = json.optString("business_id").ifBlank { json.optString("shop_id") }.takeIf(String::isNotBlank)
         AccessPassRedemption(
             session = authenticate("password", email, json.optString("password")),
-            businessId = json.optString("business_id").takeIf(String::isNotBlank)
+            businessId = shopId
         )
     }
 
@@ -230,8 +247,8 @@ class SupabaseRestClient(context: Context) {
                             shopId = row.optString("shop_id"),
                             shopName = row.optString("shop_name"),
                             role = row.optString("role"),
-                            status = row.optString("status", "active"),
-                            employmentStatus = row.optString("employment_status", "active"),
+                            status = row.optString("status").ifBlank { "active" },
+                            employmentStatus = row.optString("employment_status").ifBlank { "active" },
                             businessType = bType,
                             businessSize = row.optString("business_size", "medium"),
                             counterInventoryMode = row.optString("counter_inventory_mode", "shared"),
@@ -705,7 +722,7 @@ class SupabaseRestClient(context: Context) {
 
     private fun extractError(body: String, status: Int): String = runCatching {
         val json = JSONObject(body)
-        json.optString("message").ifBlank {
+        val raw = json.optString("message").ifBlank {
             json.optString("error_description").ifBlank {
                 json.optString("msg").ifBlank {
                     json.optString("error").ifBlank {
@@ -713,6 +730,12 @@ class SupabaseRestClient(context: Context) {
                     }
                 }
             }
+        }
+        when (raw) {
+            "passkey_not_found" -> "Passkey not recognized or already redeemed. Ask the business owner for a new passkey."
+            "passkey_expired" -> "This passkey has expired. Ask the business owner to generate a new passkey."
+            "Invalid login credentials" -> "Invalid email or password."
+            else -> raw
         }
     }.getOrDefault(body.ifBlank { "Request failed ($status)" })
 

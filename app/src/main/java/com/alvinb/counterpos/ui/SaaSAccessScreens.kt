@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -106,6 +107,7 @@ fun CounterPosApp(
                 error = state.startupError,
                 notice = state.notice,
                 onCredentialSignIn = viewModel::signInWithCredential,
+                onOpenScanner = { viewModel.openScanner(ScannerMode.ADMIN_QR) },
                 onRefreshQr = viewModel::prepareQrChallenge,
                 qrPayload = state.loginQrPayload,
                 onClearError = viewModel::clearStartupError
@@ -158,6 +160,7 @@ private fun AuthScreen(
     error: String?,
     notice: String?,
     onCredentialSignIn: (String) -> Unit,
+    onOpenScanner: () -> Unit,
     onRefreshQr: () -> Unit,
     qrPayload: String?,
     onClearError: () -> Unit
@@ -245,7 +248,7 @@ private fun AuthScreen(
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Welcome back", fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     Text(
-                        "Enter your access passkey to continue.",
+                        "Enter your access passkey or scan an enrollment QR code to continue.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 13.sp,
                         lineHeight = 19.sp
@@ -283,18 +286,26 @@ private fun AuthScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         OutlinedButton(
+                            onClick = onOpenScanner,
+                            modifier = Modifier.weight(1f).testTag("scan_enrollment_qr_button")
+                        ) {
+                            Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Scan QR", maxLines = 1)
+                        }
+                        OutlinedButton(
                             onClick = { pasteFromClipboard() },
                             modifier = Modifier.weight(1f).testTag("paste_passkey_button")
                         ) {
                             Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Paste")
+                            Spacer(Modifier.width(4.dp))
+                            Text("Paste", maxLines = 1)
                         }
                         Button(
                             onClick = { onCredentialSignIn(credential.trim()) },
                             enabled = credential.isNotBlank(),
-                            modifier = Modifier.weight(1f)
-                        ) { Text("Continue") }
+                            modifier = Modifier.weight(1.1f).testTag("continue_signin_button")
+                        ) { Text("Continue", maxLines = 1) }
                     }
                     if (!notice.isNullOrBlank() && !notice.contains("QR", ignoreCase = true)) {
                         Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)

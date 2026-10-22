@@ -367,7 +367,7 @@ fun CounterPosWorkspace(
                         NavigationBarItem(
                             selected = state.tab == PosTab.TABLES,
                             onClick = { viewModel.selectTab(PosTab.TABLES) },
-                            icon = { Icon(Icons.Default.Home, contentDescription = "Tables", modifier = Modifier.size(20.dp)) },
+                            icon = { Icon(Icons.Default.TableRestaurant, contentDescription = "Tables", modifier = Modifier.size(20.dp)) },
                             label = { Text("Tables", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.TABLES) FontWeight.Bold else FontWeight.Normal) },
                             colors = posNavigationItemColors(),
                             modifier = Modifier.testTag("nav_tables")

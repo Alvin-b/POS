@@ -188,7 +188,7 @@ internal fun TablesScreen(
             if (tables.isEmpty()) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.Home, contentDescription = null, modifier = Modifier.size(44.dp), tint = MaterialTheme.colorScheme.primary)
+                        Icon(Icons.Default.TableRestaurant, contentDescription = null, modifier = Modifier.size(44.dp), tint = MaterialTheme.colorScheme.primary)
                         Text("No tables yet", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
                         Text("Add a table to start a bill.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                         Button(
@@ -220,7 +220,7 @@ internal fun TablesScreen(
                                     modifier = Modifier.size(42.dp)
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Default.Home, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+                                        Icon(Icons.Default.TableRestaurant, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
                                     }
                                 }
                                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
@@ -277,9 +277,7 @@ internal fun TablesScreen(
                                 Column(Modifier.weight(1f)) {
                                     Text(line.productName, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     val counterLabel = if (showCounterLabels) line.counterName?.takeIf { it.isNotBlank() } else null
-                                    val waiterLabel = line.waiterName?.takeIf {
-                                        it.trim().lowercase(Locale.ROOT) in registeredWaiterEmails
-                                    }
+                                    val waiterLabel = line.waiterName?.takeIf { it.isNotBlank() }
                                     val attribution = listOfNotNull(
                                         counterLabel,
                                         waiterLabel?.let { "Recorded by $it" },

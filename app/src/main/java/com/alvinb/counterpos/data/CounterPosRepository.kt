@@ -109,8 +109,9 @@ class CounterPosRepository(
     }
 
     suspend fun signInWithPasskey(passkey: String): SessionSnapshot = withContext(Dispatchers.IO) {
-        require(passkey.trim().isNotBlank()) { "Enter the passkey sent by the business owner." }
-        val redemption = remote.redeemAccessPass(passkey.trim())
+        val clean = passkey.trim().removePrefix("CPX1.").removePrefix("cpx1.").trim()
+        require(clean.isNotBlank()) { "Enter the passkey sent by the business owner." }
+        val redemption = remote.redeemAccessPass(clean)
         loadAccount(autoSelectFirstBusiness = true, preferredShopId = redemption.businessId)
     }
 
@@ -465,9 +466,9 @@ class CounterPosRepository(
             }
             account = cached
             activeBusiness = cached.memberships.firstOrNull { it.shopId == saved?.activeShopId }
-                ?.takeIf { it.status == "active" && it.employmentStatus == "active" }
+                ?.takeIf { it.status !in setOf("suspended", "terminated", "closed") && it.employmentStatus !in setOf("suspended", "terminated", "locked") }
             if (activeBusiness == null && autoSelectFirstBusiness) {
-                activeBusiness = cached.memberships.singleOrNull { it.status == "active" && it.employmentStatus == "active" }
+                activeBusiness = cached.memberships.firstOrNull { it.status !in setOf("suspended", "terminated", "closed") && it.employmentStatus !in setOf("suspended", "terminated", "locked") }
             }
             val offlineSnapshot = publishAccount().copy(message = offlineMessage())
             _session.value = offlineSnapshot
@@ -478,16 +479,19 @@ class CounterPosRepository(
             return offlineSnapshot
         }
 
-        val activeMemberships = account?.memberships?.filter { it.status == "active" && it.employmentStatus == "active" }.orEmpty()
+        val activeMemberships = account?.memberships?.filter {
+            it.status !in setOf("suspended", "terminated", "closed") &&
+            it.employmentStatus !in setOf("suspended", "terminated", "locked")
+        }.orEmpty()
         val savedShopId = saved?.activeShopId
         if (!preferredShopId.isNullOrBlank()) {
-            activeBusiness = activeMemberships.firstOrNull { it.shopId == preferredShopId } ?: activeBusiness
+            activeBusiness = activeMemberships.firstOrNull { it.shopId == preferredShopId }
         }
         if (activeBusiness == null && !savedShopId.isNullOrBlank()) {
             activeBusiness = activeMemberships.firstOrNull { it.shopId == savedShopId }
         }
-        if (autoSelectFirstBusiness && activeBusiness == null && activeMemberships.size == 1) {
-            activeBusiness = activeMemberships.single()
+        if (autoSelectFirstBusiness && activeBusiness == null && activeMemberships.isNotEmpty()) {
+            activeBusiness = activeMemberships.firstOrNull()
         } else if (activeBusiness != null) {
             val refreshed = activeMemberships.firstOrNull { it.shopId == activeBusiness?.shopId }
             if (refreshed != null) {
@@ -796,7 +800,10 @@ class CounterPosRepository(
                             quantity = row.optInt("qty", 1),
                             unitPriceKsh = row.optInt("unit_price", 0),
                             totalKsh = row.optInt("total", 0),
-                            servedAt = parseTimestamp(row.optString("served_at"))
+                            servedAt = parseTimestamp(row.optString("served_at")),
+                            counterId = row.optNullableString("counter_id"),
+                            counterName = row.optNullableString("counter_name"),
+                            waiterName = row.optNullableString("waiter_name") ?: row.optNullableString("waiter_email") ?: row.optNullableString("created_by")
                         )
                     )
                 }
@@ -926,6 +933,8 @@ class CounterPosRepository(
             tableName = dao.getDiningTable(tableId)?.name,
             sourceCounterId = counterId
         )
+        val resolvedCounterName = counterName ?: _serviceCounters.value.firstOrNull { it.id == counterId }?.name
+        val resolvedWaiterName = waiterName ?: account?.email?.substringBefore("@")
         val order = TableOrderEntity(
             tableId = tableId,
             saleId = 0L,
@@ -935,7 +944,10 @@ class CounterPosRepository(
             quantity = quantity,
             unitPriceKsh = unitPriceKsh,
             totalKsh = unitPriceKsh * quantity,
-            servedAt = createdAt
+            servedAt = createdAt,
+            counterId = counterId,
+            counterName = resolvedCounterName,
+            waiterName = resolvedWaiterName
         )
         val payload = JSONObject()
             .put("table_local_id", tableId)
@@ -944,6 +956,10 @@ class CounterPosRepository(
             .put("quantity", quantity)
             .put("unit_name", unitName)
             .put("unit_price", unitPriceKsh)
+            .apply {
+                if (resolvedCounterName != null) put("counter_name", resolvedCounterName)
+                if (resolvedWaiterName != null) put("waiter_name", resolvedWaiterName)
+            }
         val queued = dao.queueTableSaleAtCounter(
             order, sale, newOutbox("table_sale", payload), counterId, stockToDecrement,
             activeBusiness!!.counterInventoryMode == "per_counter"
