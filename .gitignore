@@ -15,7 +15,8 @@
 .cxx
 local.properties
 .env
-debug.keystore
+# The shared debug keystore is intentionally committed so cloned/internal builds
+# can update the same installed emulator app. Never use it for production release.
 
 my-upload-key.jks
 keystore.properties
