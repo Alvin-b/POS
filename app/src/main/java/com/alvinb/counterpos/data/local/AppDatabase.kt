@@ -27,8 +27,8 @@ import com.alvinb.counterpos.data.local.entity.TableOrderEntity
         ServiceCounterEntity::class,
         CounterStockEntity::class
     ],
-    version = 9,
-    exportSchema = false
+    version = 10,
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun counterPosDao(): CounterPosDao
@@ -126,6 +126,13 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE table_orders ADD COLUMN settlementId TEXT")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_table_orders_tableId_settlementId ON table_orders(tableId, settlementId)")
+            }
+        }
+
         private fun ensureColumn(db: SupportSQLiteDatabase, table: String, column: String, declaration: String) {
             val cursor = db.query("PRAGMA table_info($table)")
             val exists = try {
@@ -155,8 +162,9 @@ abstract class AppDatabase : RoomDatabase() {
                 MIGRATION_5_6,
                 MIGRATION_6_7,
                 MIGRATION_7_8,
-                MIGRATION_8_9
-            ).fallbackToDestructiveMigration(dropAllTables = true)
+                MIGRATION_8_9,
+                MIGRATION_9_10
+            )
                 .build().also { instance = it }
         }
     }

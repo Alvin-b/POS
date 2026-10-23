@@ -13,6 +13,7 @@ import com.alvinb.counterpos.data.SessionSnapshot
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.DiningTableEntity
+import com.alvinb.counterpos.data.local.entity.OutboxEntity
 import com.alvinb.counterpos.data.local.entity.SaleUnit
 import com.alvinb.counterpos.data.local.entity.parseSaleUnits
 import com.alvinb.counterpos.data.local.entity.serializeSaleUnits
@@ -82,6 +83,7 @@ data class CounterPosUiState(
     val isLoadingCounterReport: Boolean = false,
     val counterStockByProduct: Map<String, Int> = emptyMap(),
     val isCreatingTable: Boolean = false,
+    val isSettlingTable: Boolean = false,
     val adminSelectedBusinessId: String? = null,
     val adminQrRole: String = "owner",
     val isCreatingAdminBusiness: Boolean = false,
@@ -138,7 +140,11 @@ data class CounterPosUiState(
     val notice: String? = null,
     val isReady: Boolean = false,
     val startupError: String? = null,
-    val pendingSyncCount: Int = 0
+    val pendingSyncCount: Int = 0,
+    val blockedOutbox: List<OutboxEntity> = emptyList(),
+    val isSyncRecoveryOpen: Boolean = false,
+    val syncRecoveryError: String? = null,
+    val retryingOperationId: String? = null
 )
 
 class CounterPosViewModel(
@@ -176,7 +182,7 @@ class CounterPosViewModel(
         viewModelScope.launch {
             repository.session.collect { sess ->
                 if (sess.activeBusiness == null) {
-                    _uiState.update { it.copy(businessHours = BusinessHours.Unrestricted) }
+                    _uiState.update { it.copy(businessHours = BusinessHours.Unrestricted, blockedOutbox = emptyList()) }
                 } else {
                     runCatching { repository.loadBusinessHours() }
                         .onSuccess { hours -> _uiState.update { it.copy(businessHours = hours) } }
@@ -188,6 +194,8 @@ class CounterPosViewModel(
                                 )
                             }
                         }
+                    runCatching { repository.blockedOutboxItems() }
+                        .onSuccess { items -> _uiState.update { it.copy(blockedOutbox = items) } }
                 }
             }
         }
@@ -1039,6 +1047,38 @@ class CounterPosViewModel(
         }
     }
 
+    fun settleTableBill(tableId: String, paymentMethod: String) {
+        if (_uiState.value.isSettlingTable) return
+        _uiState.update { it.copy(isSettlingTable = true, actionError = null) }
+        viewModelScope.launch {
+            runCatching { repository.settleTableBill(tableId, paymentMethod) }
+                .onSuccess { settlement ->
+                    val methodLabel = when (paymentMethod.lowercase()) {
+                        "mpesa" -> "M-Pesa"
+                        "card" -> "Card"
+                        "other" -> "Other"
+                        else -> "Cash"
+                    }
+                    _uiState.update {
+                        it.copy(
+                            isSettlingTable = false,
+                            actionError = null,
+                            notice = if (settlement.synced) {
+                                "Bill paid and closed · $methodLabel · KSh ${"%,d".format(settlement.amountKsh)}. The table is ready for a new bill."
+                            } else {
+                                "Settlement saved to the offline outbox · $methodLabel · KSh ${"%,d".format(settlement.amountKsh)} preview. It will close after the server confirms sync."
+                            }
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(isSettlingTable = false, actionError = error.message ?: "Could not close this table bill.")
+                    }
+                }
+        }
+    }
+
     fun openTableSale(tableId: String, product: ProductEntity) {
         if (!product.inMyStock || product.stockQuantity <= 0) {
             _uiState.update { it.copy(actionError = "${product.name} is out of stock.") }
@@ -1073,6 +1113,36 @@ class CounterPosViewModel(
     fun setLibraryCategory(category: String) = _uiState.update { it.copy(libraryCategory = category) }
 
     fun clearNotice() = _uiState.update { it.copy(notice = null) }
+
+    fun openSyncRecovery() {
+        _uiState.update { it.copy(isSyncRecoveryOpen = true, syncRecoveryError = null) }
+        viewModelScope.launch {
+            runCatching { repository.blockedOutboxItems() }
+                .onSuccess { items -> _uiState.update { it.copy(blockedOutbox = items) } }
+        }
+    }
+
+    fun closeSyncRecovery() = _uiState.update { it.copy(isSyncRecoveryOpen = false, syncRecoveryError = null) }
+
+    fun retryBlockedOutbox(operationId: String) {
+        if (_uiState.value.retryingOperationId != null) return
+        _uiState.update { it.copy(retryingOperationId = operationId, syncRecoveryError = null) }
+        viewModelScope.launch {
+            runCatching { repository.retryBlockedOutbox(operationId) }
+                .onSuccess {
+                    runCatching { repository.blockedOutboxItems() }
+                        .onSuccess { items -> _uiState.update { it.copy(blockedOutbox = items) } }
+                    _uiState.update { it.copy(retryingOperationId = null, notice = "Saved POS change retried") }
+                }
+                .onFailure { error ->
+                    runCatching { repository.blockedOutboxItems() }
+                        .onSuccess { items -> _uiState.update { it.copy(blockedOutbox = items) } }
+                    _uiState.update {
+                        it.copy(retryingOperationId = null, syncRecoveryError = error.message ?: "Could not retry this saved change.")
+                    }
+                }
+        }
+    }
 
     // Scanner
     fun openScanner(mode: ScannerMode) = _uiState.update {

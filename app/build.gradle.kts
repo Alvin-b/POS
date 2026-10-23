@@ -5,6 +5,10 @@ plugins {
   alias(libs.plugins.google.devtools.ksp)
 }
 
+ksp {
+  arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 android {
   namespace = "com.alvinb.counterpos"
   compileSdk { version = release(36) { minorApiLevel = 1 } }

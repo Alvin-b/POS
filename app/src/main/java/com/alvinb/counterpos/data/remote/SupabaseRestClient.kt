@@ -3,6 +3,8 @@ package com.alvinb.counterpos.data.remote
 import android.content.Context
 import com.alvinb.counterpos.BuildConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -94,7 +96,8 @@ data class AccessPassRedemption(
 
 class SupabaseRestClient(context: Context) {
     private val sessionStore = EncryptedSessionStore(context)
-    private var session: AuthSession? = loadSession()
+    private val refreshMutex = Mutex()
+    @Volatile private var session: AuthSession? = loadSession()
 
     val hasSession: Boolean
         get() = session != null
@@ -212,9 +215,8 @@ class SupabaseRestClient(context: Context) {
     }
 
     suspend fun restoreSession(): AuthSession? = withContext(Dispatchers.IO) {
-        session?.let { current ->
+        session?.let {
             runCatching { request("/auth/v1/user", "GET", null, true) }
-                .onFailure { if (it is SupabaseApiException && it.statusCode == 401) refreshSession() }
         }
         session
     }
@@ -240,7 +242,7 @@ class SupabaseRestClient(context: Context) {
                     }
                     val rawFlags = row.optJSONObject("feature_flags")?.keys()?.asSequence()?.filter { key -> row.optJSONObject("feature_flags")?.optBoolean(key, false) == true }?.toSet()
                     val resolvedFlags = if (rawFlags != null && rawFlags.isNotEmpty()) {
-                        if (isClub) rawFlags + "tables" else rawFlags - "tables"
+                        if (isClub) rawFlags else rawFlags - "tables"
                     } else defaultFlags
                     add(
                         BusinessMembership(
@@ -356,6 +358,16 @@ class SupabaseRestClient(context: Context) {
         JSONObject().put("_shop", shopId).put("_table", tableId).put("_product", productId)
             .put("_counter", counterId).put("_qty", quantity).put("_unit_name", unitName).put("_unit_price", unitPrice)
     )
+
+    suspend fun settleTableBill(shopId: String, tableId: String, operationId: String, paymentMethod: String): JSONObject =
+        rpcObject(
+            "settle_table_bill",
+            JSONObject()
+                .put("_shop", shopId)
+                .put("_table", tableId)
+                .put("_operation_id", operationId)
+                .put("_payment_method", paymentMethod)
+        )
 
     suspend fun recordSaleUnit(productId: String, quantity: Int, unitName: String, unitPrice: Int): JSONObject =
         rpcObject(
@@ -636,6 +648,7 @@ class SupabaseRestClient(context: Context) {
         authenticated: Boolean,
         retryOnUnauthorized: Boolean = true
     ): HttpResponse = withContext(Dispatchers.IO) {
+        val requestSession = if (authenticated) session ?: throw IOException("Not signed in") else null
         val connection = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 15_000
@@ -645,8 +658,7 @@ class SupabaseRestClient(context: Context) {
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Content-Type", "application/json")
             if (authenticated) {
-                val token = session?.accessToken ?: throw IOException("Not signed in")
-                setRequestProperty("Authorization", "Bearer $token")
+                setRequestProperty("Authorization", "Bearer ${requestSession!!.accessToken}")
             }
             if (body != null) {
                 doOutput = true
@@ -658,39 +670,49 @@ class SupabaseRestClient(context: Context) {
         val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
         connection.disconnect()
         if (status == HttpURLConnection.HTTP_UNAUTHORIZED && authenticated && retryOnUnauthorized) {
-            if (refreshSession()) {
+            if (refreshSession(requestSession!!.accessToken, requestSession.userId)) {
                 return@withContext requestRaw(path, method, body, authenticated, false)
             }
-            clearSession()
             throw SupabaseUnauthorizedException("Session expired")
         }
         if (status !in 200..299) throw SupabaseApiException(status, extractError(text, status))
         HttpResponse(status, text)
     }
 
-    private suspend fun refreshSession(): Boolean = withContext(Dispatchers.IO) {
-        val old = session ?: return@withContext false
-        runCatching {
-            val response = requestRaw(
-                "/auth/v1/token?grant_type=refresh_token",
-                "POST",
-                JSONObject().put("refresh_token", old.refreshToken).toString(),
-                authenticated = false,
-                retryOnUnauthorized = false
-            )
-            val json = parseObject(response.body)
-            val user = json.optJSONObject("user")
-            val renewed = AuthSession(
-                accessToken = json.optString("access_token"),
-                refreshToken = json.optString("refresh_token", old.refreshToken),
-                userId = user?.optString("id") ?: old.userId,
-                email = user?.optString("email") ?: old.email
-            )
-            if (renewed.accessToken.isBlank()) return@runCatching false
-            saveSession(renewed)
-            true
-        }.getOrDefault(false)
-    }
+    private suspend fun refreshSession(staleAccessToken: String, expectedUserId: String): Boolean =
+        refreshMutex.withLock {
+            val old = session ?: return@withLock false
+            if (old.userId != expectedUserId) return@withLock false
+            // Another request may already have rotated the refresh token while this
+            // request was in flight; reuse that session rather than rotating twice.
+            if (old.accessToken != staleAccessToken) return@withLock true
+            val refreshed = runCatching {
+                val response = requestRaw(
+                    "/auth/v1/token?grant_type=refresh_token",
+                    "POST",
+                    JSONObject().put("refresh_token", old.refreshToken).toString(),
+                    authenticated = false,
+                    retryOnUnauthorized = false
+                )
+                val json = parseObject(response.body)
+                val user = json.optJSONObject("user")
+                val renewed = AuthSession(
+                    accessToken = json.optString("access_token"),
+                    refreshToken = json.optString("refresh_token", old.refreshToken),
+                    userId = user?.optString("id") ?: old.userId,
+                    email = user?.optString("email") ?: old.email
+                )
+                if (renewed.accessToken.isBlank() || renewed.userId != expectedUserId) false
+                else {
+                    saveSession(renewed)
+                    true
+                }
+            }.getOrDefault(false)
+            if (!refreshed && session?.accessToken == old.accessToken && session?.userId == old.userId) {
+                clearSession()
+            }
+            refreshed
+        }
 
     private fun saveSession(value: AuthSession) {
         session = value

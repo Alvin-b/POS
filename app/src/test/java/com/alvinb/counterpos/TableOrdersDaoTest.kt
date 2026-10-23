@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.alvinb.counterpos.data.local.AppDatabase
 import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.ProductEntity
+import com.alvinb.counterpos.data.local.entity.TableOrderEntity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -102,5 +103,30 @@ class TableOrdersDaoTest {
         assertFalse(dao.completeTableSaleWithUnit("table-2", "KE-002", 1, "Bottle", 100, 200L))
         assertTrue(dao.observeTableOrders().first().isEmpty())
         assertTrue(dao.observeSales().first().isEmpty())
+    }
+
+    @Test
+    fun settledBillLinesRemainInHistoryButAreExcludedFromOpenBill() = runBlocking {
+        val dao = database.counterPosDao()
+        dao.insertDiningTable(DiningTableEntity("table-paid", "Garden", 100L))
+        dao.insertTableOrder(TableOrderEntity(
+            tableId = "table-paid", saleId = 10L, catalogCode = "KE-010",
+            productName = "Soda", unitName = "Bottle", quantity = 2,
+            unitPriceKsh = 100, totalKsh = 200, servedAt = 110L
+        ))
+        dao.insertTableOrder(TableOrderEntity(
+            tableId = "table-paid", saleId = 11L, catalogCode = "KE-011",
+            productName = "Water", unitName = "Bottle", quantity = 1,
+            unitPriceKsh = 50, totalKsh = 50, servedAt = 120L
+        ))
+
+        assertEquals(2, dao.openTableOrderCount("table-paid"))
+        assertEquals(250L, dao.openTableBillTotal("table-paid"))
+        assertEquals(2, dao.markTableOrdersSettled("table-paid", "settlement-1"))
+        assertEquals(0, dao.openTableOrderCount("table-paid"))
+        assertEquals(0L, dao.openTableBillTotal("table-paid"))
+        val history = dao.observeTableOrders().first()
+        assertEquals(2, history.size)
+        assertTrue(history.all { it.settlementId == "settlement-1" })
     }
 }

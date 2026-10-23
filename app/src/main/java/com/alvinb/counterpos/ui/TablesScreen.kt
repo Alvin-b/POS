@@ -44,6 +44,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -76,7 +77,11 @@ internal fun TablesScreen(
     selectedTableId: String?,
     actionError: String?,
     isCreatingTable: Boolean,
+    canManageTables: Boolean,
+    canSettleTables: Boolean,
+    isSettlingTable: Boolean,
     onCreateTable: (String) -> Unit,
+    onSettleTable: (String, String) -> Unit,
     onOpenTable: (DiningTableEntity) -> Unit,
     onBackToTables: () -> Unit,
     onAddProduct: (String, ProductEntity) -> Unit,
@@ -90,9 +95,46 @@ internal fun TablesScreen(
     var newTableName by remember { mutableStateOf("") }
     var showProductPicker by remember { mutableStateOf(false) }
     var productQuery by remember { mutableStateOf("") }
-    val currentOrders = orders.filter { it.tableId == selectedTableId }
+    var showSettlementDialog by remember { mutableStateOf(false) }
+    var selectedPaymentMethod by remember { mutableStateOf("cash") }
+    val currentOrders = orders.filter { it.tableId == selectedTableId && it.settlementId == null }
     val tableTotal = currentOrders.sumOf { it.totalKsh.toLong() }
     val productsByCode = remember(products) { products.associateBy { it.catalogCode } }
+
+    if (showSettlementDialog && selected != null) {
+        AlertDialog(
+            onDismissRequest = { if (!isSettlingTable) showSettlementDialog = false },
+            title = { Text("Mark bill paid and close?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("${selected.name} · ${ksh(tableTotal)}")
+                    Text("Choose how the customer paid. This records the method; it does not initiate a payment.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    listOf("cash" to "Cash", "mpesa" to "M-Pesa", "card" to "Card", "other" to "Other").forEach { (value, label) ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable { selectedPaymentMethod = value }.padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = selectedPaymentMethod == value, onClick = { selectedPaymentMethod = value })
+                            Text(label)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onSettleTable(selected.id, selectedPaymentMethod)
+                        showSettlementDialog = false
+                    },
+                    enabled = !isSettlingTable
+                ) {
+                    if (isSettlingTable) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Text("Mark paid & close")
+                }
+            },
+            dismissButton = { TextButton(onClick = { showSettlementDialog = false }, enabled = !isSettlingTable) { Text("Cancel") } }
+        )
+    }
 
     LaunchedEffect(isCreatingTable, selectedTableId) {
         if (!isCreatingTable && selectedTableId != null) showCreateDialog = false
@@ -177,13 +219,15 @@ internal fun TablesScreen(
                     Text("Tables", fontSize = 26.sp, fontWeight = FontWeight.Bold)
                     Text("Open bills", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Button(
-                    onClick = { newTableName = ""; showCreateDialog = true },
-                    enabled = !isCreatingTable,
-                    shape = RoundedCornerShape(14.dp)
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(19.dp))
-                    Text("Add table", modifier = Modifier.padding(start = 6.dp), fontWeight = FontWeight.SemiBold)
+                if (canManageTables) {
+                    Button(
+                        onClick = { newTableName = ""; showCreateDialog = true },
+                        enabled = !isCreatingTable,
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(19.dp))
+                        Text("Add table", modifier = Modifier.padding(start = 6.dp), fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
             if (!actionError.isNullOrBlank() && !showCreateDialog) {
@@ -193,13 +237,13 @@ internal fun TablesScreen(
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("No tables yet", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
-                        Text("Tap Add table to create one.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        Text(if (canManageTables) "Tap Add table to create one." else "Ask an owner or manager to create a table.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                     }
                 }
             } else {
                 LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(top = 12.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(tables, key = { it.id }) { table ->
-                        val lines = orders.filter { it.tableId == table.id }
+                        val lines = orders.filter { it.tableId == table.id && it.settlementId == null }
                         val total = lines.sumOf { it.totalKsh.toLong() }
                         Card(
                             modifier = Modifier.fillMaxWidth().clickable { onOpenTable(table) },
@@ -236,8 +280,10 @@ internal fun TablesScreen(
                     Text(selected.name, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     Text("${currentOrders.size} item line${if (currentOrders.size == 1) "" else "s"} served", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                IconButton(onClick = { newTableName = ""; showCreateDialog = true }) {
-                    Icon(Icons.Default.Add, contentDescription = "Add table")
+                if (canManageTables) {
+                    IconButton(onClick = { newTableName = ""; showCreateDialog = true }) {
+                        Icon(Icons.Default.Add, contentDescription = "Add table")
+                    }
                 }
                 IconButton(onClick = { printTableReceipt(context, selected.name, currentOrders, tableTotal) }, enabled = currentOrders.isNotEmpty()) {
                     Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = "Print receipt for ${selected.name}", tint = if (currentOrders.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -296,6 +342,16 @@ internal fun TablesScreen(
                 Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("Running total", fontWeight = FontWeight.Medium)
                     Text(ksh(tableTotal), fontSize = 19.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+            if (canSettleTables) {
+                Button(
+                    onClick = { selectedPaymentMethod = "cash"; showSettlementDialog = true },
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    enabled = currentOrders.isNotEmpty() && !isSettlingTable
+                ) {
+                    if (isSettlingTable) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Text("Mark paid & close bill")
                 }
             }
             Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -20,6 +20,12 @@ interface CounterPosDao {
     fun observeDiningTables(): Flow<List<DiningTableEntity>>
     @Query("SELECT * FROM table_orders ORDER BY servedAt ASC, id ASC")
     fun observeTableOrders(): Flow<List<TableOrderEntity>>
+    @Query("SELECT COUNT(*) FROM table_orders WHERE tableId = :tableId AND settlementId IS NULL")
+    suspend fun openTableOrderCount(tableId: String): Int
+    @Query("SELECT COALESCE(SUM(totalKsh), 0) FROM table_orders WHERE tableId = :tableId AND settlementId IS NULL")
+    suspend fun openTableBillTotal(tableId: String): Long
+    @Query("UPDATE table_orders SET settlementId = :settlementId WHERE tableId = :tableId AND settlementId IS NULL")
+    suspend fun markTableOrdersSettled(tableId: String, settlementId: String): Int
     @Query("SELECT * FROM service_counters WHERE shopId = :shopId ORDER BY name COLLATE NOCASE ASC")
     suspend fun getServiceCounters(shopId: String): List<ServiceCounterEntity>
     @Query("DELETE FROM service_counters WHERE shopId = :shopId")
@@ -61,6 +67,12 @@ interface CounterPosDao {
     fun observePendingOutboxCount(): Flow<Int>
     @Query("SELECT COUNT(*) FROM sync_outbox WHERE shopId = :shopId")
     suspend fun outboxCount(shopId: String): Int
+    @Query("SELECT COUNT(*) FROM sync_outbox WHERE operationId = :operationId")
+    suspend fun outboxOperationCount(operationId: String): Int
+    @Query("SELECT * FROM sync_outbox WHERE shopId = :shopId AND blocked = 1 ORDER BY createdAt ASC")
+    suspend fun blockedOutbox(shopId: String): List<OutboxEntity>
+    @Query("UPDATE sync_outbox SET blocked = 0, lastError = NULL WHERE operationId = :operationId")
+    suspend fun unblockOutboxItem(operationId: String): Int
     @Query("SELECT COUNT(*) FROM sync_outbox")
     suspend fun outboxCountAll(): Int
     @Query("SELECT COUNT(*) FROM sync_outbox WHERE actorUserId <> :userId")

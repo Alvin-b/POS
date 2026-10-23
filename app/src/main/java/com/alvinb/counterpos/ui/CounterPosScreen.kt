@@ -133,6 +133,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.ProductEntity
+import com.alvinb.counterpos.data.local.entity.OutboxEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.SaleUnit
 import com.alvinb.counterpos.data.local.entity.parseSaleUnits
@@ -209,7 +210,9 @@ fun CounterPosWorkspace(
     val enabledFeatures = session.activeBusiness?.featureFlags.orEmpty()
     val rawBusinessType = session.activeBusiness?.businessType.orEmpty().trim().lowercase()
     val isClub = rawBusinessType in setOf("big_club", "club", "") || session.activeBusiness == null
-    val supportsTables = true
+    val supportsTables = "tables" in enabledFeatures
+    val canManageTables = role in setOf("owner", "manager")
+    val canSettleTables = role in setOf("owner", "manager", "cashier")
     val registeredWaiterEmails = remember(state.employeeMembers) {
         state.employeeMembers.asSequence()
             .filter { it.optString("role").equals("cashier", ignoreCase = true) }
@@ -296,25 +299,43 @@ fun CounterPosWorkspace(
                 })
             },
         topBar = {
-            LeanTopBar(
-                modifier = Modifier.statusBarsPadding(),
-                state = state,
-                businessName = session.activeBusiness?.shopName ?: "Counter POS",
-                subtitle = topBarSubtitle,
-                isPlatformAdmin = session.isPlatformAdmin,
-                onExitToAdmin = viewModel::exitToAdminPortal,
-                onSearchToggle = { active -> viewModel.setSearchActive(active) },
-                onSearchChange = viewModel::setSearchQuery,
-                onClearSearch = viewModel::clearSearch,
-                onOpenScanner = { viewModel.openScanner(if (state.tab == PosTab.STOCK) ScannerMode.TAKE_STOCK else ScannerMode.SELL) },
-                onAddNewProduct = { viewModel.openAddNewProduct() },
-                canAddNewProduct = canReceiveStock,
-                canManageTeam = role in setOf("owner", "manager"),
-                onManageTeam = viewModel::openTeamPanel,
-                counters = serviceCounters,
-                selectedCounterId = state.selectedCounterId,
-                onCounterSelect = viewModel::selectCounter
-            )
+            Column {
+                LeanTopBar(
+                    modifier = Modifier.statusBarsPadding(),
+                    state = state,
+                    businessName = session.activeBusiness?.shopName ?: "Counter POS",
+                    subtitle = topBarSubtitle,
+                    isPlatformAdmin = session.isPlatformAdmin,
+                    onExitToAdmin = viewModel::exitToAdminPortal,
+                    onSearchToggle = { active -> viewModel.setSearchActive(active) },
+                    onSearchChange = viewModel::setSearchQuery,
+                    onClearSearch = viewModel::clearSearch,
+                    onOpenScanner = { viewModel.openScanner(if (state.tab == PosTab.STOCK) ScannerMode.TAKE_STOCK else ScannerMode.SELL) },
+                    onAddNewProduct = { viewModel.openAddNewProduct() },
+                    canAddNewProduct = canReceiveStock,
+                    canManageTeam = role in setOf("owner", "manager"),
+                    onManageTeam = viewModel::openTeamPanel,
+                    counters = serviceCounters,
+                    selectedCounterId = state.selectedCounterId,
+                    onCounterSelect = viewModel::selectCounter
+                )
+                if (state.blockedOutbox.isNotEmpty()) {
+                    Surface(color = MaterialTheme.colorScheme.errorContainer) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 2.dp, bottom = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "${state.blockedOutbox.size} saved change${if (state.blockedOutbox.size == 1) "" else "s"} need attention",
+                                modifier = Modifier.weight(1f),
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                fontSize = 12.sp
+                            )
+                            TextButton(onClick = viewModel::openSyncRecovery) { Text("Review", color = MaterialTheme.colorScheme.onErrorContainer) }
+                        }
+                    }
+                }
+            }
         },
         bottomBar = {
             Surface(
@@ -468,7 +489,11 @@ fun CounterPosWorkspace(
                     selectedTableId = state.selectedTableId,
                     actionError = state.actionError,
                     isCreatingTable = state.isCreatingTable,
+                    canManageTables = canManageTables,
+                    canSettleTables = canSettleTables,
+                    isSettlingTable = state.isSettlingTable,
                     onCreateTable = viewModel::createDiningTable,
+                    onSettleTable = viewModel::settleTableBill,
                     onOpenTable = viewModel::openTable,
                     onBackToTables = viewModel::backToTables,
                     onAddProduct = viewModel::openTableSale,
@@ -478,6 +503,50 @@ fun CounterPosWorkspace(
                 )
             }
         }
+    }
+
+    if (state.isSyncRecoveryOpen) {
+        AlertDialog(
+            onDismissRequest = viewModel::closeSyncRecovery,
+            title = { Text("Saved changes need attention") },
+            text = {
+                Column(Modifier.height(340.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Retry sends the same saved operation ID, so a previously accepted sale is not duplicated.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (!state.syncRecoveryError.isNullOrBlank()) {
+                        Text(state.syncRecoveryError.orEmpty(), color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    }
+                    if (state.blockedOutbox.isEmpty()) {
+                        Text("No blocked changes for this business.", fontSize = 13.sp)
+                    }
+                    state.blockedOutbox.forEach { item ->
+                        val label = when (item.operationType) {
+                            "sale" -> "Sale"
+                            "table_sale" -> "Table sale"
+                            "create_dining_table" -> "Create table"
+                            "add_catalog_product" -> "Add product to stock"
+                            "register_product" -> "Register product"
+                            "add_stock" -> "Receive stock"
+                            "transfer_stock" -> "Transfer stock"
+                            else -> item.operationType.replace('_', ' ').replaceFirstChar { it.uppercase() }
+                        }
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(label, fontWeight = FontWeight.SemiBold)
+                                Text(item.lastError ?: "The server could not accept this saved change.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                TextButton(
+                                    onClick = { viewModel.retryBlockedOutbox(item.operationId) },
+                                    enabled = state.retryingOperationId == null
+                                ) {
+                                    if (state.retryingOperationId == item.operationId) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    else Text("Retry")
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = viewModel::closeSyncRecovery) { Text("Done") } }
+        )
     }
 
     // Modal: Record Counter Dispensation (Simple logging of drinks taken from a counter)

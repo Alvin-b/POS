@@ -51,6 +51,8 @@ data class SessionSnapshot(
     val error: String? = null
 )
 
+data class TableSettlementResult(val amountKsh: Long, val synced: Boolean)
+
 data class AdminBusinessCreationResult(
     val createdShopId: String?,
     val businesses: List<AdminBusiness>
@@ -88,6 +90,23 @@ class CounterPosRepository(
     private val outboxClock = AtomicLong(0L)
 
     suspend fun pendingOutboxCount(): Int = activeBusiness?.let { dao.outboxCount(it.shopId) } ?: 0
+
+    suspend fun blockedOutboxItems(): List<OutboxEntity> = activeBusiness?.let { dao.blockedOutbox(it.shopId) }.orEmpty()
+
+    suspend fun retryBlockedOutbox(operationId: String) = withContext(Dispatchers.IO) {
+        val shop = activeBusiness ?: throw IllegalStateException("Select an active business first.")
+        val userId = account?.userId?.takeIf(String::isNotBlank)
+            ?: throw IllegalStateException("Sign in with the account that created this change.")
+        val item = dao.blockedOutbox(shop.shopId).firstOrNull { it.operationId == operationId }
+            ?: throw IllegalStateException("This saved change is no longer waiting for attention.")
+        check(item.actorUserId == userId) { "Sign in with the account that created this change before retrying it." }
+        check(dao.unblockOutboxItem(operationId) == 1) { "Could not retry this saved change." }
+        syncPendingOutbox()
+        val stillBlocked = dao.blockedOutbox(shop.shopId).firstOrNull { it.operationId == operationId }
+        if (stillBlocked != null) {
+            throw IllegalStateException(stillBlocked.lastError ?: "The server still cannot accept this saved change.")
+        }
+    }
 
     suspend fun restoreSession(): SessionSnapshot = withContext(Dispatchers.IO) {
         if (remote.restoreSession() == null) {
@@ -803,7 +822,8 @@ class CounterPosRepository(
                             servedAt = parseTimestamp(row.optString("served_at")),
                             counterId = row.optNullableString("counter_id"),
                             counterName = row.optNullableString("counter_name"),
-                            waiterName = row.optNullableString("waiter_name") ?: row.optNullableString("waiter_email") ?: row.optNullableString("created_by")
+                            waiterName = row.optNullableString("waiter_name") ?: row.optNullableString("waiter_email") ?: row.optNullableString("created_by"),
+                            settlementId = row.optNullableString("settlement_id")
                         )
                     )
                 }
@@ -896,6 +916,26 @@ class CounterPosRepository(
         }
     }
 
+    suspend fun settleTableBill(tableId: String, paymentMethod: String): TableSettlementResult = withActiveBusiness {
+        val method = paymentMethod.trim().lowercase(Locale.ROOT)
+        require(method in setOf("cash", "mpesa", "card", "other")) { "Choose a valid payment method." }
+        val shop = activeBusiness ?: throw IllegalStateException("Select an active business first.")
+        check(dao.outboxCount(shop.shopId) == 0) { "Sync pending POS changes before closing a table bill." }
+        val table = dao.getDiningTable(tableId) ?: throw IllegalStateException("This table is no longer available.")
+        check(dao.openTableOrderCount(tableId) > 0) { "There is no open bill to close." }
+        val amount = dao.openTableBillTotal(tableId)
+        check(amount > 0L) { "There is no open bill to close." }
+        val operation = newOutbox(
+            "settle_table_bill",
+            JSONObject().put("table_local_id", table.id).put("payment_method", method)
+        )
+        dao.enqueueOutbox(operation)
+        val syncedResults = scheduleAndAttemptSync()
+        val stillPending = dao.outboxOperationCount(operation.operationId) > 0
+        val serverAmount = syncedResults[operation.operationId]?.optLong("amount", amount) ?: amount
+        TableSettlementResult(serverAmount, synced = !stillPending)
+    }
+
     suspend fun sellToTable(
         tableId: String,
         code: String,
@@ -907,6 +947,13 @@ class CounterPosRepository(
         waiterName: String? = null
     ): Boolean = withActiveProduct(code) { product ->
         require(quantity > 0 && unitPriceKsh > 0) { "Enter a valid sale quantity and price." }
+        val shopId = activeBusiness?.shopId ?: throw IllegalStateException("Select an active business first.")
+        val tableOperations = dao.pendingOutbox(shopId) + dao.blockedOutbox(shopId)
+        val settlementPending = tableOperations.any { item ->
+            item.operationType == "settle_table_bill" &&
+                JSONObject(item.payloadJson).optString("table_local_id") == tableId
+        }
+        check(!settlementPending) { "This table bill is waiting for payment settlement to sync before more items can be added." }
         val counterId = selectedCounterId?.takeIf(String::isNotBlank)
             ?: throw IllegalStateException("Choose the serving counter before adding items to a table.")
         val stockToDecrement = if (unitName.equals("Bottle", true) || unitName.equals("Can", true)) quantity else 1
@@ -1240,10 +1287,11 @@ class CounterPosRepository(
         }
     }
 
-    suspend fun syncPendingOutbox() = withContext(Dispatchers.IO) {
-        val shop = activeBusiness ?: return@withContext
-        val userId = account?.userId?.takeIf(String::isNotBlank) ?: return@withContext
+    suspend fun syncPendingOutbox(): Map<String, JSONObject> = withContext(Dispatchers.IO) {
+        val shop = activeBusiness ?: return@withContext emptyMap()
+        val userId = account?.userId?.takeIf(String::isNotBlank) ?: return@withContext emptyMap()
         syncMutex.withLock {
+            val syncedResults = mutableMapOf<String, JSONObject>()
             while (true) {
                 val item = dao.nextPendingOutbox(shop.shopId) ?: break
                 if (item.actorUserId != userId) {
@@ -1252,9 +1300,19 @@ class CounterPosRepository(
                 }
                 try {
                     val payload = prepareOutboxPayload(item)
-                    val result = remote.applyPosOperation(item.shopId, item.operationId, item.operationType, payload)
+                    val result = if (item.operationType == "settle_table_bill") {
+                        remote.settleTableBill(
+                            item.shopId,
+                            payload.optString("table_id"),
+                            item.operationId,
+                            payload.optString("payment_method")
+                        )
+                    } else {
+                        remote.applyPosOperation(item.shopId, item.operationId, item.operationType, payload)
+                    }
                     reconcileOutboxResult(item, JSONObject(item.payloadJson), result)
                     dao.acknowledgeOutboxItem(item.operationId)
+                    syncedResults[item.operationId] = result
                 } catch (error: Exception) {
                     if (error is SupabaseUnauthorizedException) {
                         dao.recordOutboxAttempt(item.operationId, error.message)
@@ -1275,6 +1333,7 @@ class CounterPosRepository(
                 runCatching { syncBusiness(shop) }
                     .onFailure { error -> if (isRetryable(error)) _session.value = _session.value.copy(message = offlineMessage()) }
             }
+            syncedResults
         }
     }
 
@@ -1294,6 +1353,13 @@ class CounterPosRepository(
             .put("unit_price", local.optInt("unit_price", 0))
         return when (item.operationType) {
             "create_dining_table" -> JSONObject().put("name", local.optString("name"))
+            "settle_table_bill" -> {
+                val table = dao.getDiningTable(local.optString("table_local_id"))
+                    ?: throw java.io.IOException("Waiting for the queued table to be available.")
+                val tableId = table.remoteId?.takeIf(String::isNotBlank)
+                    ?: throw java.io.IOException("Waiting for the queued table creation to sync first.")
+                JSONObject().put("table_id", tableId).put("payment_method", local.optString("payment_method"))
+            }
             "sale" -> coreSaleFields()
             "table_sale" -> {
                 val table = dao.getDiningTable(local.optString("table_local_id"))
@@ -1362,6 +1428,12 @@ class CounterPosRepository(
                     ?: result.optString("id").takeIf(String::isNotBlank)
                 if (localId.isNotBlank() && remoteId != null) dao.setDiningTableRemoteId(localId, remoteId)
             }
+            "settle_table_bill" -> {
+                val tableId = payload.optString("table_local_id")
+                val settlementId = result.optString("settlement_id").takeIf(String::isNotBlank)
+                    ?: throw IllegalStateException("The server did not confirm the table settlement.")
+                dao.markTableOrdersSettled(tableId, settlementId)
+            }
             "register_product", "add_catalog_product" -> {
                 val code = payload.optString("product_code")
                 val remoteId = result.optString("product_id").takeIf(String::isNotBlank)
@@ -1397,13 +1469,14 @@ class CounterPosRepository(
         )
     }
 
-    private suspend fun scheduleAndAttemptSync() {
+    private suspend fun scheduleAndAttemptSync(): Map<String, JSONObject> {
         OfflineOutboxWorker.enqueue(context)
         try {
-            syncPendingOutbox()
+            return syncPendingOutbox()
         } catch (error: Exception) {
             if (!isRetryable(error)) throw error
         }
+        return emptyMap()
     }
 
     private suspend fun clearLocalSession() {

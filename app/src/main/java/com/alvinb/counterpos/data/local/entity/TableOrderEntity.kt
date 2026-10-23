@@ -15,7 +15,11 @@ import androidx.room.PrimaryKey
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index(value = ["tableId", "servedAt"]), Index(value = ["saleId"], unique = true)]
+    indices = [
+        Index(value = ["tableId", "servedAt"]),
+        Index(value = ["tableId", "settlementId"]),
+        Index(value = ["saleId"], unique = true)
+    ]
 )
 data class TableOrderEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -30,5 +34,6 @@ data class TableOrderEntity(
     val servedAt: Long,
     val counterId: String? = null,
     val counterName: String? = null,
-    val waiterName: String? = null
+    val waiterName: String? = null,
+    val settlementId: String? = null
 )
