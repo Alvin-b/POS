@@ -336,7 +336,8 @@ class CounterPosViewModel(
                 } else if (qrNotFound) {
                     "This QR is not registered by the connected backend. Deploy the current create-access-challenge and poll-access-challenge functions, then generate a new QR."
                 } else {
-                    "QR sign-in is unavailable right now. Tap Refresh QR to try again."
+                    message.takeIf { it.isNotBlank() }?.let { "QR sign-in failed: $it" }
+                        ?: "QR sign-in is unavailable right now. Tap Refresh QR to try again."
                 }
                 _uiState.update { it.copy(loginQrPayload = null, isQrPolling = false, startupError = friendly, notice = null) }
                 return

@@ -169,9 +169,17 @@ class CounterPosRepository(
     suspend fun pollAccessChallenge(token: String): ApprovedAccess? = withContext(Dispatchers.IO) {
         val result = remote.pollAccessChallenge(token)
         if (result.optString("status") != "approved") return@withContext null
-        remote.signIn(result.optString("email"), result.optString("password"))
+        try {
+            remote.signIn(result.optString("email"), result.optString("password"))
+        } catch (error: Exception) {
+            throw IllegalStateException("QR was approved, but Supabase rejected the enrollment credentials: ${error.message.orEmpty()}", error)
+        }
         val shopId = result.optString("shop_id").ifBlank { result.optString("business_id") }.takeIf(String::isNotBlank)
-        val session = loadAccount(autoSelectFirstBusiness = true, preferredShopId = shopId)
+        val session = try {
+            loadAccount(autoSelectFirstBusiness = true, preferredShopId = shopId)
+        } catch (error: Exception) {
+            throw IllegalStateException("QR was approved, but the enrolled business data could not load: ${error.message.orEmpty()}", error)
+        }
         ApprovedAccess(session, shopId ?: session.activeBusiness?.shopId)
     }
 
