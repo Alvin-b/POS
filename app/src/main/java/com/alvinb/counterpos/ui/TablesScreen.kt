@@ -25,6 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
@@ -80,7 +81,9 @@ internal fun TablesScreen(
     canManageTables: Boolean,
     canSettleTables: Boolean,
     isSettlingTable: Boolean,
+    isDeletingTable: Boolean,
     onCreateTable: (String) -> Unit,
+    onDeleteTable: (String) -> Unit,
     onSettleTable: (String, String) -> Unit,
     onOpenTable: (DiningTableEntity) -> Unit,
     onBackToTables: () -> Unit,
@@ -96,6 +99,7 @@ internal fun TablesScreen(
     var showProductPicker by remember { mutableStateOf(false) }
     var productQuery by remember { mutableStateOf("") }
     var showSettlementDialog by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
     var selectedPaymentMethod by remember { mutableStateOf("cash") }
     val currentOrders = orders.filter { it.tableId == selectedTableId && it.settlementId == null }
     val tableTotal = currentOrders.sumOf { it.totalKsh.toLong() }
@@ -133,6 +137,27 @@ internal fun TablesScreen(
                 }
             },
             dismissButton = { TextButton(onClick = { showSettlementDialog = false }, enabled = !isSettlingTable) { Text("Cancel") } }
+        )
+    }
+
+    if (showDeleteDialog && selected != null) {
+        AlertDialog(
+            onDismissRequest = { if (!isDeletingTable) showDeleteDialog = false },
+            title = { Text("Delete ${selected.name}?") },
+            text = { Text("This removes the table from the business. A table with an open bill cannot be deleted.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeleteTable(selected.id)
+                        showDeleteDialog = false
+                    },
+                    enabled = !isDeletingTable
+                ) {
+                    if (isDeletingTable) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { showDeleteDialog = false }, enabled = !isDeletingTable) { Text("Cancel") } }
         )
     }
 
@@ -283,6 +308,11 @@ internal fun TablesScreen(
                 if (canManageTables) {
                     IconButton(onClick = { newTableName = ""; showCreateDialog = true }) {
                         Icon(Icons.Default.Add, contentDescription = "Add table")
+                    }
+                }
+                if (canManageTables) {
+                    IconButton(onClick = { showDeleteDialog = true }, enabled = !isDeletingTable) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete ${selected.name}", tint = MaterialTheme.colorScheme.error)
                     }
                 }
                 IconButton(onClick = { printTableReceipt(context, selected.name, currentOrders, tableTotal) }, enabled = currentOrders.isNotEmpty()) {

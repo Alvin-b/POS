@@ -322,7 +322,7 @@ class SupabaseRestClient(context: Context) {
     }
 
     suspend fun diningTables(shopId: String): JSONArray = query(
-        "dining_tables?select=*&shop_id=eq.$shopId&order=created_at.asc,name.asc"
+        "dining_tables?select=*&shop_id=eq.$shopId&archived=eq.false&order=created_at.asc,name.asc"
     )
 
     suspend fun tableOrders(shopId: String): JSONArray = query(
@@ -331,6 +331,9 @@ class SupabaseRestClient(context: Context) {
 
     suspend fun createDiningTable(shopId: String, name: String): JSONObject =
         rpcObject("create_dining_table", JSONObject().put("_shop", shopId).put("_name", name.trim()))
+
+    suspend fun deleteDiningTable(shopId: String, tableId: String): JSONObject =
+        rpcVoid("delete_dining_table", JSONObject().put("_shop", shopId).put("_table", tableId))
 
     suspend fun recordTableSale(
         shopId: String,

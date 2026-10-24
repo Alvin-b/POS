@@ -84,6 +84,7 @@ data class CounterPosUiState(
     val isLoadingCounterReport: Boolean = false,
     val counterStockByProduct: Map<String, Int> = emptyMap(),
     val isCreatingTable: Boolean = false,
+    val isDeletingTable: Boolean = false,
     val isSettlingTable: Boolean = false,
     val adminSelectedBusinessId: String? = null,
     val adminQrRole: String = "owner",
@@ -1034,10 +1035,16 @@ class CounterPosViewModel(
 
     fun loadCounterReport(fromIso: String, toIso: String) = viewModelScope.launch {
         _uiState.update { it.copy(isLoadingCounterReport = true, actionError = null) }
+        runCatching { repository.synchronizeWhenOnline() }
         runCatching { repository.counterSalesReport(fromIso, toIso) }
             .onSuccess { rows -> _uiState.update { it.copy(counterReport = rows) } }
             .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not load counter report") } }
         _uiState.update { it.copy(isLoadingCounterReport = false) }
+    }
+
+    fun refreshBusinessData() = viewModelScope.launch {
+        runCatching { repository.synchronizeWhenOnline() }
+            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not refresh business data") } }
     }
 
     fun openTable(table: DiningTableEntity) = _uiState.update {
@@ -1062,6 +1069,27 @@ class CounterPosViewModel(
             } catch (error: Exception) {
                 _uiState.update { it.copy(isCreatingTable = false, actionError = error.message ?: "Could not create table.") }
             }
+        }
+    }
+
+    fun deleteDiningTable(tableId: String) {
+        if (_uiState.value.isDeletingTable) return
+        _uiState.update { it.copy(isDeletingTable = true, actionError = null) }
+        viewModelScope.launch {
+            runCatching { repository.deleteDiningTable(tableId) }
+                .onSuccess {
+                    _uiState.update {
+                        it.copy(
+                            isDeletingTable = false,
+                            selectedTableId = null,
+                            notice = "Table deleted",
+                            actionError = null
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update { it.copy(isDeletingTable = false, actionError = error.message ?: "Could not delete table.") }
+                }
         }
     }
 

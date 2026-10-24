@@ -239,6 +239,7 @@ fun CounterPosWorkspace(
         viewModel.refreshCounterStock()
     }
     LaunchedEffect(state.tab) {
+        viewModel.refreshBusinessData()
         if (state.tab == PosTab.REPORTS) viewModel.loadCounterReport(todayStartIso(), nowIso())
     }
 
@@ -492,7 +493,9 @@ fun CounterPosWorkspace(
                     canManageTables = canManageTables,
                     canSettleTables = canSettleTables,
                     isSettlingTable = state.isSettlingTable,
+                    isDeletingTable = state.isDeletingTable,
                     onCreateTable = viewModel::createDiningTable,
+                    onDeleteTable = viewModel::deleteDiningTable,
                     onSettleTable = viewModel::settleTableBill,
                     onOpenTable = viewModel::openTable,
                     onBackToTables = viewModel::backToTables,

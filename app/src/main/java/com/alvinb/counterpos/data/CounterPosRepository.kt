@@ -925,6 +925,19 @@ class CounterPosRepository(
         }
     }
 
+    suspend fun deleteDiningTable(tableId: String) = withActiveBusiness {
+        require(activeBusiness!!.role in setOf("owner", "manager")) {
+            "Only an owner or manager can delete a table."
+        }
+        val table = dao.getDiningTable(tableId)
+            ?: throw IllegalStateException("This table is no longer available.")
+        check(dao.openTableOrderCount(tableId) == 0) {
+            "Close the table bill before deleting this table."
+        }
+        remote.deleteDiningTable(activeBusiness!!.shopId, table.remoteId ?: table.id)
+        dao.deleteDiningTable(table.id)
+    }
+
     suspend fun settleTableBill(tableId: String, paymentMethod: String): TableSettlementResult = withActiveBusiness {
         val method = paymentMethod.trim().lowercase(Locale.ROOT)
         require(method in setOf("cash", "mpesa", "card", "other")) { "Choose a valid payment method." }
