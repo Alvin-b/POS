@@ -242,16 +242,14 @@ internal fun TablesScreen(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Tables", fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                    Text("Open bills", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Manage open bills across all tables", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 if (canManageTables) {
-                    Button(
+                    IconButton(
                         onClick = { newTableName = ""; showCreateDialog = true },
-                        enabled = !isCreatingTable,
-                        shape = RoundedCornerShape(14.dp)
+                        enabled = !isCreatingTable
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(19.dp))
-                        Text("Add table", modifier = Modifier.padding(start = 6.dp), fontWeight = FontWeight.SemiBold)
+                        Icon(Icons.Default.Add, contentDescription = "Add table", modifier = Modifier.size(24.dp))
                     }
                 }
             }
@@ -330,6 +328,14 @@ internal fun TablesScreen(
                         label = { Text(table.name, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     )
                 }
+                if (canManageTables) {
+                    IconButton(
+                        onClick = { newTableName = ""; showCreateDialog = true },
+                        enabled = !isCreatingTable
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "Add table")
+                    }
+                }
             }
             if (!actionError.isNullOrBlank()) Text(actionError, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
             if (currentOrders.isEmpty()) {
@@ -385,9 +391,11 @@ internal fun TablesScreen(
                 }
             }
             Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { productQuery = ""; showProductPicker = true }, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Text("Add manually", modifier = Modifier.padding(start = 5.dp))
+                IconButton(
+                    onClick = { productQuery = ""; showProductPicker = true },
+                    modifier = Modifier.weight(0.45f)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Add products or drinks", modifier = Modifier.size(22.dp))
                 }
                 OutlinedButton(onClick = onScanProduct, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
