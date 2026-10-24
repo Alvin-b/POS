@@ -126,7 +126,10 @@ class SupabaseRestClient(context: Context) {
                 "passkey_not_found" -> "Passkey not recognized or already redeemed. Ask the business owner for a new passkey."
                 "passkey_expired", "passkey_expired_or_used" -> "This passkey has expired or was already used. Ask the business owner to generate a new passkey."
                 "employee_inactive" -> "This employee enrollment is inactive. Ask the business owner to enable it and generate a new passkey."
+                "employee_recovery_in_progress" -> "This employee is already recovering access on another device. Wait a few minutes or ask the owner to create a fresh code."
                 "business_not_active" -> "This business is not active. Ask the administrator to reopen it before enrolling employees."
+                "employee_identity_not_found" -> "The employee account could not be found. Ask the owner to issue a fresh recovery code."
+                "could_not_rotate_employee_credential", "could_not_create_employee_session", "could_not_finalize_employee_recovery" -> "Employee recovery did not finish. Ask the owner to issue a fresh recovery code."
                 "could_not_redeem_passkey" -> "The passkey service could not attach this employee to the business. Deploy the current enrollment functions and try a new passkey."
                 else -> e.message ?: "Invalid passkey"
             }
@@ -139,12 +142,26 @@ class SupabaseRestClient(context: Context) {
                     "passkey_not_found" -> "Passkey not recognized or already redeemed. Ask the business owner to generate a new one."
                     "passkey_expired", "passkey_expired_or_used" -> "This passkey has expired or was already used. Ask the business owner to generate a new one."
                     "employee_inactive" -> "This employee enrollment is inactive. Ask the business owner to enable it and generate a new passkey."
+                    "employee_recovery_in_progress" -> "This employee is already recovering access on another device. Wait a few minutes or ask the owner to create a fresh code."
                     "business_not_active" -> "This business is not active. Ask the administrator to reopen it before enrolling employees."
                     "could_not_redeem_passkey" -> "The passkey service could not attach this employee to the business. Deploy the current enrollment functions and try a new passkey."
                     else -> err.ifBlank { "Invalid passkey" }
                 }
             )
         val shopId = json.optString("business_id").ifBlank { json.optString("shop_id") }.takeIf(String::isNotBlank)
+        val accessToken = json.optString("access_token").takeIf(String::isNotBlank)
+        val refreshToken = json.optString("refresh_token").takeIf(String::isNotBlank)
+        if (accessToken != null && refreshToken != null) {
+            val recoveredSession = AuthSession(
+                accessToken = accessToken,
+                refreshToken = refreshToken,
+                userId = json.optString("user_id"),
+                email = email
+            )
+            if (recoveredSession.userId.isBlank()) throw IOException("Recovery response did not include the existing employee ID.")
+            saveSession(recoveredSession)
+            return@withContext AccessPassRedemption(recoveredSession, shopId)
+        }
         AccessPassRedemption(
             session = authenticate("password", email, json.optString("password")),
             businessId = shopId
@@ -165,6 +182,20 @@ class SupabaseRestClient(context: Context) {
 
     suspend fun listShopMembers(shopId: String): JSONArray =
         rpcArray("admin_list_shop_members", JSONObject().put("_shop", shopId))
+
+    suspend fun createEmployeeRecoveryPass(shopId: String, userId: String): JSONObject =
+        parseObject(request(
+            "/functions/v1/create-employee-recovery-pass",
+            "POST",
+            JSONObject().put("shop_id", shopId).put("user_id", userId).toString(),
+            true
+        ))
+
+    suspend fun setEmployeeDisplayName(shopId: String, userId: String, displayName: String): JSONObject =
+        rpcVoid("set_employee_display_name", JSONObject()
+            .put("_shop", shopId)
+            .put("_user", userId)
+            .put("_display_name", displayName.trim()))
 
     suspend fun setEmployeeStatus(shopId: String, userId: String, status: String, reason: String?): JSONObject =
         rpcVoid("set_employee_status", JSONObject().put("_shop", shopId).put("_user", userId).put("_status", status).putNullable("_reason", reason))

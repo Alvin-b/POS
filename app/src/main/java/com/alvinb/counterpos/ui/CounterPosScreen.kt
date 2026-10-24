@@ -745,7 +745,10 @@ fun CounterPosWorkspace(
                 onClearWaiterQr = { viewModel.clearWaiterEnrollmentQr() },
                 onSetEmployeeStatus = { uid, st -> viewModel.setEmployeeStatus(uid, st) },
                 onSetEmployeeRole = { uid, rl -> viewModel.setEmployeeRole(uid, rl) },
+                onRenameEmployee = { uid, name -> viewModel.renameEmployee(uid, name) },
                 onRemoveEmployee = { uid -> viewModel.removeEmployeeAccess(uid) },
+                onIssueEmployeeRecoveryPass = { uid, name -> viewModel.issueEmployeeRecoveryPass(uid, name) },
+                onClearEmployeeRecoveryPass = { viewModel.clearEmployeeRecoveryCredential() },
                 onSaveEmployeeSchedule = { uid, dow, st, en, act -> viewModel.setEmployeeHours(uid, dow, st, en, act) },
                 onSaveBusinessHours = { bh -> viewModel.saveBusinessHours(bh) },
                 onScanWaiterCode = { selectedRole ->

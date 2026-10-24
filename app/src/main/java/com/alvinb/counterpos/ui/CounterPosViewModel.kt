@@ -48,6 +48,14 @@ data class AdminEnrollmentCredential(
     val expiresInHours: Int
 )
 
+data class EmployeeRecoveryCredential(
+    val employeeUserId: String,
+    val employeeName: String,
+    val passkey: String,
+    val qrPayload: String,
+    val expiresInMinutes: Int
+)
+
 /** A single Sunday–Saturday employee duty window. Weekdays use 0 = Sunday through 6 = Saturday. */
 data class EmployeeScheduleDay(
     val weekday: Int,
@@ -105,6 +113,8 @@ data class CounterPosUiState(
     val isIssuingEmployeePass: Boolean = false,
     val isSavingEmployeeSchedule: Boolean = false,
     val isClearingEmployeeSchedule: Boolean = false,
+    val isIssuingEmployeeRecoveryPass: Boolean = false,
+    val employeeRecoveryCredential: EmployeeRecoveryCredential? = null,
     val isAccessLocked: Boolean = false,
     val accessLockMessage: String? = null,
     val employeePasskey: String? = null,
@@ -436,7 +446,8 @@ class CounterPosViewModel(
                 isStaffManagementOpen = false,
                 staffManagementStartsOnHours = false,
                 actionError = null,
-                waiterEnrollmentQrPayload = null
+                waiterEnrollmentQrPayload = null,
+                employeeRecoveryCredential = null
             )
         }
         refreshAccessNow()
@@ -560,6 +571,63 @@ class CounterPosViewModel(
     }
 
     fun clearEmployeePass() = _uiState.update { it.copy(employeePasskey = null) }
+
+    fun renameEmployee(userId: String, displayName: String) = viewModelScope.launch {
+        if (userId.isBlank()) {
+            _uiState.update { it.copy(actionError = "Select a staff account to rename.") }
+            return@launch
+        }
+        if (displayName.trim().length !in 1..80) {
+            _uiState.update { it.copy(actionError = "Enter a staff name between 1 and 80 characters.") }
+            return@launch
+        }
+        runCatching { repository.renameEmployee(userId, displayName.trim()) }
+            .onSuccess { rows ->
+                _uiState.update {
+                    it.copy(
+                        employeeMembers = rows.toEmployeeMemberList(),
+                        actionError = null,
+                        notice = "Staff profile name updated."
+                    )
+                }
+            }
+            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not rename staff profile") } }
+    }
+
+    fun issueEmployeeRecoveryPass(userId: String, employeeName: String) = viewModelScope.launch {
+        if (_uiState.value.isIssuingEmployeeRecoveryPass) return@launch
+        if (userId.isBlank()) {
+            _uiState.update { it.copy(actionError = "This staff member has no account ID to recover.") }
+            return@launch
+        }
+        _uiState.update { it.copy(isIssuingEmployeeRecoveryPass = true, employeeRecoveryCredential = null, actionError = null) }
+        try {
+            val result = repository.createEmployeeRecoveryPass(userId)
+            val passkey = result.optString("passkey").trim()
+            require(passkey.isNotBlank()) { "The server did not return a recovery code." }
+            val payload = result.optString("qr_payload").ifBlank { "CPX1.$passkey" }
+            val expiresInMinutes = result.optInt("expires_in_minutes", 20).coerceAtLeast(1)
+            _uiState.update {
+                it.copy(
+                    employeeRecoveryCredential = EmployeeRecoveryCredential(
+                        employeeUserId = userId,
+                        employeeName = employeeName,
+                        passkey = passkey,
+                        qrPayload = payload,
+                        expiresInMinutes = expiresInMinutes
+                    ),
+                    actionError = null,
+                    notice = "A one-time recovery code was created for $employeeName."
+                )
+            }
+        } catch (error: Exception) {
+            _uiState.update { it.copy(actionError = error.message ?: "Could not create employee recovery code") }
+        } finally {
+            _uiState.update { it.copy(isIssuingEmployeeRecoveryPass = false) }
+        }
+    }
+
+    fun clearEmployeeRecoveryCredential() = _uiState.update { it.copy(employeeRecoveryCredential = null) }
 
     fun loadEmployeeMembers() = viewModelScope.launch {
         if (_uiState.value.isLoadingEmployeeMembers) return@launch

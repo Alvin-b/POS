@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
@@ -157,7 +158,10 @@ fun StaffManagementScreen(
     onClearWaiterQr: () -> Unit,
     onSetEmployeeStatus: (String, String) -> Unit,
     onSetEmployeeRole: (String, String) -> Unit,
+    onRenameEmployee: (String, String) -> Unit,
     onRemoveEmployee: (String) -> Unit,
+    onIssueEmployeeRecoveryPass: (String, String) -> Unit,
+    onClearEmployeeRecoveryPass: () -> Unit,
     onSaveEmployeeSchedule: (String, Int, String, String, Boolean) -> Unit,
     onSaveBusinessHours: (BusinessHours) -> Unit,
     onScanWaiterCode: (String) -> Unit
@@ -182,6 +186,8 @@ fun StaffManagementScreen(
     var staffStatusFilter by remember { mutableStateOf("all") } // "all", "active", "suspended"
     var expandedStaffUserId by remember { mutableStateOf<String?>(null) }
     var deleteConfirmStaff by remember { mutableStateOf<Pair<String, String>?>(null) } // userId to name
+    var renameTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var renameDraft by remember { mutableStateOf("") }
 
     // Business hours draft state
     val validationService = remember { BusinessHoursValidationService() }
@@ -218,7 +224,9 @@ fun StaffManagementScreen(
     val filteredStaff = remember(allStaffMembers, staffSearchQuery, staffStatusFilter) {
         allStaffMembers.filter { member ->
             val email = member.optString("email")
-            val name = member.optString("name", member.optString("full_name"))
+            val name = member.optString("display_name").ifBlank {
+                member.optString("name").ifBlank { member.optString("full_name") }
+            }
             val status = member.optString("employment_status", member.optString("status", "active")).lowercase()
             val queryMatch = staffSearchQuery.isBlank() ||
                 email.contains(staffSearchQuery, ignoreCase = true) ||
@@ -345,13 +353,19 @@ fun StaffManagementScreen(
                         statusFilter = staffStatusFilter,
                         onStatusFilterChange = { staffStatusFilter = it },
                         ownerCanEdit = ownerCanEdit,
+                        ownerCanIssueRecovery = ownerCanEnroll,
                         expandedUserId = expandedStaffUserId,
                         onToggleExpand = { userId ->
                             expandedStaffUserId = if (expandedStaffUserId == userId) null else userId
                         },
                         onSetStatus = onSetEmployeeStatus,
                         onSetRole = onSetEmployeeRole,
+                        onRequestRename = { userId, name ->
+                            renameTarget = userId to name
+                            renameDraft = name
+                        },
                         onRequestDelete = { userId, name -> deleteConfirmStaff = userId to name },
+                        onIssueRecoveryPass = onIssueEmployeeRecoveryPass,
                         onSaveSchedule = onSaveEmployeeSchedule,
                         onGoToEnroll = { selectedTab = StaffManagementTab.ENROLL }
                     )
@@ -380,7 +394,7 @@ fun StaffManagementScreen(
             onDismissRequest = { deleteConfirmStaff = null },
             icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
             title = { Text("Remove Staff Member") },
-            text = { Text("Are you sure you want to revoke workspace access for $name? Their account will be detached from $businessName.") },
+            text = { Text("Remove $name from $businessName? This revokes their access to this business, but does not erase their sign-in identity or historical sales.") },
             confirmButton = {
                 Button(
                     onClick = {
@@ -395,6 +409,82 @@ fun StaffManagementScreen(
             dismissButton = {
                 TextButton(onClick = { deleteConfirmStaff = null }) {
                     Text("Cancel")
+                }
+            }
+        )
+    }
+
+    renameTarget?.let { (userId, previousName) ->
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            icon = { Icon(Icons.Default.Edit, contentDescription = null) },
+            title = { Text("Rename Staff Profile") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Choose a name the team can recognize. This changes only the label for this business.")
+                    OutlinedTextField(
+                        value = renameDraft,
+                        onValueChange = { renameDraft = it.take(80) },
+                        label = { Text("Staff name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("employee_display_name_field")
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onRenameEmployee(userId, renameDraft)
+                        renameTarget = null
+                    },
+                    enabled = renameDraft.trim().isNotEmpty() && renameDraft.trim() != previousName
+                ) { Text("Save name") }
+            },
+            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("Cancel") } }
+        )
+    }
+
+    state.employeeRecoveryCredential?.let { credential ->
+        val recoveryQr = remember(credential.qrPayload) { createLoginQr(credential.qrPayload) }
+        AlertDialog(
+            onDismissRequest = onClearEmployeeRecoveryPass,
+            icon = { Icon(Icons.Default.QrCode, contentDescription = null) },
+            title = { Text("Recover ${credential.employeeName}'s account") },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        "The employee scans this from the signed-out screen or enters the code. It resets access on their existing account; their user ID, role, schedule, and sales history stay the same. Expires in ${credential.expiresInMinutes} minutes and works once.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color.White,
+                        modifier = Modifier.size(176.dp)
+                    ) {
+                        Image(
+                            bitmap = recoveryQr.asImageBitmap(),
+                            contentDescription = "One-time employee account recovery QR code",
+                            modifier = Modifier.fillMaxSize().padding(10.dp)
+                        )
+                    }
+                    Text(credential.passkey, fontWeight = FontWeight.Black, letterSpacing = 2.sp, textAlign = TextAlign.Center)
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = {
+                        clipboardManager.setText(AnnotatedString(credential.passkey))
+                        scope.launch { snackbarHostState.showSnackbar("Recovery code copied. Share it only with the employee.") }
+                    }) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Copy code")
+                    }
+                    TextButton(onClick = onClearEmployeeRecoveryPass) { Text("Done") }
                 }
             }
         )
@@ -681,11 +771,14 @@ private fun StaffRosterTabContent(
     statusFilter: String,
     onStatusFilterChange: (String) -> Unit,
     ownerCanEdit: Boolean,
+    ownerCanIssueRecovery: Boolean,
     expandedUserId: String?,
     onToggleExpand: (String) -> Unit,
     onSetStatus: (String, String) -> Unit,
     onSetRole: (String, String) -> Unit,
+    onRequestRename: (String, String) -> Unit,
     onRequestDelete: (String, String) -> Unit,
+    onIssueRecoveryPass: (String, String) -> Unit,
     onSaveSchedule: (String, Int, String, String, Boolean) -> Unit,
     onGoToEnroll: () -> Unit
 ) {
@@ -771,7 +864,9 @@ private fun StaffRosterTabContent(
                     member.optString("member_user_id").ifBlank { member.optString("id") }
                 }
                 val email = member.optString("email").trim()
-                val name = member.optString("name", member.optString("full_name", email)).ifBlank { "Staff Member" }
+                val name = member.optString("display_name").ifBlank {
+                    member.optString("name").ifBlank { member.optString("full_name", email) }
+                }.ifBlank { "Staff Member" }
                 val role = member.optString("role", "cashier")
                 val employmentStatus = member.optString("employment_status", member.optString("status", "active")).lowercase()
                 val isSuspended = employmentStatus in setOf("suspended", "terminated", "locked")
@@ -786,6 +881,9 @@ private fun StaffRosterTabContent(
                     isSuspended = isSuspended,
                     isExpanded = isExpanded,
                     ownerCanEdit = ownerCanEdit && !role.equals("owner", ignoreCase = true),
+                    ownerCanIssueRecovery = ownerCanIssueRecovery && !role.equals("owner", ignoreCase = true) && !isSuspended,
+                    isIssuingRecovery = state.isIssuingEmployeeRecoveryPass,
+                    onRequestRename = { onRequestRename(userId, name) },
                     onToggleExpand = { onToggleExpand(userId) },
                     onToggleSuspend = {
                         val newStatus = if (isSuspended) "active" else "suspended"
@@ -793,6 +891,7 @@ private fun StaffRosterTabContent(
                     },
                     onSetRole = { newRole -> onSetRole(userId, newRole) },
                     onRequestDelete = { onRequestDelete(userId, name) },
+                    onIssueRecoveryPass = { onIssueRecoveryPass(userId, name) },
                     onSaveSchedule = onSaveSchedule
                 )
             }
@@ -810,10 +909,14 @@ private fun StaffMemberCard(
     isSuspended: Boolean,
     isExpanded: Boolean,
     ownerCanEdit: Boolean,
+    ownerCanIssueRecovery: Boolean,
+    isIssuingRecovery: Boolean,
+    onRequestRename: () -> Unit,
     onToggleExpand: () -> Unit,
     onToggleSuspend: () -> Unit,
     onSetRole: (String) -> Unit,
     onRequestDelete: () -> Unit,
+    onIssueRecoveryPass: () -> Unit,
     onSaveSchedule: (String, Int, String, String, Boolean) -> Unit
 ) {
     Card(
@@ -871,14 +974,14 @@ private fun StaffMemberCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Text(
-                            text = email.ifBlank { "ID: $userId" },
+                    Text(
+                        text = email.ifBlank { "ID: $userId" },
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
                         Surface(
                             shape = RoundedCornerShape(4.dp),
                             color = MaterialTheme.colorScheme.secondaryContainer
@@ -892,6 +995,14 @@ private fun StaffMemberCard(
                             )
                         }
                     }
+                }
+
+                IconButton(
+                    onClick = onRequestRename,
+                    enabled = ownerCanEdit,
+                    modifier = Modifier.testTag("rename_employee_$userId")
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = "Rename $name")
                 }
 
                 // Status Badge
@@ -966,6 +1077,23 @@ private fun StaffMemberCard(
                     enabled = ownerCanEdit
                 ) {
                     Icon(Icons.Default.Delete, contentDescription = "Remove staff member", tint = MaterialTheme.colorScheme.error)
+                }
+            }
+
+            if (ownerCanIssueRecovery) {
+                OutlinedButton(
+                    onClick = onIssueRecoveryPass,
+                    enabled = !isIssuingRecovery,
+                    modifier = Modifier.fillMaxWidth().testTag("recover_employee_$userId")
+                ) {
+                    if (isIssuingRecovery) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(6.dp))
+                    } else {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Text("Re-enroll this account on a new phone", fontSize = 12.sp)
                 }
             }
 

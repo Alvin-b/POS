@@ -201,6 +201,22 @@ class CounterPosRepository(
         remote.listShopMembers(shop.shopId)
     }
 
+    suspend fun renameEmployee(userId: String, displayName: String): JSONArray = withContext(Dispatchers.IO) {
+        val shop = activeBusiness ?: throw IllegalStateException("Open a business before managing employees.")
+        require(shop.role in setOf("owner", "manager")) { "Only an owner or manager can manage employees." }
+        require(userId.isNotBlank()) { "Select a staff account to rename." }
+        require(displayName.trim().length in 1..80) { "Enter a name between 1 and 80 characters." }
+        remote.setEmployeeDisplayName(shop.shopId, userId, displayName.trim())
+        remote.listShopMembers(shop.shopId)
+    }
+
+    suspend fun createEmployeeRecoveryPass(userId: String): JSONObject = withContext(Dispatchers.IO) {
+        val shop = activeBusiness ?: throw IllegalStateException("Open a business before issuing a recovery code.")
+        require(shop.role == "owner") { "Only the business owner can issue employee recovery codes." }
+        require(userId.isNotBlank()) { "Select a staff account to recover." }
+        remote.createEmployeeRecoveryPass(shop.shopId, userId)
+    }
+
     suspend fun setEmployeeStatus(userId: String, status: String, reason: String?): JSONArray = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: throw IllegalStateException("Open a business first.")
         remote.setEmployeeStatus(shop.shopId, userId, status, reason)
