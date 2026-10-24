@@ -38,6 +38,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -245,11 +246,11 @@ internal fun TablesScreen(
                     Text("Manage open bills across all tables", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 if (canManageTables) {
-                    IconButton(
+                    FilledIconButton(
                         onClick = { newTableName = ""; showCreateDialog = true },
                         enabled = !isCreatingTable
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = "Add table", modifier = Modifier.size(24.dp))
+                        Icon(Icons.Default.Add, contentDescription = "Add table", modifier = Modifier.size(22.dp))
                     }
                 }
             }

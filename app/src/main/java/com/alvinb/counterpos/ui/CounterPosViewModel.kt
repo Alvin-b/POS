@@ -86,6 +86,7 @@ data class CounterPosUiState(
     val isCreatingTable: Boolean = false,
     val isDeletingTable: Boolean = false,
     val isSettlingTable: Boolean = false,
+    val isSyncingData: Boolean = false,
     val adminSelectedBusinessId: String? = null,
     val adminQrRole: String = "owner",
     val isCreatingAdminBusiness: Boolean = false,
@@ -1045,6 +1046,21 @@ class CounterPosViewModel(
     fun refreshBusinessData() = viewModelScope.launch {
         runCatching { repository.synchronizeWhenOnline() }
             .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not refresh business data") } }
+    }
+
+    fun synchronizeData(showNotice: Boolean = false) = viewModelScope.launch {
+        _uiState.update { it.copy(isSyncingData = true, actionError = null) }
+        runCatching { repository.synchronizeWhenOnline() }
+            .onSuccess {
+                _uiState.update { it.copy(isSyncingData = false, notice = if (showNotice) "Data synced" else it.notice) }
+            }
+            .onFailure { error ->
+                _uiState.update { it.copy(isSyncingData = false, actionError = error.message ?: "Could not refresh business data") }
+            }
+    }
+
+    fun openStaffEnrollmentScanner(role: String) {
+        _uiState.update { it.copy(notice = "Use the generated enrollment QR or passkey to enroll a $role.") }
     }
 
     fun openTable(table: DiningTableEntity) = _uiState.update {
