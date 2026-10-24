@@ -211,7 +211,7 @@ fun CounterPosWorkspace(
     val rawBusinessType = session.activeBusiness?.businessType.orEmpty().trim().lowercase()
     val isClub = rawBusinessType in setOf("big_club", "club", "") || session.activeBusiness == null
     val supportsTables = "tables" in enabledFeatures
-    val canManageTables = role in setOf("owner", "manager")
+    val canManageTables = role in setOf("owner", "manager", "cashier")
     val canSettleTables = role in setOf("owner", "manager", "cashier")
     val registeredWaiterEmails = remember(state.employeeMembers) {
         state.employeeMembers.asSequence()
@@ -316,9 +316,11 @@ fun CounterPosWorkspace(
                     canAddNewProduct = canReceiveStock,
                     canManageTeam = role in setOf("owner", "manager"),
                     onManageTeam = viewModel::openTeamPanel,
+                    onManageStaff = { viewModel.openStaffManagement() },
                     counters = serviceCounters,
                     selectedCounterId = state.selectedCounterId,
-                    onCounterSelect = viewModel::selectCounter
+                    onCounterSelect = viewModel::selectCounter,
+                    onSyncData = { viewModel.synchronizeData(showNotice = true) }
                 )
                 if (state.blockedOutbox.isNotEmpty()) {
                     Surface(color = MaterialTheme.colorScheme.errorContainer) {
@@ -490,6 +492,7 @@ fun CounterPosWorkspace(
                     selectedTableId = state.selectedTableId,
                     actionError = state.actionError,
                     isCreatingTable = state.isCreatingTable,
+                    isDeletingTable = state.isDeletingTable,
                     canManageTables = canManageTables,
                     canSettleTables = canSettleTables,
                     isSettlingTable = state.isSettlingTable,
@@ -499,6 +502,8 @@ fun CounterPosWorkspace(
                     onSettleTable = viewModel::settleTableBill,
                     onOpenTable = viewModel::openTable,
                     onBackToTables = viewModel::backToTables,
+                    onNextTable = viewModel::selectNextTable,
+                    onRefresh = { viewModel.synchronizeData(showNotice = true) },
                     onAddProduct = viewModel::openTableSale,
                     onScanProduct = { viewModel.openScanner(ScannerMode.TABLE_ADD) },
                     showCounterLabels = serviceCounters.size > 1,
@@ -746,9 +751,8 @@ fun CounterPosWorkspace(
                 onRemoveEmployee = { uid -> viewModel.removeEmployeeAccess(uid) },
                 onSaveEmployeeSchedule = { uid, dow, st, en, act -> viewModel.setEmployeeHours(uid, dow, st, en, act) },
                 onSaveBusinessHours = { bh -> viewModel.saveBusinessHours(bh) },
-                onScanWaiterCode = {
-                    viewModel.closeStaffManagement()
-                    viewModel.openScanner(ScannerMode.ADMIN_QR)
+                onScanWaiterCode = { selectedRole ->
+                    viewModel.openStaffEnrollmentScanner(selectedRole)
                 }
             )
         }
@@ -832,9 +836,11 @@ private fun LeanTopBar(
     canAddNewProduct: Boolean = true,
     canManageTeam: Boolean = false,
     onManageTeam: () -> Unit = {},
+    onManageStaff: () -> Unit = {},
     counters: List<ServiceCounter> = emptyList(),
     selectedCounterId: String? = null,
     onCounterSelect: (String) -> Unit = {},
+    onSyncData: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val focusManager = LocalFocusManager.current
@@ -988,6 +994,22 @@ private fun LeanTopBar(
                         }
                     }
 
+                    IconButton(
+                        onClick = onSyncData,
+                        modifier = Modifier.size(40.dp).testTag("sync_refresh_button")
+                    ) {
+                        if (state.isSyncingData) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Sync latest data",
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
                     // Search icon button (avoids using so much static space!)
                     IconButton(
                         onClick = { onSearchToggle(true) },
@@ -1016,6 +1038,9 @@ private fun LeanTopBar(
                     }
 
                     if (canManageTeam) {
+                        IconButton(onClick = onManageStaff, modifier = Modifier.size(40.dp).testTag("staff_management_top_button")) {
+                            Icon(Icons.Default.Badge, contentDescription = "Staff Management", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                         IconButton(onClick = onManageTeam, modifier = Modifier.size(40.dp).testTag("settings_top_button")) {
                             Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
@@ -1516,7 +1541,8 @@ private fun CounterReportScreen(
         effectiveCounters.map { counter ->
             val matchingSales = effectiveSales.filter { sale ->
                 sale.counterId == counter.id ||
-                sale.counterName.equals(counter.name, ignoreCase = true)
+                sale.counterName.equals(counter.name, ignoreCase = true) ||
+                (effectiveCounters.size == 1 && (sale.counterId.isNullOrBlank() || sale.counterId == "unassigned"))
             }
 
             val productsMap = matchingSales.groupBy { it.productName to it.unitName }
@@ -1530,7 +1556,15 @@ private fun CounterReportScreen(
                 }.sortedByDescending { it.totalQuantity }
 
             val waitersMap = matchingSales
-                .filter { sale -> sale.waiterName?.trim()?.lowercase(Locale.ROOT)?.let { it in registeredWaiterEmails } == true }
+                .filter { sale ->
+                    val waiter = sale.waiterName?.trim()
+                    if (waiter.isNullOrBlank()) false
+                    else if (registeredWaiterEmails.isEmpty()) true
+                    else {
+                        val low = waiter.lowercase(Locale.ROOT)
+                        low in registeredWaiterEmails || registeredWaiterEmails.any { low.contains(it) || it.contains(low) }
+                    }
+                }
                 .groupBy { sale -> sale.waiterName!!.trim() }
                 .map { (waiter, group) ->
                     val tables = group.mapNotNull { it.tableName?.takeIf(String::isNotBlank) }.distinct()

@@ -160,7 +160,7 @@ fun StaffManagementScreen(
     onRemoveEmployee: (String) -> Unit,
     onSaveEmployeeSchedule: (String, Int, String, String, Boolean) -> Unit,
     onSaveBusinessHours: (BusinessHours) -> Unit,
-    onScanWaiterCode: () -> Unit
+    onScanWaiterCode: (String) -> Unit
 ) {
     BackHandler(onBack = onClose)
 
@@ -331,7 +331,7 @@ fun StaffManagementScreen(
                             }
                             context.startActivity(Intent.createChooser(intent, "Share Waiter Passkey"))
                         },
-                        onScanWaiterCode = onScanWaiterCode
+                        onScanWaiterCode = { onScanWaiterCode("cashier") }
                     )
                 }
 
@@ -350,6 +350,7 @@ fun StaffManagementScreen(
                             expandedStaffUserId = if (expandedStaffUserId == userId) null else userId
                         },
                         onSetStatus = onSetEmployeeStatus,
+                        onSetRole = onSetEmployeeRole,
                         onRequestDelete = { userId, name -> deleteConfirmStaff = userId to name },
                         onSaveSchedule = onSaveEmployeeSchedule,
                         onGoToEnroll = { selectedTab = StaffManagementTab.ENROLL }
@@ -683,6 +684,7 @@ private fun StaffRosterTabContent(
     expandedUserId: String?,
     onToggleExpand: (String) -> Unit,
     onSetStatus: (String, String) -> Unit,
+    onSetRole: (String, String) -> Unit,
     onRequestDelete: (String, String) -> Unit,
     onSaveSchedule: (String, Int, String, String, Boolean) -> Unit,
     onGoToEnroll: () -> Unit
@@ -789,6 +791,7 @@ private fun StaffRosterTabContent(
                         val newStatus = if (isSuspended) "active" else "suspended"
                         onSetStatus(userId, newStatus)
                     },
+                    onSetRole = { newRole -> onSetRole(userId, newRole) },
                     onRequestDelete = { onRequestDelete(userId, name) },
                     onSaveSchedule = onSaveSchedule
                 )
@@ -809,6 +812,7 @@ private fun StaffMemberCard(
     ownerCanEdit: Boolean,
     onToggleExpand: () -> Unit,
     onToggleSuspend: () -> Unit,
+    onSetRole: (String) -> Unit,
     onRequestDelete: () -> Unit,
     onSaveSchedule: (String, Int, String, String, Boolean) -> Unit
 ) {
@@ -849,6 +853,12 @@ private fun StaffMemberCard(
                 }
 
                 // Info
+                val roleLabel = when (role.lowercase()) {
+                    "manager" -> "Manager"
+                    "inventory_clerk" -> "Inventory"
+                    "owner" -> "Owner"
+                    else -> "Waiter"
+                }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = name,
@@ -857,13 +867,31 @@ private fun StaffMemberCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Text(
-                        text = email.ifBlank { "ID: $userId" },
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = email.ifBlank { "ID: $userId" },
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Text(
+                                text = roleLabel,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
                 }
 
                 // Status Badge
@@ -963,6 +991,28 @@ private fun StaffMemberCard(
                         .padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(9.dp)
                 ) {
+                    if (ownerCanEdit && !role.equals("owner", ignoreCase = true)) {
+                        Text("Assigned Role", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf("cashier" to "Waiter", "inventory_clerk" to "Inventory", "manager" to "Manager").forEach { (roleKey, label) ->
+                                FilterChip(
+                                    selected = role.equals(roleKey, ignoreCase = true),
+                                    onClick = {
+                                        if (!role.equals(roleKey, ignoreCase = true)) {
+                                            onSetRole(roleKey)
+                                        }
+                                    },
+                                    label = { Text(label, fontSize = 11.sp) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                    }
+
                     Text("Staff Duty Shift Schedule", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     Text(
                         "Each day can have its own shift. Outside an enabled shift, this staff account is locked.",

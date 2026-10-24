@@ -118,11 +118,18 @@ interface CounterPosDao {
     suspend fun insertDiningTables(tables: List<DiningTableEntity>)
     @Query("DELETE FROM dining_tables WHERE id = :id")
     suspend fun deleteDiningTable(id: String): Int
+
+    @Query("DELETE FROM table_orders WHERE tableId = :tableId")
+    suspend fun deleteTableOrdersForTable(tableId: String): Int
+
     @Insert
     suspend fun insertTableOrder(order: TableOrderEntity): Long
 
     @Query("DELETE FROM table_orders WHERE saleId = :saleId")
     suspend fun deleteTableOrderBySaleId(saleId: Long): Int
+
+    @Query("DELETE FROM sales WHERE remoteId IS NOT NULL")
+    suspend fun clearSyncedSales(): Int
 
     @Query("SELECT * FROM products ORDER BY name COLLATE NOCASE ASC")
     fun observeProducts(): Flow<List<ProductEntity>>
