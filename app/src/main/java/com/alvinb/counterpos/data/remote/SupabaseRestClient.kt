@@ -558,8 +558,13 @@ class SupabaseRestClient(context: Context) {
                 .put("_role", role)
         )
 
-    suspend fun auditEvents(shopId: String): List<AdminAuditEvent> {
-        val rows = query("audit_events?shop_id=eq.$shopId&select=action,entity_type,actor_user_id,metadata,created_at&order=created_at.desc&limit=30")
+    suspend fun auditEvents(shopId: String = ""): List<AdminAuditEvent> {
+        val path = if (shopId.isBlank()) {
+            "audit_events?select=action,entity_type,actor_user_id,metadata,created_at&order=created_at.desc&limit=50"
+        } else {
+            "audit_events?shop_id=eq.$shopId&select=action,entity_type,actor_user_id,metadata,created_at&order=created_at.desc&limit=30"
+        }
+        val rows = query(path)
         return buildList {
             for (index in 0 until rows.length()) rows.optJSONObject(index)?.let { row ->
                 add(AdminAuditEvent(row.optString("action"), row.optString("entity_type"), row.optString("actor_user_id").takeIf(String::isNotBlank), row.optJSONObject("metadata")?.toString() ?: "{}", row.optString("created_at")))

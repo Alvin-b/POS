@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.alvinb.counterpos.data.CounterPosRepository
 import com.alvinb.counterpos.data.remote.AdminBusiness
+import com.alvinb.counterpos.data.remote.AdminAuditEvent
 import com.alvinb.counterpos.data.remote.CounterReportRow
 import com.alvinb.counterpos.data.remote.ServiceCounter
 import com.alvinb.counterpos.data.SessionSnapshot
@@ -87,6 +88,8 @@ data class CounterPosUiState(
     val adminSelectedBusinessId: String? = null,
     val adminQrRole: String = "owner",
     val isCreatingAdminBusiness: Boolean = false,
+    val adminAuditEvents: List<AdminAuditEvent> = emptyList(),
+    val isLoadingAuditEvents: Boolean = false,
     val isTeamPanelOpen: Boolean = false,
     val loginQrPayload: String? = null,
     val loginQrExpiresAtMillis: Long? = null,
@@ -727,6 +730,17 @@ class CounterPosViewModel(
         runCatching { repository.adminBusinesses() }
             .onSuccess { _adminBusinesses.value = it }
             .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not load businesses") } }
+    }
+
+    fun loadAdminAuditEvents(shopId: String = "") = viewModelScope.launch {
+        _uiState.update { it.copy(isLoadingAuditEvents = true) }
+        runCatching { repository.adminAuditEvents(shopId) }
+            .onSuccess { events ->
+                _uiState.update { it.copy(adminAuditEvents = events, isLoadingAuditEvents = false) }
+            }
+            .onFailure { error ->
+                _uiState.update { it.copy(isLoadingAuditEvents = false, startupError = error.message) }
+            }
     }
 
     fun setBusinessStatus(shopId: String, status: String, reason: String?) = viewModelScope.launch {

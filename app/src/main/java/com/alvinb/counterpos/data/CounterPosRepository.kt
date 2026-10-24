@@ -15,6 +15,7 @@ import com.alvinb.counterpos.data.local.entity.serializeSaleUnits
 import com.alvinb.counterpos.data.model.BusinessHours
 import com.alvinb.counterpos.data.model.TimeSlot
 import com.alvinb.counterpos.data.remote.AccountSnapshot
+import com.alvinb.counterpos.data.remote.AdminAuditEvent
 import com.alvinb.counterpos.data.remote.AdminBusiness
 import com.alvinb.counterpos.data.remote.AuthSession
 import com.alvinb.counterpos.data.remote.BusinessMembership
@@ -342,6 +343,8 @@ class CounterPosRepository(
     }
 
     suspend fun adminBusinesses(): List<AdminBusiness> = remote.adminBusinesses()
+
+    suspend fun adminAuditEvents(shopId: String = ""): List<AdminAuditEvent> = remote.auditEvents(shopId)
 
     suspend fun counterSalesReport(fromIso: String, toIso: String): List<CounterReportRow> = withActiveBusiness {
         remote.counterSalesReport(activeBusiness!!.shopId, fromIso, toIso)
