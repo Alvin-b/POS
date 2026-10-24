@@ -327,9 +327,18 @@ class SupabaseRestClient(context: Context) {
         }
     }
 
-    suspend fun diningTables(shopId: String): JSONArray = query(
-        "dining_tables?select=*&shop_id=eq.$shopId&archived=eq.false&order=created_at.asc,name.asc"
-    )
+    suspend fun diningTables(shopId: String): JSONArray = try {
+        query("dining_tables?select=*&shop_id=eq.$shopId&archived=eq.false&order=created_at.asc,name.asc")
+    } catch (error: SupabaseApiException) {
+        // Older live databases may have dining_tables but not the archived
+        // column yet. Keep sign-in/business sync working until migration 0029
+        // is applied; the server-side migration remains the permanent fix.
+        if (error.message.orEmpty().contains("dining_tables.archived", ignoreCase = true)) {
+            query("dining_tables?select=*&shop_id=eq.$shopId&order=created_at.asc,name.asc")
+        } else {
+            throw error
+        }
+    }
 
     suspend fun tableOrders(shopId: String): JSONArray = query(
         "table_orders?select=*&shop_id=eq.$shopId&order=served_at.asc"
