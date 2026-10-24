@@ -124,7 +124,10 @@ class SupabaseRestClient(context: Context) {
         } catch (e: SupabaseApiException) {
             val friendly = when (e.message) {
                 "passkey_not_found" -> "Passkey not recognized or already redeemed. Ask the business owner for a new passkey."
-                "passkey_expired" -> "This passkey has expired. Ask the business owner to generate a new passkey."
+                "passkey_expired", "passkey_expired_or_used" -> "This passkey has expired or was already used. Ask the business owner to generate a new passkey."
+                "employee_inactive" -> "This employee enrollment is inactive. Ask the business owner to enable it and generate a new passkey."
+                "business_not_active" -> "This business is not active. Ask the administrator to reopen it before enrolling employees."
+                "could_not_redeem_passkey" -> "The passkey service could not attach this employee to the business. Deploy the current enrollment functions and try a new passkey."
                 else -> e.message ?: "Invalid passkey"
             }
             throw IOException(friendly, e)
@@ -133,8 +136,11 @@ class SupabaseRestClient(context: Context) {
         val email = json.optString("email").takeIf(String::isNotBlank)
             ?: throw IOException(
                 when (val err = json.optString("error")) {
-                    "passkey_not_found" -> "Passkey not recognized or already redeemed. Ask the business owner for a new passkey."
-                    "passkey_expired" -> "This passkey has expired. Ask the business owner to generate a new passkey."
+                    "passkey_not_found" -> "Passkey not recognized or already redeemed. Ask the business owner to generate a new one."
+                    "passkey_expired", "passkey_expired_or_used" -> "This passkey has expired or was already used. Ask the business owner to generate a new one."
+                    "employee_inactive" -> "This employee enrollment is inactive. Ask the business owner to enable it and generate a new passkey."
+                    "business_not_active" -> "This business is not active. Ask the administrator to reopen it before enrolling employees."
+                    "could_not_redeem_passkey" -> "The passkey service could not attach this employee to the business. Deploy the current enrollment functions and try a new passkey."
                     else -> err.ifBlank { "Invalid passkey" }
                 }
             )

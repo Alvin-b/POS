@@ -292,7 +292,14 @@ class CounterPosViewModel(
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                val friendly = "QR sign-in is unavailable right now. Tap Refresh QR to try again."
+                val message = error.message.orEmpty()
+                val friendly = when {
+                    message.contains("404", ignoreCase = true) || message.contains("not found", ignoreCase = true) || message.contains("function", ignoreCase = true) ->
+                        "QR sign-in is not available on the connected backend. Deploy the current enrollment functions, then refresh QR."
+                    message.contains("401", ignoreCase = true) || message.contains("unauthorized", ignoreCase = true) ->
+                        "The QR sign-in service rejected this request. Check the deployed enrollment functions, then refresh QR."
+                    else -> "QR sign-in is unavailable right now. Tap Refresh QR to try again."
+                }
                 _uiState.update { it.copy(loginQrPayload = null, isQrPolling = false, startupError = friendly, notice = null) }
             }
         }
@@ -318,23 +325,16 @@ class CounterPosViewModel(
                 val message = error.message.orEmpty()
                 val qrNotFound = message.contains("qr_not_found", ignoreCase = true) ||
                     (message.contains("qr", ignoreCase = true) && message.contains("not found", ignoreCase = true))
-                if (qrNotFound && missingQrRetries == 0) {
-                    val replacement = runCatching { repository.createAccessChallenge() }.getOrNull()
-                    if (replacement != null) {
-                        _uiState.update {
-                            it.copy(
-                                loginQrPayload = replacement.token,
-                                loginQrExpiresAtMillis = replacement.expiresAtMillis,
-                                isQrPolling = true,
-                                startupError = null,
-                                notice = "The previous QR was not registered. A fresh QR is ready; ask the Superadmin to scan this new code."
-                            )
-                        }
-                        return pollAccessChallengeUntilApproved(replacement.token, missingQrRetries + 1)
-                    }
+                if (qrNotFound && missingQrRetries < 3) {
+                    // Do not silently replace the displayed token: an owner or
+                    // administrator may already be scanning this exact QR.
+                    delay(1_500)
+                    return pollAccessChallengeUntilApproved(token, missingQrRetries + 1)
                 }
                 val friendly = if (message.contains("expired", ignoreCase = true) || message.contains("used", ignoreCase = true)) {
                     "This QR code has expired or was already used. Tap Refresh QR to generate a new one."
+                } else if (qrNotFound) {
+                    "This QR is not registered by the connected backend. Deploy the current create-access-challenge and poll-access-challenge functions, then generate a new QR."
                 } else {
                     "QR sign-in is unavailable right now. Tap Refresh QR to try again."
                 }
