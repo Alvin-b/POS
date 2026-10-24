@@ -129,7 +129,11 @@ class CounterPosRepository(
     }
 
     suspend fun signInWithPasskey(passkey: String): SessionSnapshot = withContext(Dispatchers.IO) {
-        val clean = passkey.trim().removePrefix("CPX1.").removePrefix("cpx1.").trim()
+        val supplied = passkey.trim()
+        val withoutQrPrefix = if (supplied.startsWith("CPX1.", ignoreCase = true)) {
+            supplied.substringAfter('.')
+        } else supplied
+        val clean = withoutQrPrefix.trim().uppercase(Locale.ROOT)
         require(clean.isNotBlank()) { "Enter the passkey sent by the business owner." }
         val redemption = remote.redeemAccessPass(clean)
         loadAccount(autoSelectFirstBusiness = true, preferredShopId = redemption.businessId)
@@ -143,8 +147,8 @@ class CounterPosRepository(
 
     suspend fun createAccessPass(role: String): JSONObject = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: throw IllegalStateException("Open a business before creating an access pass.")
-        require(shop.role == "owner" || shop.role == "manager") { "Only a business owner or manager can add staff." }
-        require(role in setOf("manager", "inventory_clerk", "cashier")) { "Invalid staff role." }
+        require(shop.role == "owner") { "Only the business owner can enroll Waiters." }
+        require(role == "cashier") { "Only the Waiter role is currently supported for employee enrollment." }
         remote.createAccessPass(shop.shopId, role)
     }
 
@@ -173,7 +177,8 @@ class CounterPosRepository(
 
     suspend fun approveAccessChallenge(token: String, role: String = "cashier") = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: throw IllegalStateException("Open a business first.")
-        require(shop.role == "owner" || shop.role == "manager") { "Only an owner or manager can approve staff QR requests." }
+        require(shop.role == "owner") { "Only the business owner can approve Waiter QR enrollment." }
+        require(role == "cashier") { "Only the Waiter role is currently supported for employee enrollment." }
         remote.approveAccessChallenge(token, shop.shopId, role)
     }
 
@@ -277,7 +282,8 @@ class CounterPosRepository(
 
     suspend fun createEmployeeAccessPass(role: String): JSONObject = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: throw IllegalStateException("Open a business first.")
-        require(shop.role == "owner" || shop.role == "manager") { "Only an owner or manager can issue staff passes." }
+        require(shop.role == "owner") { "Only the business owner can enroll Waiters." }
+        require(role == "cashier") { "Only the Waiter role is currently supported for employee enrollment." }
         remote.createAccessPass(shop.shopId, role)
     }
 

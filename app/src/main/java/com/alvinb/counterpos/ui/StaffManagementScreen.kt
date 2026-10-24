@@ -169,13 +169,13 @@ fun StaffManagementScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val ownerCanEdit = role.equals("owner", ignoreCase = true) || role.equals("manager", ignoreCase = true)
+    val ownerCanEnroll = role.equals("owner", ignoreCase = true)
     val ownerCanEditHours = role.equals("owner", ignoreCase = true)
 
     var selectedTab by remember(startOnBusinessHours) {
         mutableStateOf(if (startOnBusinessHours) StaffManagementTab.HOURS else StaffManagementTab.ENROLL)
     }
     var enrollmentMode by remember { mutableStateOf(EnrollmentMode.PASSKEY) }
-    var selectedRoleToEnroll by remember { mutableStateOf("cashier") }
 
     // Roster state
     var staffSearchQuery by remember { mutableStateOf("") }
@@ -314,13 +314,11 @@ fun StaffManagementScreen(
                 StaffManagementTab.ENROLL -> {
                     EnrollWaitersTabContent(
                         state = state,
-                        ownerCanEdit = ownerCanEdit,
+                        ownerCanEdit = ownerCanEnroll,
                         enrollmentMode = enrollmentMode,
-                        selectedRole = selectedRoleToEnroll,
-                        onRoleChange = { selectedRoleToEnroll = it },
                         onModeChange = { enrollmentMode = it },
-                        onIssuePasskey = { onIssueWaiterPass(selectedRoleToEnroll) },
-                        onGenerateQr = { onGenerateWaiterQr(selectedRoleToEnroll) },
+                        onIssuePasskey = { onIssueWaiterPass("cashier") },
+                        onGenerateQr = { onGenerateWaiterQr("cashier") },
                         onClearQr = onClearWaiterQr,
                         onCopy = { text ->
                             clipboardManager.setText(AnnotatedString(text))
@@ -411,8 +409,6 @@ private fun EnrollWaitersTabContent(
     state: CounterPosUiState,
     ownerCanEdit: Boolean,
     enrollmentMode: EnrollmentMode,
-    selectedRole: String,
-    onRoleChange: (String) -> Unit,
     onModeChange: (EnrollmentMode) -> Unit,
     onIssuePasskey: () -> Unit,
     onGenerateQr: () -> Unit,
@@ -472,21 +468,7 @@ private fun EnrollWaitersTabContent(
                 )
             }
 
-            // Role selection
-            Text("Assigned Role", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                listOf("cashier" to "Waiter / Cashier", "inventory_clerk" to "Inventory", "manager" to "Manager").forEach { (roleKey, roleLabel) ->
-                    FilterChip(
-                        selected = selectedRole == roleKey,
-                        onClick = { onRoleChange(roleKey) },
-                        label = { Text(roleLabel, fontSize = 11.sp) },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
+            Text("Assigned role: Waiter", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
@@ -670,7 +652,11 @@ private fun EnrollWaitersTabContent(
                     Text("Scan their QR challenge to authorize them right now.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Spacer(Modifier.width(8.dp))
-                OutlinedButton(onClick = onScanWaiterCode, modifier = Modifier.testTag("scan_waiter_challenge_button")) {
+                OutlinedButton(
+                    onClick = onScanWaiterCode,
+                    enabled = ownerCanEdit,
+                    modifier = Modifier.testTag("scan_waiter_challenge_button")
+                ) {
                     Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Scan Phone")

@@ -442,6 +442,10 @@ class CounterPosViewModel(
     fun generateWaiterEnrollmentQr(role: String = "cashier") = viewModelScope.launch {
         if (_uiState.value.isGeneratingEnrollmentQr) return@launch
         val normalizedRole = if (role.equals("waiter", ignoreCase = true)) "cashier" else role
+        if (normalizedRole != "cashier") {
+            _uiState.update { it.copy(actionError = "Only the Waiter role is currently supported for employee enrollment.") }
+            return@launch
+        }
         _uiState.update { it.copy(isGeneratingEnrollmentQr = true, actionError = null) }
         try {
             val pass = repository.createEmployeeAccessPass(normalizedRole)
@@ -524,8 +528,8 @@ class CounterPosViewModel(
     fun issueEmployeePass(role: String = "cashier") = viewModelScope.launch {
         if (_uiState.value.isIssuingEmployeePass) return@launch
         val normalizedRole = if (role.equals("waiter", ignoreCase = true)) "cashier" else role
-        if (normalizedRole !in setOf("cashier", "inventory_clerk", "manager")) {
-            _uiState.update { it.copy(actionError = "Choose a valid staff role: Waiter, Inventory, or Manager.") }
+        if (normalizedRole != "cashier") {
+            _uiState.update { it.copy(actionError = "Only the Waiter role is currently supported for employee enrollment.") }
             return@launch
         }
         _uiState.update { it.copy(isIssuingEmployeePass = true, employeePasskey = null, actionError = null) }
@@ -876,8 +880,8 @@ class CounterPosViewModel(
                 _uiState.update { it.copy(isScannerOpen = false, startupError = "Select a business before scanning the phone's sign-in QR.") }
             } else if (isPlatformAdmin && (business == null || business.status != "active")) {
                 _uiState.update { it.copy(isScannerOpen = false, startupError = "The selected business is not active. Reopen it before enrolling a phone.") }
-            } else if (!isPlatformAdmin && (businessRole !in setOf("owner", "manager"))) {
-                _uiState.update { it.copy(isScannerOpen = false, actionError = "Only a business owner, manager, or platform administrator can approve sign-in QR requests.") }
+            } else if (!isPlatformAdmin && businessRole != "owner") {
+                _uiState.update { it.copy(isScannerOpen = false, actionError = "Only the business owner can approve a Waiter sign-in QR.") }
             } else {
                 val businessName = business?.shopName ?: currentSession.activeBusiness?.shopName ?: "the business"
                 viewModelScope.launch {

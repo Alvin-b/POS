@@ -3453,7 +3453,8 @@ internal fun ProductThumbnail(product: ProductEntity, modifier: Modifier = Modif
         ?: product.imageSourceUrl?.trim()?.takeIf {
             it.startsWith("https://", ignoreCase = true) || it.startsWith("http://", ignoreCase = true)
         }
-    if (imageUrl != null) {
+    var imageLoadFailed by remember(imageUrl) { mutableStateOf(false) }
+    if (imageUrl != null && !imageLoadFailed) {
         val request = remember(imageUrl, imageId) {
             ImageRequest.Builder(context)
                 .data(imageUrl)
@@ -3470,7 +3471,8 @@ internal fun ProductThumbnail(product: ProductEntity, modifier: Modifier = Modif
             model = request,
             contentDescription = product.name,
             modifier = modifier,
-            contentScale = ContentScale.Fit
+            contentScale = ContentScale.Fit,
+            onError = { imageLoadFailed = true }
         )
     } else if (imageId != 0) {
         Image(
@@ -3480,16 +3482,31 @@ internal fun ProductThumbnail(product: ProductEntity, modifier: Modifier = Modif
             contentScale = ContentScale.Fit
         )
     } else {
+        val category = product.category.lowercase(Locale.ROOT)
+        val isBeverage = listOf("beer", "wine", "spirit", "liquor", "drink", "juice", "water", "soda", "cola")
+            .any(category::contains)
+        val brandLabel = product.brand.trim().ifBlank { product.name.trim() }
+            .take(2).uppercase(Locale.ROOT)
         Box(
-            modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant),
+            modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(16.dp)),
             contentAlignment = Alignment.Center
         ) {
-            Icon(
-                imageVector = Icons.Default.Inventory2,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                modifier = Modifier.size(26.dp)
-            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    imageVector = if (isBeverage) Icons.Default.LocalDrink else Icons.Default.Inventory2,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(40.dp)
+                )
+                if (brandLabel.isNotBlank()) {
+                    Text(
+                        text = brandLabel,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
         }
     }
 }

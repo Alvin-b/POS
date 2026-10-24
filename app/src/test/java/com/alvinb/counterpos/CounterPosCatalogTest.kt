@@ -14,7 +14,7 @@ import org.robolectric.annotation.Config
 @Config(sdk = [36])
 class CounterPosCatalogTest {
     @Test
-    fun catalogHasAllProductsAndEveryProductHasAnImageResource() {
+    fun catalogHasAllProductsAndSupportsOptionalLocalImageAssets() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val json = context.assets.open("counterpos_catalog.json").bufferedReader().use { it.readText() }
         val catalog = JSONArray(json)
@@ -22,12 +22,15 @@ class CounterPosCatalogTest {
         assertEquals(306, catalog.length())
         var stockedProducts = 0
         var libraryProducts = 0
+        var productsUsingImageFallback = 0
 
         for (index in 0 until catalog.length()) {
             val product = catalog.getJSONObject(index)
             val imageName = product.getString("imageAssetName")
             val drawableId = context.resources.getIdentifier(imageName, "drawable", context.packageName)
-            assertTrue("Missing drawable for ${product.getString("name")}: $imageName", drawableId != 0)
+            assertTrue("Missing product name at catalog row $index", product.getString("name").isNotBlank())
+            assertTrue("Missing image key at catalog row $index", imageName.isNotBlank())
+            if (drawableId == 0) productsUsingImageFallback += 1
             assertEquals("Catalog entries must not contain tenant stock", 0, product.getInt("stockQuantity"))
 
             if (product.getBoolean("inMyStock")) {
@@ -39,5 +42,6 @@ class CounterPosCatalogTest {
 
         assertEquals(0, stockedProducts)
         assertEquals(306, libraryProducts)
+        assertTrue("Catalog should exercise the designed category-aware image fallback", productsUsingImageFallback > 0)
     }
 }
