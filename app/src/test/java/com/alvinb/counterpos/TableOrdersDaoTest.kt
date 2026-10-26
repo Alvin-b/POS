@@ -8,6 +8,9 @@ import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.TableOrderEntity
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -128,5 +131,55 @@ class TableOrdersDaoTest {
         val history = dao.observeTableOrders().first()
         assertEquals(2, history.size)
         assertTrue(history.all { it.settlementId == "settlement-1" })
+    }
+
+    @Test
+    fun businessSnapshotReplacementDoesNotEmitEmptyProductsTablesOrOrders() = runBlocking {
+        val dao = database.counterPosDao()
+        dao.insertProduct(
+            ProductEntity(
+                catalogCode = "OLD-001", verifiedBarcode = null, name = "Old product", brand = "", size = "",
+                category = "Beverage", suggestedPriceKsh = 100, sellingPriceKsh = 100, stockQuantity = 5,
+                inMyStock = true, lowStockThreshold = 2, imageAssetName = "product_stock_001"
+            )
+        )
+        dao.insertDiningTable(DiningTableEntity("old-table", "Old table", 100L))
+        dao.insertTableOrder(
+            TableOrderEntity(
+                tableId = "old-table", saleId = 1L, catalogCode = "OLD-001", productName = "Old product",
+                unitName = "Bottle", quantity = 1, unitPriceKsh = 100, totalKsh = 100, servedAt = 100L
+            )
+        )
+
+        val nextProducts = async { dao.observeProducts().drop(1).first() }
+        val nextTables = async { dao.observeDiningTables().drop(1).first() }
+        val nextOrders = async { dao.observeTableOrders().drop(1).first() }
+        delay(100)
+
+        dao.replaceBusinessSnapshot(
+            shopId = "shop-1",
+            products = listOf(
+                ProductEntity(
+                    catalogCode = "NEW-001", verifiedBarcode = null, name = "New product", brand = "", size = "",
+                    category = "Beverage", suggestedPriceKsh = 200, sellingPriceKsh = 200, stockQuantity = 7,
+                    inMyStock = true, lowStockThreshold = 2, imageAssetName = "product_stock_001"
+                )
+            ),
+            sales = emptyList(),
+            tables = listOf(DiningTableEntity("new-table", "New table", 200L)),
+            orders = listOf(
+                TableOrderEntity(
+                    tableId = "new-table", saleId = 2L, catalogCode = "NEW-001", productName = "New product",
+                    unitName = "Bottle", quantity = 1, unitPriceKsh = 200, totalKsh = 200, servedAt = 200L
+                )
+            ),
+            serviceCounters = emptyList(),
+            counterStock = emptyList(),
+            preservePendingSales = false
+        )
+
+        assertEquals(listOf("New product"), nextProducts.await().map { it.name })
+        assertEquals(listOf("New table"), nextTables.await().map { it.name })
+        assertEquals(listOf("New product"), nextOrders.await().map { it.productName })
     }
 }

@@ -366,7 +366,7 @@ class CounterPosRepository(
 
     suspend fun synchronizeWhenOnline(): SessionSnapshot = withContext(Dispatchers.IO) {
         if (remote.restoreSession() == null || activeBusiness == null) return@withContext _session.value
-        syncPendingOutbox()
+        syncPendingOutbox(refreshSnapshot = false)
         loadAccount(autoSelectFirstBusiness = false)
     }
 
@@ -699,10 +699,12 @@ class CounterPosRepository(
     private suspend fun syncBusiness(membership: BusinessMembership) {
         if (dao.outboxCount(membership.shopId) > 0) {
             restoreCachedCounters(membership.shopId)
-            runCatching { syncPendingOutbox() }
+            runCatching { syncPendingOutbox(refreshSnapshot = false) }
+            if (dao.outboxCount(membership.shopId) > 0) return
         }
+        seedCatalogIfEmpty()
+        val bundledCatalogFallbacks = dao.getAllProducts().filter { it.remoteId == null && !it.inMyStock }
         val counters = remote.serviceCounters(membership.shopId)
-        _serviceCounters.value = counters
         runCatching { uploadPendingLocalSales() }
         val hasPendingSales = dao.getPendingRemoteSales().isNotEmpty()
 
@@ -713,20 +715,6 @@ class CounterPosRepository(
         val tableOrderRows = remote.tableOrders(membership.shopId)
         val existingTables = dao.getDiningTables()
         val counterStockSnapshots = counters.associate { it.id to runCatching { remote.counterStock(membership.shopId, it.id) }.getOrDefault(emptyMap()) }
-
-        if (hasPendingSales) {
-            dao.clearSyncedSales()
-            dao.clearTableOrders()
-            dao.clearDiningTables()
-            dao.clearProducts()
-        } else {
-            dao.clearTenantCache()
-        }
-        seedCatalogIfEmpty()
-        _serviceCounters.value = counters
-        dao.clearServiceCounters(membership.shopId)
-        dao.insertServiceCounters(counters.map { com.alvinb.counterpos.data.local.entity.ServiceCounterEntity(it.id, membership.shopId, it.name, it.active) })
-        dao.clearCounterStockForShop(membership.shopId)
 
         val bundledMetadataByCode = mutableMapOf<String, BundledProductMetadata>()
         val bundledMetadataByName = mutableMapOf<String, BundledProductMetadata>()
@@ -782,8 +770,6 @@ class CounterPosRepository(
                 }
             }
         }
-        dao.insertProducts(catalogProducts)
-
         val products = buildList {
             for (index in 0 until productRows.length()) {
                 productRows.optJSONObject(index)?.let { row ->
@@ -823,8 +809,6 @@ class CounterPosRepository(
                 }
             }
         }
-        dao.insertProducts(products)
-
         val productCodeById = buildMap {
             for (index in 0 until productRows.length()) {
                 productRows.optJSONObject(index)?.let { row -> put(row.optString("id"), row.optString("code")) }
@@ -843,8 +827,6 @@ class CounterPosRepository(
                 }
             }
         }
-        if (counterStockRows.isNotEmpty()) dao.insertCounterStock(counterStockRows)
-
         val sales = buildList {
             for (index in 0 until saleRows.length()) {
                 saleRows.optJSONObject(index)?.let { row ->
@@ -878,12 +860,6 @@ class CounterPosRepository(
                 }
             }
         }
-        if (hasPendingSales) {
-            dao.clearSyncedSales()
-        } else {
-            dao.clearSales()
-        }
-        dao.insertSales(sales)
         val localTableIdsByRemoteId = mutableMapOf<String, String>()
         val tables = buildList {
             for (index in 0 until tableRows.length()) {
@@ -925,13 +901,25 @@ class CounterPosRepository(
                 }
             }
         }
-        dao.clearTableOrders()
-        dao.clearDiningTables()
-        // A successful server snapshot is authoritative. Do not carry tables
-        // from an earlier tenant/cache into a business with no server tables.
-        // Pending offline creations are preserved by the outbox guard above.
-        dao.insertDiningTables(tables)
-        orders.forEach { dao.insertTableOrder(it) }
+        val mergedProducts = linkedMapOf<String, ProductEntity>().apply {
+            bundledCatalogFallbacks.forEach { put(it.catalogCode, it) }
+            catalogProducts.forEach { put(it.catalogCode, it) }
+            products.forEach { put(it.catalogCode, it) }
+        }.values.toList()
+        val serviceCounterEntities = counters.map {
+            com.alvinb.counterpos.data.local.entity.ServiceCounterEntity(it.id, membership.shopId, it.name, it.active)
+        }
+        dao.replaceBusinessSnapshot(
+            shopId = membership.shopId,
+            products = mergedProducts,
+            sales = sales,
+            tables = tables,
+            orders = orders,
+            serviceCounters = serviceCounterEntities,
+            counterStock = counterStockRows,
+            preservePendingSales = hasPendingSales
+        )
+        _serviceCounters.value = counters
     }
 
     private suspend fun uploadPendingLocalSales() {
@@ -1402,7 +1390,7 @@ class CounterPosRepository(
         }
     }
 
-    suspend fun syncPendingOutbox(): Map<String, JSONObject> = withContext(Dispatchers.IO) {
+    suspend fun syncPendingOutbox(refreshSnapshot: Boolean = true): Map<String, JSONObject> = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: return@withContext emptyMap()
         val userId = account?.userId?.takeIf(String::isNotBlank) ?: return@withContext emptyMap()
         syncMutex.withLock {
@@ -1451,7 +1439,7 @@ class CounterPosRepository(
                     throw java.io.IOException("Could not sync a saved POS change.", error)
                 }
             }
-            if (dao.outboxCount(shop.shopId) == 0) {
+            if (refreshSnapshot && dao.outboxCount(shop.shopId) == 0) {
                 runCatching { syncBusiness(shop) }
                     .onFailure { error -> if (isRetryable(error)) _session.value = _session.value.copy(message = offlineMessage()) }
             }

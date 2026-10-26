@@ -125,6 +125,9 @@ interface CounterPosDao {
     @Insert
     suspend fun insertTableOrder(order: TableOrderEntity): Long
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTableOrders(orders: List<TableOrderEntity>)
+
     @Query("DELETE FROM table_orders WHERE saleId = :saleId")
     suspend fun deleteTableOrderBySaleId(saleId: Long): Int
 
@@ -142,6 +145,9 @@ interface CounterPosDao {
 
     @Query("SELECT COUNT(*) FROM products")
     suspend fun getProductCount(): Int
+
+    @Query("SELECT * FROM products")
+    suspend fun getAllProducts(): List<ProductEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertProducts(products: List<ProductEntity>)
@@ -167,6 +173,32 @@ interface CounterPosDao {
         clearDiningTables()
         clearSales()
         clearProducts()
+    }
+
+    @Transaction
+    suspend fun replaceBusinessSnapshot(
+        shopId: String,
+        products: List<ProductEntity>,
+        sales: List<SaleEntity>,
+        tables: List<DiningTableEntity>,
+        orders: List<TableOrderEntity>,
+        serviceCounters: List<ServiceCounterEntity>,
+        counterStock: List<CounterStockEntity>,
+        preservePendingSales: Boolean
+    ) {
+        clearTableOrders()
+        clearDiningTables()
+        if (preservePendingSales) clearSyncedSales() else clearSales()
+        clearProducts()
+        clearServiceCounters(shopId)
+        clearCounterStockForShop(shopId)
+
+        if (products.isNotEmpty()) insertProducts(products)
+        if (sales.isNotEmpty()) insertSales(sales)
+        if (tables.isNotEmpty()) insertDiningTables(tables)
+        if (orders.isNotEmpty()) insertTableOrders(orders)
+        if (serviceCounters.isNotEmpty()) insertServiceCounters(serviceCounters)
+        if (counterStock.isNotEmpty()) insertCounterStock(counterStock)
     }
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

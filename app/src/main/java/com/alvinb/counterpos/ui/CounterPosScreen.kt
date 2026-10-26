@@ -747,8 +747,6 @@ fun CounterPosWorkspace(
                 onClose = viewModel::closeStaffManagement,
                 onLoadMembers = { viewModel.loadEmployeeMembers() },
                 onIssueWaiterPass = { r -> viewModel.issueEmployeePass(r) },
-                onGenerateWaiterQr = { r -> viewModel.generateWaiterEnrollmentQr(r) },
-                onClearWaiterQr = { viewModel.clearWaiterEnrollmentQr() },
                 onSetEmployeeStatus = { uid, st -> viewModel.setEmployeeStatus(uid, st) },
                 onSetEmployeeRole = { uid, rl -> viewModel.setEmployeeRole(uid, rl) },
                 onRenameEmployee = { uid, name -> viewModel.renameEmployee(uid, name) },

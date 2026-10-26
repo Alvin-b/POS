@@ -139,11 +139,6 @@ private enum class StaffManagementTab(val title: String) {
     HOURS("Business Hours")
 }
 
-private enum class EnrollmentMode {
-    PASSKEY,
-    QR_CODE
-}
-
 @Composable
 fun StaffManagementScreen(
     state: CounterPosUiState,
@@ -154,8 +149,6 @@ fun StaffManagementScreen(
     onClose: () -> Unit,
     onLoadMembers: () -> Unit,
     onIssueWaiterPass: (String) -> Unit,
-    onGenerateWaiterQr: (String) -> Unit,
-    onClearWaiterQr: () -> Unit,
     onSetEmployeeStatus: (String, String) -> Unit,
     onSetEmployeeRole: (String, String) -> Unit,
     onRenameEmployee: (String, String) -> Unit,
@@ -179,8 +172,6 @@ fun StaffManagementScreen(
     var selectedTab by remember(startOnBusinessHours) {
         mutableStateOf(if (startOnBusinessHours) StaffManagementTab.HOURS else StaffManagementTab.ENROLL)
     }
-    var enrollmentMode by remember { mutableStateOf(EnrollmentMode.PASSKEY) }
-
     // Roster state
     var staffSearchQuery by remember { mutableStateOf("") }
     var staffStatusFilter by remember { mutableStateOf("all") } // "all", "active", "suspended"
@@ -323,11 +314,7 @@ fun StaffManagementScreen(
                     EnrollWaitersTabContent(
                         state = state,
                         ownerCanEdit = ownerCanEnroll,
-                        enrollmentMode = enrollmentMode,
-                        onModeChange = { enrollmentMode = it },
                         onIssuePasskey = { onIssueWaiterPass("cashier") },
-                        onGenerateQr = { onGenerateWaiterQr("cashier") },
-                        onClearQr = onClearWaiterQr,
                         onCopy = { text ->
                             clipboardManager.setText(AnnotatedString(text))
                             scope.launch { snackbarHostState.showSnackbar("Copied to clipboard!") }
@@ -492,18 +479,14 @@ fun StaffManagementScreen(
 }
 
 // ==============================================================================
-// TAB 1: ENROLL WAITERS (Passkey & QR Code Generation)
+// TAB 1: ENROLL WAITERS (Passkey and phone scanning)
 // ==============================================================================
 
 @Composable
 private fun EnrollWaitersTabContent(
     state: CounterPosUiState,
     ownerCanEdit: Boolean,
-    enrollmentMode: EnrollmentMode,
-    onModeChange: (EnrollmentMode) -> Unit,
     onIssuePasskey: () -> Unit,
-    onGenerateQr: () -> Unit,
-    onClearQr: () -> Unit,
     onCopy: (String) -> Unit,
     onShare: (String) -> Unit,
     onScanWaiterCode: () -> Unit
@@ -525,7 +508,7 @@ private fun EnrollWaitersTabContent(
             ) {
                 Column {
                     Text("Enroll New Staff", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("Issue an instant passkey or QR code", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Issue a one-time passkey or scan an employee phone", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Surface(
                     shape = CircleShape,
@@ -538,200 +521,88 @@ private fun EnrollWaitersTabContent(
                 }
             }
 
-            // Mode switcher: Passkey vs QR
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip(
-                    selected = enrollmentMode == EnrollmentMode.PASSKEY,
-                    onClick = { onModeChange(EnrollmentMode.PASSKEY) },
-                    label = { Text("Passkey Code") },
-                    leadingIcon = { Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                    modifier = Modifier.weight(1f)
-                )
-                FilterChip(
-                    selected = enrollmentMode == EnrollmentMode.QR_CODE,
-                    onClick = { onModeChange(EnrollmentMode.QR_CODE) },
-                    label = { Text("QR Code") },
-                    leadingIcon = { Icon(Icons.Default.QrCode, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                    modifier = Modifier.weight(1f)
-                )
-            }
-
             Text("Assigned role: Waiter", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
-            if (enrollmentMode == EnrollmentMode.PASSKEY) {
-                // Passkey Enrollment Mode
-                Text(
-                    text = "A one-time passkey creates the staff account automatically when redeemed on the staff phone. Share it privately via messaging or text.",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Text(
+                text = "A one-time passkey creates the staff account automatically when redeemed on the staff phone. Share it privately via messaging or text.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
-                Button(
-                    onClick = onIssuePasskey,
-                    enabled = ownerCanEdit && !state.isIssuingEmployeePass,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("generate_waiter_passkey_button")
-                ) {
-                    if (state.isIssuingEmployeePass) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
-                        Spacer(Modifier.width(8.dp))
-                    } else {
-                        Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                    }
-                    Text("Generate Waiter Passkey")
+            Button(
+                onClick = onIssuePasskey,
+                enabled = ownerCanEdit && !state.isIssuingEmployeePass,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("generate_waiter_passkey_button")
+            ) {
+                if (state.isIssuingEmployeePass) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                    Spacer(Modifier.width(8.dp))
+                } else {
+                    Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
                 }
+                Text("Generate Waiter Passkey")
+            }
 
-                state.employeePasskey?.takeIf { it.isNotBlank() }?.let { passkey ->
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth()
+            state.employeePasskey?.takeIf { it.isNotBlank() }?.let { passkey ->
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                            Text("New Waiter Passkey", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
                             ) {
-                                Text("New Waiter Passkey", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                                ) {
-                                    Text("One-time use", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
-                                }
-                            }
-                            Text(
-                                text = passkey,
-                                style = MaterialTheme.typography.headlineMedium,
-                                fontWeight = FontWeight.Black,
-                                letterSpacing = 2.sp,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedButton(
-                                    onClick = { onCopy(passkey) },
-                                    modifier = Modifier.weight(1f).testTag("copy_passkey_button")
-                                ) {
-                                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Copy")
-                                }
-                                Button(
-                                    onClick = { onShare(passkey) },
-                                    modifier = Modifier.weight(1f).testTag("share_passkey_button")
-                                ) {
-                                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Share")
-                                }
+                                Text("One-time use", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                             }
                         }
-                    }
-                }
-            } else {
-                // QR Code Generation Mode
-                Text(
-                        text = "Display this QR code for the waiter to join the business.",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Button(
-                    onClick = onGenerateQr,
-                    enabled = ownerCanEdit && !state.isGeneratingEnrollmentQr,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("generate_waiter_qr_button")
-                ) {
-                    if (state.isGeneratingEnrollmentQr) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
-                        Spacer(Modifier.width(8.dp))
-                    } else {
-                        Icon(Icons.Default.QrCode, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                    }
-                    Text(if (state.waiterEnrollmentQrPayload != null) "Regenerate QR Code" else "Generate Enrollment QR")
-                }
-
-                state.waiterEnrollmentQrPayload?.let { qrPayload ->
-                    val qrBitmap = remember(qrPayload) { createLoginQr(qrPayload) }
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        Text(
+                            text = passkey,
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 2.sp,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text("Scan with Waiter's Phone", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-
-                            Surface(
-                                shape = RoundedCornerShape(14.dp),
-                                color = Color.White,
-                                modifier = Modifier.size(200.dp),
-                                shadowElevation = 3.dp
+                            OutlinedButton(
+                                onClick = { onCopy(passkey) },
+                                modifier = Modifier.weight(1f).testTag("copy_passkey_button")
                             ) {
-                                Image(
-                                    bitmap = qrBitmap.asImageBitmap(),
-                                    contentDescription = "Waiter Enrollment QR Code",
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(12.dp)
-                                )
+                                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Copy")
                             }
-
-                            Text(
-                                text = "Waiter points camera from the sign-in screen to enroll automatically.",
-                                fontSize = 11.sp,
-                                textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            Button(
+                                onClick = { onShare(passkey) },
+                                modifier = Modifier.weight(1f).testTag("share_passkey_button")
                             ) {
-                                OutlinedButton(
-                                    onClick = { onCopy(qrPayload) },
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(15.dp))
-                                    Spacer(Modifier.width(5.dp))
-                                    Text("Copy Code", fontSize = 11.sp)
-                                }
-                                TextButton(
-                                    onClick = onClearQr,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(15.dp))
-                                    Spacer(Modifier.width(5.dp))
-                                    Text("Hide QR", fontSize = 11.sp)
-                                }
+                                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Share")
                             }
                         }
                     }
                 }
             }
-
-            // Alternative: Scan waiter's challenge code if waiter generated one first
+            // Scan an employee's pending sign-in challenge
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -739,8 +610,8 @@ private fun EnrollWaitersTabContent(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Waiter has a QR code on their phone?", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                    Text("Scan their QR challenge to authorize them right now.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Employee ready to sign in?", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Text("Scan the QR on their sign-in screen to authorize this phone.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Spacer(Modifier.width(8.dp))
                 OutlinedButton(

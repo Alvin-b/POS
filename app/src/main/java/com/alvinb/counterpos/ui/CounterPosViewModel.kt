@@ -120,8 +120,6 @@ data class CounterPosUiState(
     val employeePasskey: String? = null,
     val adminEnrollmentCredential: AdminEnrollmentCredential? = null,
     val isStaffManagementOpen: Boolean = false,
-    val waiterEnrollmentQrPayload: String? = null,
-    val isGeneratingEnrollmentQr: Boolean = false,
     val staffManagementStartsOnHours: Boolean = false,
 
     // Sale sheet
@@ -461,42 +459,11 @@ class CounterPosViewModel(
                 isStaffManagementOpen = false,
                 staffManagementStartsOnHours = false,
                 actionError = null,
-                waiterEnrollmentQrPayload = null,
                 employeeRecoveryCredential = null
             )
         }
         refreshAccessNow()
     }
-
-    fun generateWaiterEnrollmentQr(role: String = "cashier") = viewModelScope.launch {
-        if (_uiState.value.isGeneratingEnrollmentQr) return@launch
-        val normalizedRole = if (role.equals("waiter", ignoreCase = true)) "cashier" else role
-        if (normalizedRole != "cashier") {
-            _uiState.update { it.copy(actionError = "Only the Waiter role is currently supported for employee enrollment.") }
-            return@launch
-        }
-        _uiState.update { it.copy(isGeneratingEnrollmentQr = true, actionError = null) }
-        try {
-            val pass = repository.createEmployeeAccessPass(normalizedRole)
-            val passkey = pass.optString("passkey").trim()
-            require(passkey.isNotBlank()) { "Server did not return a staff passkey." }
-            val payload = "CPX1.$passkey"
-            _uiState.update {
-                it.copy(
-                    waiterEnrollmentQrPayload = payload,
-                    employeePasskey = passkey,
-                    actionError = null,
-                    notice = "Staff enrollment QR code generated. Staff can scan it from their sign-in screen."
-                )
-            }
-        } catch (e: Exception) {
-            _uiState.update { it.copy(actionError = e.message ?: "Could not generate enrollment QR") }
-        } finally {
-            _uiState.update { it.copy(isGeneratingEnrollmentQr = false) }
-        }
-    }
-
-    fun clearWaiterEnrollmentQr() = _uiState.update { it.copy(waiterEnrollmentQrPayload = null) }
 
     private fun ownerCanManageOutsideHours(state: CounterPosUiState): Boolean =
         session.value.activeBusiness?.role == "owner" &&
@@ -1144,7 +1111,28 @@ class CounterPosViewModel(
     }
 
     fun openStaffEnrollmentScanner(role: String) {
-        _uiState.update { it.copy(notice = "Use the generated enrollment QR or passkey to enroll a $role.") }
+        val business = session.value.activeBusiness
+        if (business == null) {
+            _uiState.update { it.copy(actionError = "Select an active business before scanning an employee phone.") }
+            return
+        }
+        if (!business.role.equals("owner", ignoreCase = true)) {
+            _uiState.update { it.copy(actionError = "Only the business owner can approve employee phone enrollment.") }
+            return
+        }
+        if (!role.equals("cashier", ignoreCase = true) && !role.equals("waiter", ignoreCase = true)) {
+            _uiState.update { it.copy(actionError = "Only Waiter enrollment is supported in this screen.") }
+            return
+        }
+        _uiState.update {
+            it.copy(
+                isScannerOpen = true,
+                scannerMode = ScannerMode.ADMIN_QR,
+                isAccessLocked = false,
+                actionError = null,
+                notice = "Scan the employee's sign-in QR on their phone to enroll them in ${business.shopName}."
+            )
+        }
     }
 
     fun openTable(table: DiningTableEntity) = _uiState.update {
