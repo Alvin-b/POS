@@ -226,8 +226,12 @@ fun CounterPosWorkspace(
     LaunchedEffect(supportsTables, state.tab) {
         if (!supportsTables && state.tab == PosTab.TABLES) viewModel.selectTab(PosTab.SCAN)
     }
+    val canManageStock = role in setOf("owner", "manager", "inventory_clerk")
     val canReceiveStock = role in setOf("owner", "manager", "inventory_clerk")
     val canEditProducts = role in setOf("owner", "manager")
+    LaunchedEffect(canManageStock, state.tab) {
+        if (!canManageStock && state.tab == PosTab.STOCK) viewModel.selectTab(PosTab.SCAN)
+    }
 
     LaunchedEffect(session.activeBusiness?.shopId, serviceCounters, state.selectedCounterId) {
         val selectedId = state.selectedServingCounterId ?: state.selectedCounterId
@@ -311,7 +315,7 @@ fun CounterPosWorkspace(
                     onSearchToggle = { active -> viewModel.setSearchActive(active) },
                     onSearchChange = viewModel::setSearchQuery,
                     onClearSearch = viewModel::clearSearch,
-                    onOpenScanner = { viewModel.openScanner(if (state.tab == PosTab.STOCK) ScannerMode.TAKE_STOCK else ScannerMode.SELL) },
+                    onOpenScanner = { viewModel.openScanner(if (state.tab == PosTab.STOCK && canManageStock) ScannerMode.TAKE_STOCK else ScannerMode.SELL) },
                     onAddNewProduct = { viewModel.openAddNewProduct() },
                     canAddNewProduct = canReceiveStock,
                     canManageTeam = role in setOf("owner", "manager"),
@@ -322,6 +326,21 @@ fun CounterPosWorkspace(
                     onCounterSelect = viewModel::selectCounter,
                     onSyncData = { viewModel.synchronizeData(showNotice = true) }
                 )
+                if (!state.isOnline) {
+                    Surface(color = MaterialTheme.colorScheme.tertiaryContainer) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Offline mode · All sales and tables saved locally. Will sync immediately when online.",
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
                 if (state.blockedOutbox.isNotEmpty()) {
                     Surface(color = MaterialTheme.colorScheme.errorContainer) {
                         Row(
@@ -363,14 +382,16 @@ fun CounterPosWorkspace(
                         colors = posNavigationItemColors(),
                         modifier = Modifier.testTag("nav_pos")
                     )
-                    NavigationBarItem(
-                        selected = state.tab == PosTab.STOCK,
-                        onClick = { viewModel.selectTab(PosTab.STOCK) },
-                        icon = { Icon(Icons.Default.Inventory2, contentDescription = "Stock", modifier = Modifier.size(21.dp)) },
-                        label = { Text("Stock (${products.count { it.inMyStock }})", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.STOCK) FontWeight.Bold else FontWeight.Normal) },
-                        colors = posNavigationItemColors(),
-                        modifier = Modifier.testTag("nav_stock")
-                    )
+                    if (canManageStock) {
+                        NavigationBarItem(
+                            selected = state.tab == PosTab.STOCK,
+                            onClick = { viewModel.selectTab(PosTab.STOCK) },
+                            icon = { Icon(Icons.Default.Inventory2, contentDescription = "Stock", modifier = Modifier.size(21.dp)) },
+                            label = { Text("Stock (${products.count { it.inMyStock }})", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.STOCK) FontWeight.Bold else FontWeight.Normal) },
+                            colors = posNavigationItemColors(),
+                            modifier = Modifier.testTag("nav_stock")
+                        )
+                    }
                     NavigationBarItem(
                         selected = state.tab == PosTab.SALES,
                         onClick = { viewModel.selectTab(PosTab.SALES) },
@@ -416,29 +437,35 @@ fun CounterPosWorkspace(
                     state = state,
                     products = products,
                     onProductClick = viewModel::openSale,
-                    onOpenStock = { viewModel.selectTab(PosTab.STOCK) }
+                    onOpenStock = if (canManageStock) { { viewModel.selectTab(PosTab.STOCK) } } else null
                 )
-                PosTab.STOCK -> FullscreenStockScreen(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
-                    state = state,
-                    products = products,
-                    onModeChange = viewModel::setStockMode,
-                    onCategoryChange = viewModel::setLibraryCategory,
-                    onAddStockClick = viewModel::openAddStock,
-                    onEditProductClick = viewModel::openEditProduct,
-                    onScanStockClick = { viewModel.openScanner(ScannerMode.TAKE_STOCK) },
-                    onAddCatalogClick = viewModel::openCatalogItem,
-                    canReceiveStock = canReceiveStock,
-                    canEditProducts = canEditProducts,
-                    canTransferStock = session.activeBusiness?.counterInventoryMode == "per_counter" && role in setOf("owner", "manager") && serviceCounters.size > 1,
-                    onTransferStock = { product -> transferProductCode = product.catalogCode },
-                    onChangePhoto = { product ->
-                        photoTargetCode = product.catalogCode
-                        photoPicker.launch(arrayOf("image/*"))
+                PosTab.STOCK -> if (canManageStock) {
+                    FullscreenStockScreen(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(padding),
+                        state = state,
+                        products = products,
+                        onModeChange = viewModel::setStockMode,
+                        onCategoryChange = viewModel::setLibraryCategory,
+                        onAddStockClick = viewModel::openAddStock,
+                        onEditProductClick = viewModel::openEditProduct,
+                        onScanStockClick = { viewModel.openScanner(ScannerMode.TAKE_STOCK) },
+                        onAddCatalogClick = viewModel::openCatalogItem,
+                        canReceiveStock = canReceiveStock,
+                        canEditProducts = canEditProducts,
+                        canTransferStock = session.activeBusiness?.counterInventoryMode == "per_counter" && role in setOf("owner", "manager") && serviceCounters.size > 1,
+                        onTransferStock = { product -> transferProductCode = product.catalogCode },
+                        onChangePhoto = { product ->
+                            photoTargetCode = product.catalogCode
+                            photoPicker.launch(arrayOf("image/*"))
+                        }
+                    )
+                } else {
+                    Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                        Text("You do not have permission to adjust stock.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                )
+                }
                 PosTab.SALES -> FullscreenSalesScreen(
                     modifier = Modifier
                         .fillMaxSize()
@@ -506,10 +533,13 @@ fun CounterPosWorkspace(
                         onSettleTable = viewModel::settleTableBill,
                         onOpenTable = viewModel::openTable,
                         onBackToTables = viewModel::backToTables,
+                        onNextTable = viewModel::selectNextTable,
+                        onRefresh = { viewModel.synchronizeData(showNotice = true) },
                         onAddProduct = viewModel::openTableSale,
                         onScanProduct = { viewModel.openScanner(ScannerMode.TABLE_ADD) },
                         showCounterLabels = serviceCounters.size > 1,
-                        registeredWaiterEmails = registeredWaiterEmails
+                        registeredWaiterEmails = registeredWaiterEmails,
+                        businessName = session.activeBusiness?.shopName ?: "Counter POS"
                     )
                 }
             }
@@ -1091,7 +1121,7 @@ private fun FullscreenSellScreen(
     state: CounterPosUiState,
     products: List<ProductEntity>,
     onProductClick: (ProductEntity) -> Unit,
-    onOpenStock: () -> Unit
+    onOpenStock: (() -> Unit)? = null
 ) {
     val stocked = remember(products) { products.filter { it.inMyStock } }
     var selectedCategory by remember { mutableStateOf("All") }
@@ -1190,7 +1220,7 @@ private fun FullscreenSellScreen(
 }
 
 @Composable
-private fun SellEmptyState(onOpenStock: () -> Unit) {
+private fun SellEmptyState(onOpenStock: (() -> Unit)?) {
     Surface(
         modifier = Modifier.fillMaxWidth().padding(top = 24.dp).height(280.dp),
         shape = RoundedCornerShape(18.dp),
@@ -1214,19 +1244,22 @@ private fun SellEmptyState(onOpenStock: () -> Unit) {
             Spacer(Modifier.height(13.dp))
             Text("Nothing to sell yet", fontSize = 17.sp, fontWeight = FontWeight.Bold)
             Text(
-                "Add products to your shelf before starting a sale.",
+                if (onOpenStock != null) "Add products to your shelf before starting a sale."
+                else "Waiting for products to be stocked on the shelf. Ask your manager to add stock.",
                 modifier = Modifier.padding(top = 5.dp, bottom = 14.dp),
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
-            Button(
-                onClick = onOpenStock,
-                modifier = Modifier.fillMaxWidth().height(40.dp),
-                shape = RoundedCornerShape(11.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
-            ) {
-                Text("Open stock", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            if (onOpenStock != null) {
+                Button(
+                    onClick = onOpenStock,
+                    modifier = Modifier.fillMaxWidth().height(40.dp),
+                    shape = RoundedCornerShape(11.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                ) {
+                    Text("Open stock", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
             }
         }
     }

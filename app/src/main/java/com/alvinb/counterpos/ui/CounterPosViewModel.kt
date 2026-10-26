@@ -2,6 +2,7 @@ package com.alvinb.counterpos.ui
 
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -75,6 +76,7 @@ private fun isValidHourMinute(value: String): Boolean = HourMinutePattern.matche
 data class CounterPosUiState(
     val tab: PosTab = PosTab.SCAN,
     val previousTab: PosTab? = null,
+    val isOnline: Boolean = true,
     val stockMode: StockMode = StockMode.MY_STOCK,
     val searchQuery: String = "",
     val isSearchActive: Boolean = false,
@@ -180,17 +182,36 @@ class CounterPosViewModel(
     private var loginQrJob: Job? = null
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
+            _uiState.update { it.copy(isOnline = true) }
             reconnectSyncJob?.cancel()
             reconnectSyncJob = viewModelScope.launch {
-                delay(750)
-                runCatching { repository.synchronizeWhenOnline() }
-                    .onSuccess { _uiState.update { it.copy(notice = "Synced automatically") } }
-                    .onFailure { _uiState.update { it.copy(notice = "Offline changes will sync automatically when connected") } }
+                delay(150)
+                runCatching {
+                    repository.synchronizeWhenOnline()
+                    refreshCounterStock()
+                }
+                    .onSuccess { _uiState.update { it.copy(notice = "Internet connected. Real-time data synchronized.") } }
+                    .onFailure { _uiState.update { it.copy(notice = "Syncing in background…") } }
+            }
+        }
+
+        override fun onLost(network: Network) {
+            _uiState.update {
+                it.copy(
+                    isOnline = false,
+                    notice = "Offline mode. Sales and tables are stored locally."
+                )
             }
         }
     }
 
     init {
+        runCatching {
+            val net = connectivityManager.activeNetwork
+            val caps = connectivityManager.getNetworkCapabilities(net)
+            val isOnline = caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            _uiState.update { it.copy(isOnline = isOnline) }
+        }
         runCatching { connectivityManager.registerDefaultNetworkCallback(networkCallback) }
         viewModelScope.launch {
             repository.session.collect { sess ->
@@ -231,7 +252,7 @@ class CounterPosViewModel(
         }
         viewModelScope.launch {
             while (isActive) {
-                delay(12_000)
+                delay(4_000)
                 if (repository.session.value.isAuthenticated && repository.session.value.activeBusiness != null) {
                     runCatching {
                         repository.synchronizeWhenOnline()
@@ -1230,12 +1251,16 @@ class CounterPosViewModel(
         }
         val units = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
         val defaultUnit = units.firstOrNull() ?: SaleUnit("Bottle", product.sellingPriceKsh)
+        val defaultCounterId = _uiState.value.selectedServingCounterId
+            ?: _uiState.value.selectedCounterId
+            ?: serviceCounters.value.firstOrNull()?.id
         _uiState.update {
             it.copy(
                 selectedTableId = tableId,
                 selectedSaleCode = product.catalogCode,
                 selectedUnitName = defaultUnit.name,
                 selectedUnitPrice = defaultUnit.priceKsh,
+                selectedServingCounterId = defaultCounterId,
                 saleQuantity = 1,
                 actionError = null
             )
@@ -1346,6 +1371,13 @@ class CounterPosViewModel(
     }
 
     fun handleScannedStock(product: ProductEntity) {
+        val role = session.value.activeBusiness?.role.orEmpty()
+        val canManageStock = role in setOf("owner", "manager", "inventory_clerk")
+        if (!canManageStock) {
+            _uiState.update { it.copy(isScannerOpen = false, actionError = null) }
+            openSale(product)
+            return
+        }
         if (product.inMyStock) {
             _uiState.update {
                 it.copy(
@@ -1500,7 +1532,7 @@ class CounterPosViewModel(
             return
         }
         val counters = serviceCounters.value
-        val requestedCounterId = state.selectedServingCounterId ?: state.selectedCounterId ?: counters.singleOrNull()?.id
+        val requestedCounterId = state.selectedServingCounterId ?: state.selectedCounterId ?: counters.firstOrNull()?.id
         val selectedCounter = counters.firstOrNull { it.id == requestedCounterId }
         if (selectedCounter == null) {
             _uiState.update { it.copy(actionError = "No valid service counter is selected. Check the business counters in Settings and try again.") }
