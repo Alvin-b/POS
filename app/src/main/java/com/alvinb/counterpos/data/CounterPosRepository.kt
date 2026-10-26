@@ -379,6 +379,11 @@ class CounterPosRepository(
         loadAccount(autoSelectSingleBusiness = false)
     }
 
+    /** Refresh the persisted auth session even when no business workspace is open. */
+    suspend fun keepSessionAlive(): Boolean = withContext(Dispatchers.IO) {
+        remote.restoreSession() != null
+    }
+
     suspend fun canOperateNow(): Boolean = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: return@withContext true
         remote.canSellForShop(shop.shopId)

@@ -180,6 +180,7 @@ class CounterPosViewModel(
     private var mutationInProgress = false
     private var reconnectSyncJob: Job? = null
     private var loginQrJob: Job? = null
+    private var lastSessionKeepAliveAt = 0L
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             _uiState.update { it.copy(isOnline = true) }
@@ -253,10 +254,16 @@ class CounterPosViewModel(
         viewModelScope.launch {
             while (isActive) {
                 delay(4_000)
-                if (repository.session.value.isAuthenticated && repository.session.value.activeBusiness != null) {
-                    runCatching {
-                        repository.synchronizeWhenOnline()
-                        refreshCounterStock()
+                if (repository.session.value.isAuthenticated) {
+                    val now = System.currentTimeMillis()
+                    if (repository.session.value.activeBusiness != null) {
+                        runCatching {
+                            repository.synchronizeWhenOnline()
+                            refreshCounterStock()
+                        }
+                    } else if (now - lastSessionKeepAliveAt >= 5 * 60 * 1_000L) {
+                        lastSessionKeepAliveAt = now
+                        runCatching { repository.keepSessionAlive() }
                     }
                 }
             }

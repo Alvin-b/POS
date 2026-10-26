@@ -265,10 +265,19 @@ class SupabaseRestClient(context: Context) {
     }
 
     suspend fun restoreSession(): AuthSession? = withContext(Dispatchers.IO) {
-        session?.let {
-            runCatching { request("/auth/v1/user", "GET", null, true) }
+        val existing = session ?: return@withContext null
+        try {
+            request("/auth/v1/user", "GET", null, true)
+        } catch (_: SupabaseUnauthorizedException) {
+            // requestRaw clears the session only when the refresh token is
+            // definitively invalid. Preserve whatever session remains.
+            return@withContext session
+        } catch (_: IOException) {
+            // Keep the encrypted session for offline startup. The repository
+            // can use its cached account/inventory snapshot and retry later.
+            return@withContext existing
         }
-        session
+        session ?: existing
     }
 
     fun clearSession() {
@@ -751,8 +760,8 @@ class SupabaseRestClient(context: Context) {
                 val renewed = AuthSession(
                     accessToken = json.optString("access_token"),
                     refreshToken = json.optString("refresh_token", old.refreshToken),
-                    userId = user?.optString("id") ?: old.userId,
-                    email = user?.optString("email") ?: old.email
+                    userId = user?.optString("id")?.takeIf(String::isNotBlank) ?: old.userId,
+                    email = user?.optString("email")?.takeIf(String::isNotBlank) ?: old.email
                 )
                 if (renewed.accessToken.isBlank() || renewed.userId != expectedUserId) {
                     RefreshOutcome.RETRYABLE_FAILURE
