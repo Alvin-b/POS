@@ -1120,12 +1120,13 @@ class CounterPosViewModel(
             .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not refresh business data") } }
     }
 
-    private suspend fun inventorySaveNotice(serverConfirmedNotice: String): String {
-        val pending = runCatching { repository.pendingOutboxCount() }.getOrDefault(1)
-        return if (pending > 0) {
-            "Saved on this phone only; the server has not confirmed it. Other devices will see this stock after sync succeeds."
-        } else {
-            serverConfirmedNotice
+    private fun syncInventoryQuietly(counterId: String?) {
+        viewModelScope.launch {
+            // Room is updated optimistically by the repository. Retry the
+            // server flush immediately so other devices see stock changes
+            // without waiting for the background worker interval.
+            runCatching { repository.synchronizeWhenOnline() }
+            refreshCounterStock(counterId)
         }
     }
 
@@ -1637,14 +1638,14 @@ class CounterPosViewModel(
             if (counterId.isNullOrBlank()) { _uiState.update { it.copy(actionError = "Choose a receiving counter first.") }; return@launch }
             val success = repository.restock(product.catalogCode, additionalBottles, unitCostKsh, counterId)
             if (success) {
-                val notice = inventorySaveNotice("✓ Added $additionalBottles bottles at KSh $unitCostKsh to ${product.name}")
                 _uiState.update {
                     it.copy(
                         addStockProductCode = null,
-                        notice = notice
+                        notice = null,
+                        actionError = null
                     )
                 }
-                refreshCounterStock(counterId)
+                syncInventoryQuietly(counterId)
             } else {
                 _uiState.update { it.copy(actionError = "Failed to update stock.") }
             }
@@ -1682,14 +1683,14 @@ class CounterPosViewModel(
             if (counterId.isNullOrBlank()) { _uiState.update { it.copy(actionError = "Choose a counter first.") }; return@launch }
             val success = repository.updateProduct(updated, counterId)
             if (success) {
-                val notice = inventorySaveNotice("✓ Updated ${updated.name}: Stock set to $newStock bottles, price KSh $newPrice")
                 _uiState.update {
                     it.copy(
                         editProductCode = null,
-                        notice = notice
+                        notice = null,
+                        actionError = null
                     )
                 }
-                refreshCounterStock(counterId)
+                syncInventoryQuietly(counterId)
             } else {
                 _uiState.update { it.copy(actionError = "Failed to save product changes.") }
             }
@@ -1741,16 +1742,15 @@ class CounterPosViewModel(
                 selectedCounterId = counterId
             )
             if (success) {
-                val notice = inventorySaveNotice("✓ Added new product '$name' with $initialStock bottles and ${units.size} sales units.")
                 _uiState.update {
                     it.copy(
                         isAddingNewProduct = false,
                         prefilledBarcode = null,
                         actionError = null,
-                        notice = notice
+                        notice = null
                     )
                 }
-                refreshCounterStock(counterId)
+                syncInventoryQuietly(counterId)
             } else {
                 _uiState.update { it.copy(actionError = "Failed to add product.") }
             }
@@ -1782,17 +1782,15 @@ class CounterPosViewModel(
             runCatching { repository.addFromLibrary(code, quantity, priceKsh, unitCostKsh, counterId) }
                 .onSuccess { success ->
                     if (success) {
-                        val item = products.value.firstOrNull { it.catalogCode == code }
-                        val notice = inventorySaveNotice("✓ Added ${item?.name ?: "Product"} to your shop stock!")
                         _uiState.update {
                             it.copy(
                                 selectedCatalogCode = null,
                                 stockMode = StockMode.MY_STOCK,
                                 actionError = null,
-                                notice = notice
+                                notice = null
                             )
                         }
-                        refreshCounterStock(counterId)
+                        syncInventoryQuietly(counterId)
                     } else {
                         _uiState.update { it.copy(actionError = "This catalog item is not linked to the backend catalog. Refresh products and try again.") }
                     }
