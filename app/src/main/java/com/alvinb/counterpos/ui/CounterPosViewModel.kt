@@ -231,6 +231,17 @@ class CounterPosViewModel(
                 monitorActiveHours()
             }
         }
+        viewModelScope.launch {
+            while (isActive) {
+                delay(12_000)
+                if (repository.session.value.isAuthenticated && repository.session.value.activeBusiness != null) {
+                    runCatching {
+                        repository.synchronizeWhenOnline()
+                        refreshCounterStock()
+                    }
+                }
+            }
+        }
     }
 
     override fun onCleared() {
@@ -1141,6 +1152,16 @@ class CounterPosViewModel(
     }
 
     fun backToTables() = _uiState.update { it.copy(selectedTableId = null, actionError = null) }
+
+    fun selectNextTable(direction: Int) {
+        val currentList = diningTables.value
+        if (currentList.isEmpty()) return
+        val currentId = _uiState.value.selectedTableId ?: return
+        val currentIndex = currentList.indexOfFirst { it.id == currentId }
+        if (currentIndex == -1) return
+        val nextIndex = (currentIndex + direction + currentList.size) % currentList.size
+        _uiState.update { it.copy(selectedTableId = currentList[nextIndex].id, actionError = null) }
+    }
 
     fun createDiningTable(name: String) {
         if (_uiState.value.isCreatingTable) return

@@ -285,15 +285,9 @@ class SupabaseRestClient(context: Context) {
                     val bType = row.optString("business_type", "big_club").trim()
                     val isClub = bType.equals("big_club", ignoreCase = true) || bType.equals("club", ignoreCase = true)
                     val counterCount = if (isClub) row.optInt("counter_count", 1).coerceAtLeast(1) else 1
-                    val defaultFlags = if (isClub) {
-                        setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics")
-                    } else {
-                        setOf("employee_management", "working_hours", "fifo_inventory", "sales_analytics")
-                    }
+                    val defaultFlags = setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics")
                     val rawFlags = row.optJSONObject("feature_flags")?.keys()?.asSequence()?.filter { key -> row.optJSONObject("feature_flags")?.optBoolean(key, false) == true }?.toSet()
-                    val resolvedFlags = if (rawFlags != null && rawFlags.isNotEmpty()) {
-                        if (isClub) rawFlags else rawFlags - "tables"
-                    } else defaultFlags
+                    val resolvedFlags = (rawFlags ?: defaultFlags) + "tables"
                     add(
                         BusinessMembership(
                             shopId = row.optString("shop_id"),
@@ -371,18 +365,8 @@ class SupabaseRestClient(context: Context) {
         }
     }
 
-    suspend fun diningTables(shopId: String): JSONArray = try {
-        query("dining_tables?select=*&shop_id=eq.$shopId&archived=eq.false&order=created_at.asc,name.asc")
-    } catch (error: SupabaseApiException) {
-        // Older live databases may have dining_tables but not the archived
-        // column yet. Keep sign-in/business sync working until migration 0029
-        // is applied; the server-side migration remains the permanent fix.
-        if (error.message.orEmpty().contains("dining_tables.archived", ignoreCase = true)) {
-            query("dining_tables?select=*&shop_id=eq.$shopId&order=created_at.asc,name.asc")
-        } else {
-            throw error
-        }
-    }
+    suspend fun diningTables(shopId: String): JSONArray =
+        query("dining_tables?select=*&shop_id=eq.$shopId&order=created_at.asc,name.asc")
 
     suspend fun tableOrders(shopId: String): JSONArray = query(
         "table_orders?select=*&shop_id=eq.$shopId&order=served_at.asc"

@@ -503,8 +503,7 @@ class CounterPosRepository(
             businessSize = business.businessSize,
             counterInventoryMode = business.counterInventoryMode,
             counterCount = if (liquor) 1 else business.counterCount.toInt().coerceAtLeast(1),
-            featureFlags = if (liquor) setOf("employee_management", "working_hours", "fifo_inventory", "sales_analytics")
-                else setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics"),
+            featureFlags = setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics"),
             currency = "KES",
             lowStockThreshold = 5
         )
@@ -700,29 +699,29 @@ class CounterPosRepository(
     private suspend fun syncBusiness(membership: BusinessMembership) {
         if (dao.outboxCount(membership.shopId) > 0) {
             restoreCachedCounters(membership.shopId)
-            return
+            runCatching { syncPendingOutbox() }
         }
         val counters = remote.serviceCounters(membership.shopId)
         _serviceCounters.value = counters
-        uploadPendingLocalSales()
-        // Older app versions persisted sales without an idempotency key. Never
-        // clear their local cache if they cannot be replayed safely (notably table
-        // orders, which the older client did not record with a replay key).
-        if (dao.getPendingRemoteSales().isNotEmpty()) {
-            restoreCachedCounters(membership.shopId)
-            return
-        }
+        runCatching { uploadPendingLocalSales() }
+        val hasPendingSales = dao.getPendingRemoteSales().isNotEmpty()
+
         val catalogRows = remote.catalog()
         val productRows = remote.products(membership.shopId)
         val saleRows = remote.sales(membership.shopId)
         val tableRows = remote.diningTables(membership.shopId)
         val tableOrderRows = remote.tableOrders(membership.shopId)
         val existingTables = dao.getDiningTables()
-        val counterStockSnapshots = if (membership.counterInventoryMode == "per_counter") {
-            counters.associate { it.id to remote.counterStock(membership.shopId, it.id) }
-        } else emptyMap()
+        val counterStockSnapshots = counters.associate { it.id to runCatching { remote.counterStock(membership.shopId, it.id) }.getOrDefault(emptyMap()) }
 
-        dao.clearTenantCache()
+        if (hasPendingSales) {
+            dao.clearSyncedSales()
+            dao.clearTableOrders()
+            dao.clearDiningTables()
+            dao.clearProducts()
+        } else {
+            dao.clearTenantCache()
+        }
         seedCatalogIfEmpty()
         _serviceCounters.value = counters
         dao.clearServiceCounters(membership.shopId)
@@ -789,9 +788,15 @@ class CounterPosRepository(
             for (index in 0 until productRows.length()) {
                 productRows.optJSONObject(index)?.let { row ->
                     val code = row.optString("code").ifBlank { row.optString("catalog_code") }
+                    val remoteId = row.optString("id").takeIf(String::isNotBlank)
                     val bundled = metadataFor(row)
                     val fallback = bundled?.imageAssetName ?: dao.getProductByCode(code)?.imageAssetName ?: "product_stock_001"
                     val imageUrl = row.optNullableString("photo_url") ?: bundled?.imageSourceUrl
+                    val rawStock = row.optInt("stock", row.optInt("quantity", row.optInt("stock_quantity", row.optInt("current_stock", 0))))
+                    val counterStockTotal = if (remoteId != null) counterStockSnapshots.values.sumOf { it[remoteId] ?: 0 } else 0
+                    val finalStock = if (rawStock > 0) rawStock else counterStockTotal
+                    val price = row.optInt("price", row.optInt("selling_price", 0))
+                    val cost = row.optInt("average_cost", row.optInt("unit_cost", 0))
                     add(
                         ProductEntity(
                             catalogCode = code,
@@ -800,9 +805,9 @@ class CounterPosRepository(
                             brand = row.optString("brand"),
                             size = row.optString("size"),
                             category = row.optString("category", "Beverage"),
-                            suggestedPriceKsh = row.optInt("price", 0),
-                            sellingPriceKsh = row.optInt("price", 0),
-                            stockQuantity = row.optInt("stock", 0),
+                            suggestedPriceKsh = price,
+                            sellingPriceKsh = price,
+                            stockQuantity = finalStock,
                             inMyStock = true,
                             lowStockThreshold = membership.lowStockThreshold,
                             imageAssetName = fallback,
@@ -810,9 +815,9 @@ class CounterPosRepository(
                             productSourceUrl = row.optNullableString("product_source_url") ?: bundled?.productSourceUrl,
                             imageSourceUrl = imageUrl,
                             verificationNote = "Business inventory",
-                            salesUnitsJson = serializeSaleUnits(listOf(SaleUnit("Bottle", row.optInt("price", 0)))),
-                            remoteId = row.optString("id").takeIf(String::isNotBlank),
-                            averageCostKsh = row.optInt("average_cost", 0)
+                            salesUnitsJson = serializeSaleUnits(listOf(SaleUnit("Bottle", price))),
+                            remoteId = remoteId,
+                            averageCostKsh = cost
                         )
                     )
                 }
@@ -844,6 +849,11 @@ class CounterPosRepository(
             for (index in 0 until saleRows.length()) {
                 saleRows.optJSONObject(index)?.let { row ->
                     val remoteId = row.optString("id")
+                    val counterId = row.optNullableString("counter_id") ?: row.optNullableString("source_counter_id")
+                    val counterName = counters.firstOrNull { it.id == counterId }?.name ?: row.optNullableString("counter_name")
+                    val tableId = row.optNullableString("table_id")
+                    val tableName = row.optNullableString("table_name") ?: existingTables.firstOrNull { it.id == tableId || it.remoteId == tableId }?.name
+                    val waiterName = row.optNullableString("waiter_name") ?: row.optNullableString("waiter_email") ?: row.optNullableString("created_by")
                     add(
                         SaleEntity(
                             id = stableLocalId(remoteId),
@@ -851,19 +861,28 @@ class CounterPosRepository(
                             productName = row.optString("product_name"),
                             imageAssetName = "product_stock_001",
                             unitName = row.optString("unit_name", "Bottle"),
-                            quantity = row.optInt("qty", 1),
+                            quantity = row.optInt("qty", row.optInt("quantity", 1)),
                             unitPriceKsh = row.optInt("unit_price", 0),
                             totalKsh = row.optInt("total", 0),
                             createdAt = parseTimestamp(row.optString("created_at")),
                             undone = !row.isNull("undone_at"),
                             remoteId = remoteId,
-                            sourceCounterId = row.optNullableString("source_counter_id")
+                            sourceCounterId = counterId,
+                            counterId = counterId,
+                            counterName = counterName,
+                            waiterName = waiterName,
+                            tableId = tableId,
+                            tableName = tableName
                         )
                     )
                 }
             }
         }
-        dao.clearSales()
+        if (hasPendingSales) {
+            dao.clearSyncedSales()
+        } else {
+            dao.clearSales()
+        }
         dao.insertSales(sales)
         val localTableIdsByRemoteId = mutableMapOf<String, String>()
         val tables = buildList {
@@ -993,17 +1012,23 @@ class CounterPosRepository(
         }
     }
 
-    suspend fun deleteDiningTable(tableId: String) = withActiveBusiness {
-        require(activeBusiness!!.role in setOf("owner", "manager")) {
-            "Only an owner or manager can delete a table."
+    suspend fun deleteDiningTable(tableId: String): Boolean = withActiveBusiness {
+        require(activeBusiness!!.role in setOf("owner", "manager", "cashier")) {
+            "Only business staff can delete a table."
         }
-        val table = dao.getDiningTable(tableId)
-            ?: throw IllegalStateException("This table is no longer available.")
-        check(dao.openTableOrderCount(tableId) == 0) {
-            "Close the table bill before deleting this table."
+        val table = dao.getDiningTable(tableId) ?: return@withActiveBusiness false
+        val openCount = dao.openTableOrderCount(tableId)
+        check(openCount == 0) { "Cannot delete table with open unpaid orders. Please settle or clear the bill first." }
+        val shop = activeBusiness ?: throw IllegalStateException("Select an active business first.")
+        val remoteId = table.remoteId?.takeIf(String::isNotBlank)
+        dao.deleteTableOrdersForTable(tableId)
+        dao.deleteDiningTable(tableId)
+        if (!remoteId.isNullOrBlank()) {
+            val payload = JSONObject().put("table_id", remoteId).put("local_table_id", tableId)
+            dao.enqueueOutbox(newOutbox("delete_dining_table", payload))
+            scheduleAndAttemptSync()
         }
-        remote.deleteDiningTable(activeBusiness!!.shopId, table.remoteId ?: table.id)
-        dao.deleteDiningTable(table.id)
+        true
     }
 
     suspend fun settleTableBill(tableId: String, paymentMethod: String): TableSettlementResult = withActiveBusiness {
@@ -1390,15 +1415,22 @@ class CounterPosRepository(
                 }
                 try {
                     val payload = prepareOutboxPayload(item)
-                    val result = if (item.operationType == "settle_table_bill") {
-                        remote.settleTableBill(
+                    val result = when (item.operationType) {
+                        "settle_table_bill" -> remote.settleTableBill(
                             item.shopId,
                             payload.optString("table_id"),
                             item.operationId,
                             payload.optString("payment_method")
                         )
-                    } else {
-                        remote.applyPosOperation(item.shopId, item.operationId, item.operationType, payload)
+                        "create_dining_table" -> remote.createDiningTable(
+                            item.shopId,
+                            payload.optString("name")
+                        )
+                        "delete_dining_table" -> remote.deleteDiningTable(
+                            item.shopId,
+                            payload.optString("table_id")
+                        )
+                        else -> remote.applyPosOperation(item.shopId, item.operationId, item.operationType, payload)
                     }
                     reconcileOutboxResult(item, JSONObject(item.payloadJson), result)
                     dao.acknowledgeOutboxItem(item.operationId)
@@ -1442,7 +1474,12 @@ class CounterPosRepository(
             .put("unit_name", local.optString("unit_name", "Bottle"))
             .put("unit_price", local.optInt("unit_price", 0))
         return when (item.operationType) {
-            "create_dining_table" -> JSONObject().put("name", local.optString("name"))
+            "create_dining_table" -> JSONObject().put("name", local.optString("name")).put("local_table_id", local.optString("local_table_id"))
+            "delete_dining_table" -> {
+                val table = dao.getDiningTable(local.optString("local_table_id"))
+                val tableId = table?.remoteId?.takeIf(String::isNotBlank) ?: local.optString("table_id")
+                JSONObject().put("table_id", tableId).put("local_table_id", local.optString("local_table_id"))
+            }
             "settle_table_bill" -> {
                 val table = dao.getDiningTable(local.optString("table_local_id"))
                     ?: throw java.io.IOException("Waiting for the queued table to be available.")
@@ -1517,6 +1554,13 @@ class CounterPosRepository(
                 val remoteId = result.optString("table_id").takeIf(String::isNotBlank)
                     ?: result.optString("id").takeIf(String::isNotBlank)
                 if (localId.isNotBlank() && remoteId != null) dao.setDiningTableRemoteId(localId, remoteId)
+            }
+            "delete_dining_table" -> {
+                val localId = payload.optString("local_table_id")
+                if (localId.isNotBlank()) {
+                    dao.deleteTableOrdersForTable(localId)
+                    dao.deleteDiningTable(localId)
+                }
             }
             "settle_table_bill" -> {
                 val tableId = payload.optString("table_local_id")
