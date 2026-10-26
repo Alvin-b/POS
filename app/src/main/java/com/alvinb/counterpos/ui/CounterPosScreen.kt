@@ -357,6 +357,16 @@ fun CounterPosWorkspace(
                         }
                     }
                 }
+                if (state.pendingSyncCount > 0 && state.blockedOutbox.isEmpty()) {
+                    Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
+                        Text(
+                            "${state.pendingSyncCount} saved change${if (state.pendingSyncCount == 1) "" else "s"} waiting to sync. Other devices will see them after the server confirms sync.",
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
             }
         },
         bottomBar = {

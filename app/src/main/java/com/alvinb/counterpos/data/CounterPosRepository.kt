@@ -120,12 +120,12 @@ class CounterPosRepository(
             clearLocalSession()
             return@withContext _session.value
         }
-        loadAccount(autoSelectFirstBusiness = true)
+        loadAccount(autoSelectSingleBusiness = true)
     }
 
     suspend fun signIn(email: String, password: String): SessionSnapshot = withContext(Dispatchers.IO) {
         remote.signIn(email.trim(), password)
-        loadAccount(autoSelectFirstBusiness = true)
+        loadAccount(autoSelectSingleBusiness = true)
     }
 
     suspend fun signInWithPasskey(passkey: String): SessionSnapshot = withContext(Dispatchers.IO) {
@@ -136,13 +136,18 @@ class CounterPosRepository(
         val clean = withoutQrPrefix.trim().uppercase(Locale.ROOT)
         require(clean.isNotBlank()) { "Enter the passkey sent by the business owner." }
         val redemption = remote.redeemAccessPass(clean)
-        loadAccount(autoSelectFirstBusiness = true, preferredShopId = redemption.businessId)
+        val enrolledShopId = redemption.businessId?.takeIf(String::isNotBlank)
+        if (enrolledShopId == null) {
+            remote.clearSession()
+            throw IllegalStateException("The enrollment response did not identify a business. Update the backend enrollment function and ask the owner for a new passkey.")
+        }
+        loadAccount(autoSelectSingleBusiness = true, preferredShopId = enrolledShopId)
     }
 
     suspend fun signInWithSuperadminToken(token: String): SessionSnapshot = withContext(Dispatchers.IO) {
         require(token.trim().isNotBlank()) { "Enter the current Superadmin token." }
         remote.redeemSuperadminToken(token.trim())
-        loadAccount(autoSelectFirstBusiness = false)
+        loadAccount(autoSelectSingleBusiness = false)
     }
 
     suspend fun createAccessPass(role: String): JSONObject = withContext(Dispatchers.IO) {
@@ -175,8 +180,12 @@ class CounterPosRepository(
             throw IllegalStateException("QR was approved, but Supabase rejected the enrollment credentials: ${error.message.orEmpty()}", error)
         }
         val shopId = result.optString("shop_id").ifBlank { result.optString("business_id") }.takeIf(String::isNotBlank)
+        if (shopId == null) {
+            remote.clearSession()
+            throw IllegalStateException("The enrollment response did not identify a business. Update the backend enrollment function and try again.")
+        }
         val session = try {
-            loadAccount(autoSelectFirstBusiness = true, preferredShopId = shopId)
+            loadAccount(autoSelectSingleBusiness = true, preferredShopId = shopId)
         } catch (error: Exception) {
             throw IllegalStateException("QR was approved, but the enrolled business data could not load: ${error.message.orEmpty()}", error)
         }
@@ -242,7 +251,7 @@ class CounterPosRepository(
         require(shop.role == "owner") { "Only the business owner can edit the business name." }
         require(name.trim().isNotBlank()) { "Enter a business name." }
         remote.updateShopName(shop.shopId, name.trim())
-        loadAccount(autoSelectFirstBusiness = false)
+        loadAccount(autoSelectSingleBusiness = false)
     }
 
     suspend fun setEmployeeHours(userId: String, weekday: Int, start: String, end: String, enabled: Boolean): JSONArray = withContext(Dispatchers.IO) {
@@ -318,7 +327,7 @@ class CounterPosRepository(
                 message = "Account created. Confirm your email, then sign in to continue."
             )
         } else {
-            loadAccount(autoSelectFirstBusiness = true)
+            loadAccount(autoSelectSingleBusiness = true)
         }
         _session.value
     }
@@ -326,7 +335,7 @@ class CounterPosRepository(
     suspend fun createBusiness(name: String): SessionSnapshot = withContext(Dispatchers.IO) {
         require(name.trim().isNotBlank()) { "Enter a business name." }
         remote.createShop(name.trim())
-        loadAccount(autoSelectFirstBusiness = true)
+        loadAccount(autoSelectSingleBusiness = true)
     }
 
     suspend fun selectBusiness(shopId: String): SessionSnapshot = withContext(Dispatchers.IO) {
@@ -361,13 +370,13 @@ class CounterPosRepository(
     }
 
     suspend fun refreshAccount(): SessionSnapshot = withContext(Dispatchers.IO) {
-        loadAccount(autoSelectFirstBusiness = false)
+        loadAccount(autoSelectSingleBusiness = false)
     }
 
     suspend fun synchronizeWhenOnline(): SessionSnapshot = withContext(Dispatchers.IO) {
         if (remote.restoreSession() == null || activeBusiness == null) return@withContext _session.value
         syncPendingOutbox(refreshSnapshot = false)
-        loadAccount(autoSelectFirstBusiness = false)
+        loadAccount(autoSelectSingleBusiness = false)
     }
 
     suspend fun canOperateNow(): Boolean = withContext(Dispatchers.IO) {
@@ -509,7 +518,7 @@ class CounterPosRepository(
         )
     }
 
-    private suspend fun loadAccount(autoSelectFirstBusiness: Boolean, preferredShopId: String? = null): SessionSnapshot {
+    private suspend fun loadAccount(autoSelectSingleBusiness: Boolean, preferredShopId: String? = null): SessionSnapshot {
         var saved = dao.loadOfflineSession()
         account = try {
             remote.account().also {
@@ -547,8 +556,12 @@ class CounterPosRepository(
             account = cached
             activeBusiness = cached.memberships.firstOrNull { it.shopId == saved?.activeShopId }
                 ?.takeIf { it.status !in setOf("suspended", "terminated", "closed") && it.employmentStatus !in setOf("suspended", "terminated", "locked") }
-            if (activeBusiness == null && autoSelectFirstBusiness) {
-                activeBusiness = cached.memberships.firstOrNull { it.status !in setOf("suspended", "terminated", "closed") && it.employmentStatus !in setOf("suspended", "terminated", "locked") }
+            if (activeBusiness == null && autoSelectSingleBusiness) {
+                val eligibleCachedMemberships = cached.memberships.filter {
+                    it.status !in setOf("suspended", "terminated", "closed") &&
+                        it.employmentStatus !in setOf("suspended", "terminated", "locked")
+                }
+                if (eligibleCachedMemberships.size == 1) activeBusiness = eligibleCachedMemberships.single()
             }
             if (activeBusiness != null && saved?.activeShopId != activeBusiness?.shopId) {
                 check(dao.outboxCountAll() == 0 && dao.getPendingRemoteSales().isEmpty()) {
@@ -577,8 +590,8 @@ class CounterPosRepository(
         if (activeBusiness == null && !savedShopId.isNullOrBlank()) {
             activeBusiness = activeMemberships.firstOrNull { it.shopId == savedShopId }
         }
-        if (autoSelectFirstBusiness && activeBusiness == null && activeMemberships.isNotEmpty()) {
-            activeBusiness = activeMemberships.firstOrNull()
+        if (autoSelectSingleBusiness && activeBusiness == null && activeMemberships.size == 1) {
+            activeBusiness = activeMemberships.single()
         } else if (activeBusiness != null) {
             val refreshed = activeMemberships.firstOrNull { it.shopId == activeBusiness?.shopId }
             if (refreshed != null) {

@@ -1120,6 +1120,15 @@ class CounterPosViewModel(
             .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not refresh business data") } }
     }
 
+    private suspend fun inventorySaveNotice(serverConfirmedNotice: String): String {
+        val pending = runCatching { repository.pendingOutboxCount() }.getOrDefault(1)
+        return if (pending > 0) {
+            "Saved on this phone only; the server has not confirmed it. Other devices will see this stock after sync succeeds."
+        } else {
+            serverConfirmedNotice
+        }
+    }
+
     fun synchronizeData(showNotice: Boolean = false) = viewModelScope.launch {
         _uiState.update { it.copy(isSyncingData = true, actionError = null) }
         runCatching { repository.synchronizeWhenOnline() }
@@ -1628,10 +1637,11 @@ class CounterPosViewModel(
             if (counterId.isNullOrBlank()) { _uiState.update { it.copy(actionError = "Choose a receiving counter first.") }; return@launch }
             val success = repository.restock(product.catalogCode, additionalBottles, unitCostKsh, counterId)
             if (success) {
+                val notice = inventorySaveNotice("✓ Added $additionalBottles bottles at KSh $unitCostKsh to ${product.name}")
                 _uiState.update {
                     it.copy(
                         addStockProductCode = null,
-                        notice = "✓ Added $additionalBottles bottles at KSh $unitCostKsh to ${product.name}"
+                        notice = notice
                     )
                 }
                 refreshCounterStock(counterId)
@@ -1672,10 +1682,11 @@ class CounterPosViewModel(
             if (counterId.isNullOrBlank()) { _uiState.update { it.copy(actionError = "Choose a counter first.") }; return@launch }
             val success = repository.updateProduct(updated, counterId)
             if (success) {
+                val notice = inventorySaveNotice("✓ Updated ${updated.name}: Stock set to $newStock bottles, price KSh $newPrice")
                 _uiState.update {
                     it.copy(
                         editProductCode = null,
-                        notice = "✓ Updated ${updated.name}: Stock set to $newStock bottles, price KSh $newPrice"
+                        notice = notice
                     )
                 }
                 refreshCounterStock(counterId)
@@ -1730,12 +1741,13 @@ class CounterPosViewModel(
                 selectedCounterId = counterId
             )
             if (success) {
+                val notice = inventorySaveNotice("✓ Added new product '$name' with $initialStock bottles and ${units.size} sales units.")
                 _uiState.update {
                     it.copy(
                         isAddingNewProduct = false,
                         prefilledBarcode = null,
                         actionError = null,
-                        notice = "✓ Added new product '$name' with $initialStock bottles and ${units.size} sales units."
+                        notice = notice
                     )
                 }
                 refreshCounterStock(counterId)
@@ -1771,12 +1783,13 @@ class CounterPosViewModel(
                 .onSuccess { success ->
                     if (success) {
                         val item = products.value.firstOrNull { it.catalogCode == code }
+                        val notice = inventorySaveNotice("✓ Added ${item?.name ?: "Product"} to your shop stock!")
                         _uiState.update {
                             it.copy(
                                 selectedCatalogCode = null,
                                 stockMode = StockMode.MY_STOCK,
                                 actionError = null,
-                                notice = "✓ Added ${item?.name ?: "Product"} to your shop stock!"
+                                notice = notice
                             )
                         }
                         refreshCounterStock(counterId)
