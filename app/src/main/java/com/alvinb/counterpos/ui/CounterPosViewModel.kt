@@ -321,13 +321,17 @@ class CounterPosViewModel(
                 val result = repository.pollAccessChallenge(token)
                 if (result != null) {
                     val targetBusinessId = result.businessId ?: result.session.activeBusiness?.shopId
-                    if (targetBusinessId != null) {
-                        runCatching { repository.selectBusiness(targetBusinessId) }
-                            .onFailure { error ->
-                                _uiState.update { state -> state.copy(startupError = error.message ?: "Could not open the enrolled business") }
-                            }
+                    val activeBusiness = result.session.activeBusiness
+                    if (targetBusinessId.isNullOrBlank() || activeBusiness == null || activeBusiness.shopId != targetBusinessId) {
+                        throw IllegalStateException("The QR was approved, but this account is not connected to the enrolled business. Ask the owner to verify the staff membership.")
                     }
-                    _uiState.update { it.copy(isQrPolling = false, notice = "Signed in successfully") }
+                    _uiState.update {
+                        it.copy(
+                            isQrPolling = false,
+                            startupError = null,
+                            notice = "Signed in to ${activeBusiness.shopName}"
+                        )
+                    }
                     return
                 }
             } catch (error: Exception) {

@@ -94,6 +94,16 @@ data class AccessPassRedemption(
     val businessId: String?
 )
 
+private enum class RefreshOutcome { REFRESHED, INVALID_REFRESH_TOKEN, RETRYABLE_FAILURE }
+
+internal fun shouldClearSessionForRefreshFailure(statusCode: Int, message: String): Boolean {
+    if (statusCode !in 400..401) return false
+    val normalized = message.lowercase()
+    return normalized.contains("refresh") && listOf(
+        "invalid", "expired", "not found", "not_found", "already used", "already_used", "revoked", "invalid_grant"
+    ).any(normalized::contains)
+}
+
 class SupabaseRestClient(context: Context) {
     private val sessionStore = EncryptedSessionStore(context)
     private val refreshMutex = Mutex()
@@ -101,6 +111,9 @@ class SupabaseRestClient(context: Context) {
 
     val hasSession: Boolean
         get() = session != null
+
+    val currentUserId: String?
+        get() = session?.userId
 
     suspend fun signIn(email: String, password: String): AuthSession =
         authenticate("password", email, password)
@@ -724,23 +737,24 @@ class SupabaseRestClient(context: Context) {
         val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
         connection.disconnect()
         if (status == HttpURLConnection.HTTP_UNAUTHORIZED && authenticated && retryOnUnauthorized) {
-            if (refreshSession(requestSession!!.accessToken, requestSession.userId)) {
-                return@withContext requestRaw(path, method, body, authenticated, false)
+            when (refreshSession(requestSession!!.accessToken, requestSession.userId)) {
+                RefreshOutcome.REFRESHED -> return@withContext requestRaw(path, method, body, authenticated, false)
+                RefreshOutcome.INVALID_REFRESH_TOKEN -> throw SupabaseUnauthorizedException("Session expired")
+                RefreshOutcome.RETRYABLE_FAILURE -> throw IOException("Session refresh is temporarily unavailable. Check the connection and try again.")
             }
-            throw SupabaseUnauthorizedException("Session expired")
         }
         if (status !in 200..299) throw SupabaseApiException(status, extractError(text, status))
         HttpResponse(status, text)
     }
 
-    private suspend fun refreshSession(staleAccessToken: String, expectedUserId: String): Boolean =
+    private suspend fun refreshSession(staleAccessToken: String, expectedUserId: String): RefreshOutcome =
         refreshMutex.withLock {
-            val old = session ?: return@withLock false
-            if (old.userId != expectedUserId) return@withLock false
+            val old = session ?: return@withLock RefreshOutcome.INVALID_REFRESH_TOKEN
+            if (old.userId != expectedUserId) return@withLock RefreshOutcome.INVALID_REFRESH_TOKEN
             // Another request may already have rotated the refresh token while this
             // request was in flight; reuse that session rather than rotating twice.
-            if (old.accessToken != staleAccessToken) return@withLock true
-            val refreshed = runCatching {
+            if (old.accessToken != staleAccessToken) return@withLock RefreshOutcome.REFRESHED
+            try {
                 val response = requestRaw(
                     "/auth/v1/token?grant_type=refresh_token",
                     "POST",
@@ -756,16 +770,24 @@ class SupabaseRestClient(context: Context) {
                     userId = user?.optString("id") ?: old.userId,
                     email = user?.optString("email") ?: old.email
                 )
-                if (renewed.accessToken.isBlank() || renewed.userId != expectedUserId) false
-                else {
+                if (renewed.accessToken.isBlank() || renewed.userId != expectedUserId) {
+                    RefreshOutcome.RETRYABLE_FAILURE
+                } else {
                     saveSession(renewed)
-                    true
+                    RefreshOutcome.REFRESHED
                 }
-            }.getOrDefault(false)
-            if (!refreshed && session?.accessToken == old.accessToken && session?.userId == old.userId) {
-                clearSession()
+            } catch (error: SupabaseApiException) {
+                if (shouldClearSessionForRefreshFailure(error.statusCode, error.message.orEmpty())) {
+                    if (session?.accessToken == old.accessToken && session?.userId == old.userId) clearSession()
+                    RefreshOutcome.INVALID_REFRESH_TOKEN
+                } else {
+                    RefreshOutcome.RETRYABLE_FAILURE
+                }
+            } catch (_: Exception) {
+                // Timeouts, connectivity errors, malformed/transient responses and
+                // server failures must not destroy a still-recoverable refresh token.
+                RefreshOutcome.RETRYABLE_FAILURE
             }
-            refreshed
         }
 
     private fun saveSession(value: AuthSession) {

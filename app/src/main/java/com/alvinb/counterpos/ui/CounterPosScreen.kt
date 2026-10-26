@@ -485,27 +485,33 @@ fun CounterPosWorkspace(
                         sharePdf(context, buildSalesPdf(sales.filter { it.createdAt in start..end }, start, end, "Performance report"), "report-${formatReportDate(start)}.pdf")
                     }
                 )
-                PosTab.TABLES -> TablesScreen(
-                    tables = diningTables,
-                    orders = tableOrders,
-                    products = products,
-                    selectedTableId = state.selectedTableId,
-                    actionError = state.actionError,
-                    isCreatingTable = state.isCreatingTable,
-                    canManageTables = canManageTables,
-                    canSettleTables = canSettleTables,
-                    isSettlingTable = state.isSettlingTable,
-                    isDeletingTable = state.isDeletingTable,
-                    onCreateTable = viewModel::createDiningTable,
-                    onDeleteTable = viewModel::deleteDiningTable,
-                    onSettleTable = viewModel::settleTableBill,
-                    onOpenTable = viewModel::openTable,
-                    onBackToTables = viewModel::backToTables,
-                    onAddProduct = viewModel::openTableSale,
-                    onScanProduct = { viewModel.openScanner(ScannerMode.TABLE_ADD) },
-                    showCounterLabels = serviceCounters.size > 1,
-                    registeredWaiterEmails = registeredWaiterEmails
-                )
+                PosTab.TABLES -> Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                ) {
+                    TablesScreen(
+                        tables = diningTables,
+                        orders = tableOrders,
+                        products = products,
+                        selectedTableId = state.selectedTableId,
+                        actionError = state.actionError,
+                        isCreatingTable = state.isCreatingTable,
+                        canManageTables = canManageTables,
+                        canSettleTables = canSettleTables,
+                        isSettlingTable = state.isSettlingTable,
+                        isDeletingTable = state.isDeletingTable,
+                        onCreateTable = viewModel::createDiningTable,
+                        onDeleteTable = viewModel::deleteDiningTable,
+                        onSettleTable = viewModel::settleTableBill,
+                        onOpenTable = viewModel::openTable,
+                        onBackToTables = viewModel::backToTables,
+                        onAddProduct = viewModel::openTableSale,
+                        onScanProduct = { viewModel.openScanner(ScannerMode.TABLE_ADD) },
+                        showCounterLabels = serviceCounters.size > 1,
+                        registeredWaiterEmails = registeredWaiterEmails
+                    )
+                }
             }
         }
     }

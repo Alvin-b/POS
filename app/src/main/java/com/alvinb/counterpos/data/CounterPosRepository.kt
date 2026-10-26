@@ -338,6 +338,15 @@ class CounterPosRepository(
         if (membership.employmentStatus != "active") {
             throw IllegalStateException("Your employee access is ${membership.employmentStatus}. Contact the business administrator.")
         }
+        val saved = dao.loadOfflineSession()
+        val savedUserId = saved?.let { runCatching { JSONObject(it.snapshotJson).optString("user_id") }.getOrNull() }
+        val cachedShopId = saved?.activeShopId.takeIf { savedUserId == account?.userId }
+        if (cachedShopId != membership.shopId) {
+            check(dao.outboxCountAll() == 0 && dao.getPendingRemoteSales().isEmpty()) {
+                "Sync the previous business's saved POS changes before switching businesses."
+            }
+            clearBusinessSnapshot()
+        }
         activeBusiness = membership
         dao.setOfflineActiveShop(membership.shopId, System.currentTimeMillis())
         try {
@@ -502,17 +511,37 @@ class CounterPosRepository(
     }
 
     private suspend fun loadAccount(autoSelectFirstBusiness: Boolean, preferredShopId: String? = null): SessionSnapshot {
-        val saved = dao.loadOfflineSession()
+        var saved = dao.loadOfflineSession()
         account = try {
             remote.account().also {
                 check(dao.outboxCountForOtherActor(it.userId) == 0) {
                     "This phone has unsynced POS changes from another account. Sign in with that account first so the saved work can sync."
+                }
+                val cachedUserId = saved?.let { cached ->
+                    runCatching { JSONObject(cached.snapshotJson).optString("user_id") }.getOrNull()
+                }
+                if (!cachedUserId.isNullOrBlank() && cachedUserId != it.userId) {
+                    check(dao.getPendingRemoteSales().isEmpty()) {
+                        "This phone has unsynced POS changes from another account. Sign in with that account first so the saved work can sync."
+                    }
+                    clearBusinessSnapshot()
+                    dao.clearOfflineSession()
+                    saved = null
+                    activeBusiness = null
                 }
                 saveOfflineAccount(it, activeBusiness?.shopId ?: saved?.activeShopId)
             }
         } catch (error: Exception) {
             if (!remote.hasSession || !isRetryable(error)) throw error
             val cached = saved?.let(::parseOfflineAccount) ?: throw error
+            if (remote.currentUserId != cached.userId) {
+                clearBusinessSnapshot()
+                dao.clearOfflineSession()
+                saved = null
+                activeBusiness = null
+                account = null
+                throw error
+            }
             check(dao.outboxCountForOtherActor(cached.userId) == 0) {
                 "This phone has unsynced POS changes from another account. Connect and sign in with the account that created them."
             }
@@ -521,6 +550,12 @@ class CounterPosRepository(
                 ?.takeIf { it.status !in setOf("suspended", "terminated", "closed") && it.employmentStatus !in setOf("suspended", "terminated", "locked") }
             if (activeBusiness == null && autoSelectFirstBusiness) {
                 activeBusiness = cached.memberships.firstOrNull { it.status !in setOf("suspended", "terminated", "closed") && it.employmentStatus !in setOf("suspended", "terminated", "locked") }
+            }
+            if (activeBusiness != null && saved?.activeShopId != activeBusiness?.shopId) {
+                check(dao.outboxCountAll() == 0 && dao.getPendingRemoteSales().isEmpty()) {
+                    "Sync the previous business's saved POS changes before opening another business."
+                }
+                clearBusinessSnapshot()
             }
             val offlineSnapshot = publishAccount().copy(message = offlineMessage())
             _session.value = offlineSnapshot
@@ -538,6 +573,7 @@ class CounterPosRepository(
         val savedShopId = saved?.activeShopId
         if (!preferredShopId.isNullOrBlank()) {
             activeBusiness = activeMemberships.firstOrNull { it.shopId == preferredShopId }
+                ?: throw IllegalStateException("This account is not an active member of the business that enrolled this device. Ask the owner to check the staff account and try again.")
         }
         if (activeBusiness == null && !savedShopId.isNullOrBlank()) {
             activeBusiness = activeMemberships.firstOrNull { it.shopId == savedShopId }
@@ -555,6 +591,14 @@ class CounterPosRepository(
         }
         val selected = activeBusiness
         if (selected != null) {
+            val cachedUserId = saved?.let { runCatching { JSONObject(it.snapshotJson).optString("user_id") }.getOrNull() }
+            val cachedShopId = saved?.activeShopId.takeIf { cachedUserId == account?.userId }
+            if (cachedShopId != selected.shopId) {
+                check(dao.outboxCountAll() == 0 && dao.getPendingRemoteSales().isEmpty()) {
+                    "Sync the previous business's saved POS changes before opening another business."
+                }
+                clearBusinessSnapshot()
+            }
             try {
                 syncBusiness(selected)
             } catch (error: Exception) {
@@ -1530,12 +1574,18 @@ class CounterPosRepository(
         activeBusiness = null
         account = null
         _serviceCounters.value = emptyList()
+        // Keep the last account/business snapshot and inventory on-device. The
+        // next successful sign-in validates its user and shop before reusing it;
+        // this also allows a brief offline login without showing another tenant.
+        remote.clearSession()
+        _session.value = SessionSnapshot()
+    }
+
+    private suspend fun clearBusinessSnapshot() {
         dao.clearTenantCache()
         dao.clearAllServiceCounters()
         dao.clearAllCounterStock()
-        dao.clearOfflineSession()
-        remote.clearSession()
-        _session.value = SessionSnapshot()
+        _serviceCounters.value = emptyList()
     }
 
     private fun stableLocalId(remoteId: String): Long {
