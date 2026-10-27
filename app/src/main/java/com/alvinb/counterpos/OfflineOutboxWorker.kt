@@ -21,6 +21,11 @@ class OfflineOutboxWorker(
 ) : CoroutineWorker(appContext, workerParams) {
     override suspend fun doWork(): Result {
         return try {
+            // WorkManager may recreate the application process after the user
+            // queued a stock change. Rehydrate the saved session and active
+            // business first; otherwise syncPendingOutbox() has no tenant and
+            // silently returns without submitting the queued mutation.
+            counterPosApplication.repository.restoreSession()
             counterPosApplication.repository.syncPendingOutbox()
             Result.success()
         } catch (exception: CancellationException) {
