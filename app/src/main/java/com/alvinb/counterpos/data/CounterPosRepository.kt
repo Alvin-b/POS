@@ -827,8 +827,18 @@ class CounterPosRepository(
                     val fallback = bundled?.imageAssetName ?: dao.getProductByCode(code)?.imageAssetName ?: "product_stock_001"
                     val imageUrl = row.optNullableString("photo_url") ?: bundled?.imageSourceUrl
                     val rawStock = row.optInt("stock", row.optInt("quantity", row.optInt("stock_quantity", row.optInt("current_stock", 0))))
+                    val hasCounterBalance = remoteId != null && counterStockSnapshots.values.any { it.containsKey(remoteId) }
                     val counterStockTotal = if (remoteId != null) counterStockSnapshots.values.sumOf { it[remoteId] ?: 0 } else 0
-                    val finalStock = if (rawStock > 0) rawStock else counterStockTotal
+                    // In per-counter mode the balance rows are the authoritative
+                    // tenant inventory, including a legitimate total of zero.
+                    // Falling back only when no balance row exists prevents a
+                    // stale products.stock value from restoring the wrong stock
+                    // after logout/login or after a counter is sold out.
+                    val finalStock = if (membership.counterInventoryMode == "per_counter" && hasCounterBalance) {
+                        counterStockTotal
+                    } else {
+                        rawStock
+                    }
                     val price = row.optInt("price", row.optInt("selling_price", 0))
                     val cost = row.optInt("average_cost", row.optInt("unit_cost", 0))
                     add(
