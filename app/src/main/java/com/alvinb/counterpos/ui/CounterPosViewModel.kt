@@ -253,7 +253,9 @@ class CounterPosViewModel(
         }
         viewModelScope.launch {
             while (isActive) {
-                delay(4_000)
+                // Realtime invalidation is the primary refresh path. This remains
+                // a conservative fallback for background disconnects and missed events.
+                delay(30_000)
                 if (repository.session.value.isAuthenticated) {
                     val now = System.currentTimeMillis()
                     if (repository.session.value.activeBusiness != null) {

@@ -3,6 +3,7 @@ package com.alvinb.counterpos.data
 import android.content.Context
 import android.content.res.AssetManager
 import com.alvinb.counterpos.OfflineOutboxWorker
+import com.alvinb.counterpos.BuildConfig
 import com.alvinb.counterpos.data.local.dao.CounterPosDao
 import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.OfflineSessionEntity
@@ -23,13 +24,19 @@ import com.alvinb.counterpos.data.remote.CounterReportRow
 import com.alvinb.counterpos.data.remote.ServiceCounter
 import com.alvinb.counterpos.data.remote.SupabaseHttpException
 import com.alvinb.counterpos.data.remote.SupabaseRestClient
+import com.alvinb.counterpos.data.remote.SupabaseRealtimeClient
 import com.alvinb.counterpos.data.remote.SupabaseUnauthorizedException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -89,6 +96,26 @@ class CounterPosRepository(
     private var activeBusiness: BusinessMembership? = null
     private val syncMutex = Mutex()
     private val outboxClock = AtomicLong(0L)
+    private val realtimeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var realtimeRefreshJob: Job? = null
+    private val realtime = SupabaseRealtimeClient(
+        baseUrl = BuildConfig.SUPABASE_URL,
+        publishableKey = BuildConfig.SUPABASE_PUBLISHABLE_KEY,
+        accessToken = remote::currentAccessToken,
+        onDataChanged = ::scheduleRealtimeRefresh
+    )
+
+    private fun startRealtimeFor(membership: BusinessMembership) {
+        realtime.start(membership.shopId)
+    }
+
+    private fun scheduleRealtimeRefresh() {
+        realtimeRefreshJob?.cancel()
+        realtimeRefreshJob = realtimeScope.launch {
+            delay(250)
+            if (activeBusiness != null) runCatching { syncPendingOutbox() }
+        }
+    }
 
     suspend fun pendingOutboxCount(): Int = activeBusiness?.let { dao.outboxCount(it.shopId) } ?: 0
 
@@ -357,6 +384,7 @@ class CounterPosRepository(
             clearBusinessSnapshot()
         }
         activeBusiness = membership
+        startRealtimeFor(membership)
         dao.setOfflineActiveShop(membership.shopId, System.currentTimeMillis())
         try {
             syncBusiness(membership)
@@ -500,6 +528,7 @@ class CounterPosRepository(
     }
 
     suspend fun exitToAdminPortal(): SessionSnapshot = withContext(Dispatchers.IO) {
+        realtime.stop()
         activeBusiness = null
         dao.clearTenantCache()
         publishAccount()
@@ -608,6 +637,7 @@ class CounterPosRepository(
         }
         val selected = activeBusiness
         if (selected != null) {
+            startRealtimeFor(selected)
             val cachedUserId = saved?.let { runCatching { JSONObject(it.snapshotJson).optString("user_id") }.getOrNull() }
             val cachedShopId = saved?.activeShopId.takeIf { cachedUserId == account?.userId }
             if (cachedShopId != selected.shopId) {
@@ -1620,6 +1650,8 @@ class CounterPosRepository(
     }
 
     private suspend fun clearLocalSession() {
+        realtime.stop()
+        realtimeRefreshJob?.cancel()
         check(dao.outboxCountAll() == 0) { "Cannot clear local POS data while changes are waiting to sync." }
         activeBusiness = null
         account = null

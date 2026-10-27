@@ -115,6 +115,9 @@ class SupabaseRestClient(context: Context) {
     val currentUserId: String?
         get() = session?.userId
 
+    /** Token used only to authenticate the Realtime channel for the active tenant. */
+    fun currentAccessToken(): String? = session?.accessToken
+
     suspend fun signIn(email: String, password: String): AuthSession =
         authenticate("password", email, password)
 
