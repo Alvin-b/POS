@@ -535,15 +535,117 @@ class SupabaseRestClient(context: Context) {
     suspend fun undoSaleFromCounter(shopId: String): JSONObject =
         rpcObject("undo_sale_from_counter", JSONObject().put("_shop", shopId))
 
-    suspend fun applyPosOperation(shopId: String, operationId: String, kind: String, payload: JSONObject): JSONObject =
-        rpcObjectOrEmpty(
-            "apply_pos_operation",
-            JSONObject()
-                .put("_shop", shopId)
-                .put("_operation_id", operationId)
-                .put("_kind", kind)
-                .put("_payload", payload)
-        )
+    suspend fun applyPosOperation(shopId: String, operationId: String, kind: String, payload: JSONObject): JSONObject {
+        return try {
+            rpcObjectOrEmpty(
+                "apply_pos_operation",
+                JSONObject()
+                    .put("_shop", shopId)
+                    .put("_operation_id", operationId)
+                    .put("_kind", kind)
+                    .put("_payload", payload)
+            )
+        } catch (_: Exception) {
+            dispatchPosOperation(shopId, kind, payload)
+        }
+    }
+
+    suspend fun dispatchPosOperation(shopId: String, kind: String, payload: JSONObject): JSONObject = withContext(Dispatchers.IO) {
+        val counterId = payload.optString("counter_id").takeIf(String::isNotBlank)
+        when (kind) {
+            "add_catalog_product" -> {
+                val catalogId = payload.optString("catalog_id")
+                val qty = payload.optInt("qty", payload.optInt("quantity", 1))
+                val price = payload.optInt("price")
+                val unitCost = payload.optInt("unit_cost")
+                if (counterId != null) {
+                    addFromCatalogAtCounter(shopId, catalogId, counterId, qty, price, unitCost)
+                } else {
+                    addFromCatalog(shopId, catalogId, qty, price, unitCost)
+                }
+            }
+            "register_product" -> {
+                val code = payload.optString("code", payload.optString("product_code"))
+                val name = payload.optString("name")
+                val category = payload.optString("category", "Beverage")
+                val price = payload.optInt("price")
+                val qty = payload.optInt("qty", payload.optInt("quantity", 1))
+                val unitCost = payload.optInt("unit_cost")
+                val brand = payload.optString("brand")
+                val size = payload.optString("size")
+                if (counterId != null) {
+                    registerProductAtCounter(shopId, code, name, category, price, qty, unitCost, brand, size, counterId)
+                } else {
+                    registerProduct(shopId, code, name, category, price, qty, unitCost, brand, size)
+                }
+            }
+            "receive_stock" -> {
+                val productId = payload.optString("product_id")
+                val qty = payload.optInt("qty", payload.optInt("quantity", 1))
+                val unitCost = payload.optInt("unit_cost")
+                if (counterId != null) {
+                    receiveStockAtCounter(counterId, productId, qty, unitCost)
+                } else {
+                    receiveStock(productId, qty, unitCost)
+                }
+            }
+            "adjust_stock" -> {
+                val productId = payload.optString("product_id")
+                val newStock = payload.optInt("new_stock")
+                val reason = payload.optString("reason", "Adjust stock")
+                if (counterId != null) {
+                    adjustCounterStock(counterId, productId, newStock, reason)
+                } else {
+                    adjustStock(productId, newStock, reason)
+                }
+            }
+            "sale" -> {
+                val productId = payload.optString("product_id")
+                val qty = payload.optInt("qty", payload.optInt("quantity", 1))
+                val unitName = payload.optString("unit_name", "Bottle")
+                val unitPrice = payload.optInt("unit_price")
+                if (counterId != null) {
+                    recordSaleUnitFromCounter(productId, counterId, qty, unitName, unitPrice)
+                } else {
+                    recordSaleUnit(productId, qty, unitName, unitPrice)
+                }
+            }
+            "table_sale" -> {
+                val tableId = payload.optString("table_id")
+                val productId = payload.optString("product_id")
+                val qty = payload.optInt("qty", payload.optInt("quantity", 1))
+                val unitName = payload.optString("unit_name", "Bottle")
+                val unitPrice = payload.optInt("unit_price")
+                if (counterId != null) {
+                    recordTableSaleFromCounter(shopId, tableId, productId, counterId, qty, unitName, unitPrice)
+                } else {
+                    recordTableSale(shopId, tableId, productId, qty, unitName, unitPrice)
+                }
+            }
+            "undo_sale" -> {
+                if (counterId != null) {
+                    undoSaleFromCounter(shopId)
+                } else {
+                    undoSale(shopId)
+                }
+            }
+            "transfer_stock" -> {
+                val productId = payload.optString("product_id")
+                val fromCounter = payload.optString("from_counter_id")
+                val toCounter = payload.optString("to_counter_id")
+                val qty = payload.optInt("qty", 1)
+                val reason = payload.optString("reason")
+                transferCounterStock(shopId, productId, fromCounter, toCounter, qty, reason)
+                JSONObject()
+            }
+            "update_product" -> {
+                val productId = payload.optString("product_id")
+                val patch = payload.optJSONObject("patch") ?: JSONObject()
+                updateProduct(productId, patch)
+            }
+            else -> JSONObject()
+        }
+    }
 
     suspend fun updateProduct(productId: String, fields: JSONObject): JSONObject =
         patch("products?id=eq.$productId", fields)

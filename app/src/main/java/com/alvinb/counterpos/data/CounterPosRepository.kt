@@ -414,6 +414,9 @@ class CounterPosRepository(
 
     suspend fun canOperateNow(): Boolean = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: return@withContext true
+        if (account?.isPlatformAdmin == true || shop.role.equals("owner", ignoreCase = true)) {
+            return@withContext true
+        }
         remote.canSellForShop(shop.shopId)
     }
 
@@ -869,7 +872,10 @@ class CounterPosRepository(
         }
         val productCodeById = buildMap {
             for (index in 0 until productRows.length()) {
-                productRows.optJSONObject(index)?.let { row -> put(row.optString("id"), row.optString("code")) }
+                productRows.optJSONObject(index)?.let { row ->
+                    val code = row.optString("code").ifBlank { row.optString("catalog_code") }
+                    put(row.optString("id"), code)
+                }
             }
         }
         val counterStockRows = counterStockSnapshots.flatMap { (counterId, balances) ->
@@ -1225,9 +1231,23 @@ class CounterPosRepository(
         withActiveBusiness {
             require(quantity > 0 && priceKsh > 0 && unitCostKsh >= 0) { "Enter valid stock quantity, price, and cost." }
             val product = dao.getProductByCode(code) ?: return@withActiveBusiness false
-            val catalogId = product.remoteId ?: return@withActiveBusiness false
             val counterId = selectedCounterId?.takeIf(String::isNotBlank)
                 ?: throw IllegalStateException("Choose the receiving counter first.")
+            val catalogId = product.remoteId
+            if (catalogId.isNullOrBlank()) {
+                return@withActiveBusiness registerNewProduct(
+                    barcode = product.verifiedBarcode ?: code,
+                    name = product.name,
+                    category = product.category,
+                    priceKsh = priceKsh,
+                    initialStock = quantity,
+                    unitCostKsh = unitCostKsh,
+                    brand = product.brand,
+                    size = product.size,
+                    salesUnits = listOf(SaleUnit("Bottle", priceKsh)),
+                    selectedCounterId = counterId
+                )
+            }
             val perCounter = activeBusiness!!.counterInventoryMode == "per_counter"
             val balance = if (perCounter) makeCounterBalance(product, counterId, quantity) else null
             val updated = product.copy(

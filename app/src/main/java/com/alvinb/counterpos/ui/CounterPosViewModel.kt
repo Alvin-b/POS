@@ -68,7 +68,24 @@ data class EmployeeScheduleDay(
 private val HourMinutePattern = Pattern.compile("^(?:[01]\\d|2[0-3]):[0-5]\\d$")
 
 private fun JSONArray.toEmployeeMemberList(): List<JSONObject> = buildList {
-    for (index in 0 until length()) optJSONObject(index)?.let(::add)
+    val seenKeys = mutableSetOf<String>()
+    for (index in 0 until length()) {
+        optJSONObject(index)?.let { obj ->
+            val role = obj.optString("role", "").lowercase()
+            // Business owner is NOT an employee/staff member
+            if (role == "owner") return@let
+            val userId = obj.optString("user_id").ifBlank {
+                obj.optString("member_user_id").ifBlank { obj.optString("id") }
+            }
+            val email = obj.optString("email").trim().lowercase()
+            val dedupeKey = if (userId.isNotBlank()) userId else email
+            if (dedupeKey.isNotBlank()) {
+                if (seenKeys.add(dedupeKey)) add(obj)
+            } else {
+                add(obj)
+            }
+        }
+    }
 }
 
 private fun isValidHourMinute(value: String): Boolean = HourMinutePattern.matcher(value.trim()).matches()
@@ -495,56 +512,51 @@ class CounterPosViewModel(
         refreshAccessNow()
     }
 
-    private fun ownerCanManageOutsideHours(state: CounterPosUiState): Boolean =
-        session.value.activeBusiness?.role == "owner" &&
-            (state.isTeamPanelOpen || state.isStaffManagementOpen || state.isScannerOpen || state.adminEnrollmentCredential != null)
+    private fun isBusinessOwnerOrAdmin(): Boolean =
+        session.value.isPlatformAdmin || session.value.activeBusiness?.role.equals("owner", ignoreCase = true)
 
     private fun monitorActiveHours() = viewModelScope.launch {
         while (isActive) {
+            if (isBusinessOwnerOrAdmin()) {
+                _uiState.update { it.copy(isAccessLocked = false, accessLockMessage = null) }
+                delay(30_000)
+                continue
+            }
             runCatching { repository.canOperateNow() }
                 .onSuccess { allowed ->
                     _uiState.update { state ->
-                        val ownerManaging = ownerCanManageOutsideHours(state)
                         state.copy(
-                            isAccessLocked = !allowed && !ownerManaging,
-                            accessLockMessage = if (allowed || ownerManaging) null else
+                            isAccessLocked = !allowed,
+                            accessLockMessage = if (allowed) null else
                                 "The business is outside its configured hours or this waiter is off duty. The POS will reopen when access is allowed again."
                         )
                     }
                 }
                 .onFailure {
-                    _uiState.update { state ->
-                        val ownerManaging = ownerCanManageOutsideHours(state)
-                        state.copy(
-                            isAccessLocked = !ownerManaging,
-                            accessLockMessage = if (ownerManaging) null else
-                                "Business hours or waiter access could not be verified. Reconnect to the internet to check the configured schedule."
-                        )
-                    }
+                    // Retain current lock state on temporary connection drops
                 }
             delay(30_000)
         }
     }
 
     fun refreshAccessNow() = viewModelScope.launch {
+        if (isBusinessOwnerOrAdmin()) {
+            _uiState.update { it.copy(isAccessLocked = false, accessLockMessage = null) }
+            return@launch
+        }
         runCatching { repository.canOperateNow() }
             .onSuccess { allowed ->
                 _uiState.update { state ->
-                    val ownerManaging = ownerCanManageOutsideHours(state)
                     state.copy(
-                        isAccessLocked = !allowed && !ownerManaging,
-                        accessLockMessage = if (allowed || ownerManaging) null else
+                        isAccessLocked = !allowed,
+                        accessLockMessage = if (allowed) null else
                             "The business is outside its operating hours or this waiter is off duty."
                     )
                 }
             }
             .onFailure { error ->
                 _uiState.update { state ->
-                    val ownerManaging = ownerCanManageOutsideHours(state)
                     state.copy(
-                        isAccessLocked = !ownerManaging,
-                        accessLockMessage = if (ownerManaging) null else
-                            "Business hours or waiter access could not be verified. Reconnect to the internet to check the configured schedule.",
                         actionError = error.message ?: "Could not verify working hours"
                     )
                 }
@@ -1002,8 +1014,8 @@ class CounterPosViewModel(
         // Passkey or access pass QR code scan
         if (qr.startsWith("CPX1.", ignoreCase = true) || (qr.length in 8..64 && !qr.contains('|'))) {
             if (isPlatformAdmin && !shopId.isNullOrBlank()) {
-                _uiState.update { it.copy(isScannerOpen = false, startupError = null, notice = "Opening business dashboard…") }
-                launchBusinessWorkspace(shopId)
+                _uiState.update { it.copy(isScannerOpen = false, startupError = null, notice = "Passkey verified for business. The owner can sign in on their phone.") }
+                loadAdminBusinesses()
                 return
             }
         }
@@ -1035,7 +1047,7 @@ class CounterPosViewModel(
                                     _adminBusinesses.value = it
                                     _uiState.update { state -> state.copy(isScannerOpen = false, notice = "$email attached as $userRole") }
                                     if (isPlatformAdmin) {
-                                        launchBusinessWorkspace(targetShopId)
+                                        loadAdminBusinesses()
                                     }
                                 }
                                 .onFailure { error -> _uiState.update { state -> state.copy(isScannerOpen = false, startupError = error.message ?: "Could not attach user") } }
@@ -1048,8 +1060,8 @@ class CounterPosViewModel(
 
         // Fallback for scanning when superadmin is enrolling
         if (isPlatformAdmin && !shopId.isNullOrBlank()) {
-            _uiState.update { it.copy(isScannerOpen = false, startupError = null, notice = "Enrolled. Loading business dashboard…") }
-            launchBusinessWorkspace(shopId)
+            _uiState.update { it.copy(isScannerOpen = false, startupError = null, notice = "Owner enrolled successfully. You remain in Superadmin.") }
+            loadAdminBusinesses()
             return
         }
 

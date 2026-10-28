@@ -197,15 +197,18 @@ fun StaffManagementScreen(
         }
     }
 
-    // Filter staff members
+    // Filter staff members (employees only, excluding owner)
     val allStaffMembers = remember(state.employeeMembers) {
+        val seen = mutableSetOf<String>()
         state.employeeMembers.mapNotNull { member ->
+            val staffRole = member.optString("role", "cashier").lowercase()
+            if (staffRole == "owner") return@mapNotNull null
             val userId = member.optString("user_id").ifBlank {
                 member.optString("member_user_id").ifBlank { member.optString("id") }
             }
-            val email = member.optString("email").trim()
-            val staffRole = member.optString("role", "cashier")
-            val status = member.optString("employment_status", member.optString("status", "active"))
+            val email = member.optString("email").trim().lowercase()
+            val dedupeKey = if (userId.isNotBlank()) userId else email
+            if (dedupeKey.isNotBlank() && !seen.add(dedupeKey)) return@mapNotNull null
             if (userId.isNotBlank() || email.isNotBlank()) {
                 member
             } else null

@@ -136,4 +136,64 @@ class StaffEnrollmentTest {
         assertEquals(1, activeList.size)
         assertEquals(2, suspendedList.size)
     }
+
+    @Test
+    fun ownerRoleIsExcludedAndEmployeesAreDeduplicated() {
+        val ownerMember = JSONObject().apply {
+            put("user_id", "owner-1")
+            put("email", "owner@example.com")
+            put("role", "owner")
+        }
+        val duplicateOwner = JSONObject().apply {
+            put("user_id", "owner-1")
+            put("email", "owner@example.com")
+            put("role", "owner")
+        }
+        val waiter1 = JSONObject().apply {
+            put("user_id", "waiter-1")
+            put("email", "john@example.com")
+            put("role", "cashier")
+        }
+        val duplicateWaiter1 = JSONObject().apply {
+            put("user_id", "waiter-1")
+            put("email", "john@example.com")
+            put("role", "cashier")
+        }
+        val waiter2 = JSONObject().apply {
+            put("user_id", "waiter-2")
+            put("email", "mary@example.com")
+            put("role", "cashier")
+        }
+
+        val jsonArray = JSONArray().apply {
+            put(ownerMember)
+            put(duplicateOwner)
+            put(waiter1)
+            put(duplicateWaiter1)
+            put(waiter2)
+        }
+
+        val seenKeys = mutableSetOf<String>()
+        val filteredList = buildList {
+            for (index in 0 until jsonArray.length()) {
+                jsonArray.optJSONObject(index)?.let { obj ->
+                    val role = obj.optString("role", "").lowercase()
+                    if (role == "owner") return@let
+                    val userId = obj.optString("user_id").ifBlank { obj.optString("member_user_id") }
+                    val email = obj.optString("email").trim().lowercase()
+                    val dedupeKey = if (userId.isNotBlank()) userId else email
+                    if (dedupeKey.isNotBlank()) {
+                        if (seenKeys.add(dedupeKey)) add(obj)
+                    } else {
+                        add(obj)
+                    }
+                }
+            }
+        }
+
+        assertEquals(2, filteredList.size)
+        assertEquals("waiter-1", filteredList[0].optString("user_id"))
+        assertEquals("waiter-2", filteredList[1].optString("user_id"))
+    }
 }
+

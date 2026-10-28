@@ -246,7 +246,6 @@ fun SuperadminDashboardScreen(
                         onToggleReasonField = { showStatusReasonField = !showStatusReasonField },
                         onLifecycleReasonChange = { lifecycleReason = it },
                         onSelectBusiness = { viewModel.selectAdminBusiness(it) },
-                        onLaunchWorkspace = { viewModel.launchBusinessWorkspace(it) },
                         onScanOwnerQr = { shopId -> viewModel.openAdminEnrollmentScanner(shopId, "owner") },
                         onCreateOwnerPasskey = { shopId -> viewModel.createAdminEnrollmentPass(shopId, "owner") },
                         onClearPasskey = viewModel::clearAdminEnrollmentCredential,
@@ -572,7 +571,6 @@ private fun PortfolioContent(
     onToggleReasonField: () -> Unit,
     onLifecycleReasonChange: (String) -> Unit,
     onSelectBusiness: (String) -> Unit,
-    onLaunchWorkspace: (String) -> Unit,
     onScanOwnerQr: (String) -> Unit,
     onCreateOwnerPasskey: (String) -> Unit,
     onClearPasskey: () -> Unit,
@@ -696,7 +694,6 @@ private fun PortfolioContent(
                     isSelected = selectedBusinessId == business.shopId,
                     adminEnrollmentCredential = adminEnrollmentCredential,
                     onSelect = { onSelectBusiness(business.shopId) },
-                    onLaunchWorkspace = { onLaunchWorkspace(business.shopId) },
                     onScanOwnerQr = { onScanOwnerQr(business.shopId) },
                     onCreateOwnerPasskey = { onCreateOwnerPasskey(business.shopId) },
                     onClearPasskey = onClearPasskey,
@@ -713,7 +710,6 @@ private fun ModernBusinessCard(
     isSelected: Boolean,
     adminEnrollmentCredential: AdminEnrollmentCredential?,
     onSelect: () -> Unit,
-    onLaunchWorkspace: () -> Unit,
     onScanOwnerQr: () -> Unit,
     onCreateOwnerPasskey: () -> Unit,
     onClearPasskey: () -> Unit,
@@ -901,42 +897,23 @@ private fun ModernBusinessCard(
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
 
-            // Primary Actions: Launch POS Workspace & Manage/Enroll Toggle
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+            Button(
+                onClick = onSelect,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("btn_manage_${business.shopId}"),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isSelected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary
+                ),
+                shape = RoundedCornerShape(12.dp)
             ) {
-                Button(
-                    onClick = onLaunchWorkspace,
-                    modifier = Modifier
-                        .weight(1.3f)
-                        .testTag("btn_launch_workspace_${business.shopId}"),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Storefront,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text("Launch POS", fontWeight = FontWeight.Bold, maxLines = 1)
-                }
-
-                OutlinedButton(
-                    onClick = onSelect,
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("btn_manage_${business.shopId}")
-                ) {
-                    Icon(
-                        imageVector = if (isSelected) Icons.Default.KeyboardArrowUp else Icons.Default.Settings,
-                        contentDescription = null,
-                        modifier = Modifier.size(17.dp)
-                    )
-                    Spacer(Modifier.width(5.dp))
-                    Text(if (isSelected) "Done" else "Enroll / Manage", maxLines = 1, fontSize = 12.sp)
-                }
+                Icon(
+                    imageVector = if (isSelected) Icons.Default.KeyboardArrowUp else Icons.Default.Settings,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(if (isSelected) "Close Controls" else "Enroll Owner / Manage Business", fontWeight = FontWeight.Bold, maxLines = 1)
             }
 
             // Expanded Management & Owner Enrollment section

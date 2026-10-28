@@ -112,15 +112,6 @@ fun CounterPosApp(
                 qrPayload = state.loginQrPayload,
                 onClearError = viewModel::clearStartupError
             )
-            session.activeBusiness != null && !session.activeBusiness?.role.equals("owner", ignoreCase = true) && shouldShowEmployeeAccessLocked(session.activeBusiness?.employmentStatus) -> EmployeeAccessBlockedScreen(session.activeBusiness, viewModel::signOut)
-            session.activeBusiness != null && state.isAccessLocked -> WorkingHoursLockedScreen(
-                message = state.accessLockMessage.orEmpty(),
-                ownerCanManage = session.activeBusiness?.role.equals("owner", ignoreCase = true),
-                onCheckAgain = viewModel::refreshAccessNow,
-                onOpenOwnerSettings = { viewModel.openStaffManagement(openHours = true) },
-                onSignOut = viewModel::signOut
-            )
-            session.activeBusiness != null -> CounterPosWorkspace(viewModel, themeMode, onThemeModeChange)
             session.isPlatformAdmin -> SuperadminDashboardScreen(
                 viewModel = viewModel,
                 email = session.email,
@@ -128,6 +119,15 @@ fun CounterPosApp(
                 onSignOut = viewModel::signOut,
                 onClearError = viewModel::clearStartupError
             )
+            session.activeBusiness != null && !session.activeBusiness?.role.equals("owner", ignoreCase = true) && shouldShowEmployeeAccessLocked(session.activeBusiness?.employmentStatus) -> EmployeeAccessBlockedScreen(session.activeBusiness, viewModel::signOut)
+            session.activeBusiness != null && !session.activeBusiness?.role.equals("owner", ignoreCase = true) && state.isAccessLocked -> WorkingHoursLockedScreen(
+                message = state.accessLockMessage.orEmpty(),
+                ownerCanManage = false,
+                onCheckAgain = viewModel::refreshAccessNow,
+                onOpenOwnerSettings = { viewModel.openStaffManagement(openHours = true) },
+                onSignOut = viewModel::signOut
+            )
+            session.activeBusiness != null -> CounterPosWorkspace(viewModel, themeMode, onThemeModeChange)
             session.memberships.any { it.status != "suspended" && it.status != "terminated" && it.status != "closed" && (it.role.equals("owner", ignoreCase = true) || !shouldShowEmployeeAccessLocked(it.employmentStatus)) } -> BusinessPickerScreen(
                 session = session,
                 onSelect = viewModel::selectBusiness,
