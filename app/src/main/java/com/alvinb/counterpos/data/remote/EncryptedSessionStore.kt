@@ -6,6 +6,7 @@ import android.security.keystore.KeyProperties
 import android.util.Base64
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
+import java.util.UUID
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -66,7 +67,16 @@ class EncryptedSessionStore(context: Context) {
     }
 
     fun clear() {
-        preferences.edit().clear().apply()
+        preferences.edit().remove("payload").apply()
+    }
+
+    /** Stable per-installation identifier used only to recover the same QR identity. */
+    fun installationId(): String {
+        val existing = preferences.getString("installation_id", null)
+        if (!existing.isNullOrBlank()) return existing
+        val created = UUID.randomUUID().toString()
+        preferences.edit().putString("installation_id", created).apply()
+        return created
     }
 
     private fun encode(bytes: ByteArray): String =

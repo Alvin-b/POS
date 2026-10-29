@@ -106,6 +106,7 @@ internal fun shouldClearSessionForRefreshFailure(statusCode: Int, message: Strin
 
 class SupabaseRestClient(context: Context) {
     private val sessionStore = EncryptedSessionStore(context)
+    private val installationId = sessionStore.installationId()
     private val refreshMutex = Mutex()
     @Volatile private var session: AuthSession? = loadSession()
 
@@ -188,7 +189,12 @@ class SupabaseRestClient(context: Context) {
         parseObject(request("/functions/v1/create-access-pass", "POST", JSONObject().put("shop_id", shopId).put("role", role).toString(), true))
 
     suspend fun createAccessChallenge(): JSONObject =
-        parseObject(request("/functions/v1/create-access-challenge", "POST", "{}", false))
+        parseObject(request(
+            "/functions/v1/create-access-challenge",
+            "POST",
+            JSONObject().put("device_id", installationId).toString(),
+            false
+        ))
 
     suspend fun pollAccessChallenge(token: String): JSONObject =
         parseObject(request("/functions/v1/poll-access-challenge", "POST", JSONObject().put("token", token).toString(), false))
