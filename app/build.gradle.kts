@@ -21,11 +21,11 @@ android {
     versionName = "1.0"
 
     val supabaseUrl = providers.gradleProperty("SUPABASE_URL")
-      .orElse(System.getenv("SUPABASE_URL") ?: "https://pvcqfoycrqtnirbwtccm.supabase.co")
+      .orElse(System.getenv("SUPABASE_URL"))
     val supabasePublishableKey = providers.gradleProperty("SUPABASE_PUBLISHABLE_KEY")
-      .orElse(System.getenv("SUPABASE_PUBLISHABLE_KEY") ?: "sb_publishable_1XttQd7gvzcsbZ__NnULGw_xMClc8GZ")
-    buildConfigField("String", "SUPABASE_URL", "\"${supabaseUrl.get()}\"")
-    buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"${supabasePublishableKey.get()}\"")
+      .orElse(System.getenv("SUPABASE_PUBLISHABLE_KEY"))
+    buildConfigField("String", "SUPABASE_URL", "\"${supabaseUrl.orNull ?: ""}\"")
+    buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"${supabasePublishableKey.orNull ?: ""}\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

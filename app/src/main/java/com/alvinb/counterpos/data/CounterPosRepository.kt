@@ -538,7 +538,13 @@ class CounterPosRepository(
     }
 
     private fun createAdminBusinessMembership(business: AdminBusiness): BusinessMembership {
-        val liquor = business.businessType == "counter_seller"
+        val liquor = business.businessType == "counter_seller" || business.businessType == "liquor_store"
+        val club = business.businessType == "big_club" || business.businessType == "club"
+        val featureFlags = if (liquor) {
+            setOf("employee_management", "working_hours", "fifo_inventory", "sales_analytics")
+        } else {
+            business.featureFlags.ifEmpty { setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics") }
+        }
         return BusinessMembership(
             shopId = business.shopId,
             shopName = business.shopName,
@@ -549,7 +555,7 @@ class CounterPosRepository(
             businessSize = business.businessSize,
             counterInventoryMode = business.counterInventoryMode,
             counterCount = if (liquor) 1 else business.counterCount.toInt().coerceAtLeast(1),
-            featureFlags = setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics"),
+            featureFlags = featureFlags,
             currency = "KES",
             lowStockThreshold = 5
         )

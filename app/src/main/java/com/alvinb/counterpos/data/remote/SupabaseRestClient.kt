@@ -296,11 +296,17 @@ class SupabaseRestClient(context: Context) {
                 rows.optJSONObject(index)?.let { row ->
                     val bType = row.optString("business_type", "big_club").trim()
                     val isClub = bType.equals("big_club", ignoreCase = true) || bType.equals("club", ignoreCase = true)
-                    val counterCount = if (isClub) row.optInt("counter_count", 1).coerceAtLeast(1) else 1
-                    val defaultFlags = setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics")
-                    val rawFlags = row.optJSONObject("feature_flags")?.keys()?.asSequence()?.filter { key -> row.optJSONObject("feature_flags")?.optBoolean(key, false) == true }?.toSet()
-                    val resolvedFlags = (rawFlags ?: defaultFlags) + "tables"
-                    add(
+                    val isLiquor = bType.equals("counter_seller", ignoreCase = true) || bType.equals("liquor_store", ignoreCase = true)
+                    val counterCount = if (isLiquor) 1 else if (isClub) row.optInt("counter_count", 1).coerceAtLeast(1) else 1
+                    val defaultFlags = if (isLiquor) {
+                        setOf("employee_management", "working_hours", "fifo_inventory", "sales_analytics")
+                    } else {
+                        setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics")
+                    }
+                    val rawFlags = row.optJSONObject("feature_flags")?.keys()?.asSequence()?.filter { key ->
+                        row.optJSONObject("feature_flags")?.optBoolean(key, false) == true
+                    }?.toSet()
+                    val resolvedFlags = rawFlags ?: defaultFlags
                         BusinessMembership(
                             shopId = row.optString("shop_id"),
                             shopName = row.optString("shop_name"),
