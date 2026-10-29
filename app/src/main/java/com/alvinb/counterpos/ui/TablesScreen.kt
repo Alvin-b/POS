@@ -1,10 +1,19 @@
 package com.alvinb.counterpos.ui
 
 import android.content.Context
+import android.graphics.Color as AndroidColor
+import android.graphics.Paint
+import android.graphics.Typeface
+import android.os.Bundle
+import android.os.CancellationSignal
+import android.os.ParcelFileDescriptor
+import android.print.PageRange
 import android.print.PrintAttributes
+import android.print.PrintDocumentAdapter
+import android.print.PrintDocumentInfo
 import android.print.PrintManager
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.print.pdf.PrintedPdfDocument
+import java.io.FileOutputStream
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -1513,8 +1522,198 @@ private fun ksh(amount: Int): String = ksh(amount.toLong())
 private fun time(epoch: Long): String = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(epoch))
 
 /**
- * Native Android Receipt Printing Adapter using system PrintManager & WebView HTML
+ * Native Android Receipt Printing Adapter using system PrintManager and PrintedPdfDocument (zero WebView/Chromium)
  */
+private class TableReceiptPrintAdapter(
+    private val context: Context,
+    private val businessName: String,
+    private val tableName: String,
+    private val orders: List<TableOrderEntity>,
+    private val total: Long,
+    private val paymentMethod: String?
+) : PrintDocumentAdapter() {
+    private var printedPdfDocument: PrintedPdfDocument? = null
+
+    override fun onLayout(
+        oldAttributes: PrintAttributes?,
+        newAttributes: PrintAttributes,
+        cancellationSignal: CancellationSignal?,
+        callback: LayoutResultCallback,
+        extras: Bundle?
+    ) {
+        if (cancellationSignal?.isCanceled == true) {
+            callback.onLayoutCancelled()
+            return
+        }
+        printedPdfDocument = PrintedPdfDocument(context, newAttributes)
+        val info = PrintDocumentInfo.Builder("Table_${tableName.replace(Regex("[^A-Za-z0-9_-]"), "_")}_Receipt.pdf")
+            .setContentType(PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
+            .setPageCount(1)
+            .build()
+        callback.onLayoutFinished(info, newAttributes != oldAttributes)
+    }
+
+    override fun onWrite(
+        pages: Array<out PageRange>?,
+        destination: ParcelFileDescriptor,
+        cancellationSignal: CancellationSignal?,
+        callback: WriteResultCallback
+    ) {
+        val pdf = printedPdfDocument ?: return
+        val page = pdf.startPage(0)
+        if (cancellationSignal?.isCanceled == true) {
+            pdf.close()
+            printedPdfDocument = null
+            callback.onWriteCancelled()
+            return
+        }
+
+        val canvas = page.canvas
+        val width = page.info.pageWidth.toFloat()
+        val margin = 28f
+
+        val textPaint = Paint().apply {
+            color = AndroidColor.BLACK
+            textSize = 10f
+            isAntiAlias = true
+        }
+        val boldPaint = Paint().apply {
+            color = AndroidColor.BLACK
+            textSize = 10f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            isAntiAlias = true
+        }
+        val titlePaint = Paint().apply {
+            color = AndroidColor.BLACK
+            textSize = 15f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
+            isAntiAlias = true
+        }
+        val centerPaint = Paint().apply {
+            color = AndroidColor.DKGRAY
+            textSize = 9f
+            textAlign = Paint.Align.CENTER
+            isAntiAlias = true
+        }
+        val rightPaint = Paint().apply {
+            color = AndroidColor.BLACK
+            textSize = 10f
+            textAlign = Paint.Align.RIGHT
+            isAntiAlias = true
+        }
+        val rightBoldPaint = Paint().apply {
+            color = AndroidColor.BLACK
+            textSize = 12f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            textAlign = Paint.Align.RIGHT
+            isAntiAlias = true
+        }
+        val linePaint = Paint().apply {
+            color = AndroidColor.GRAY
+            strokeWidth = 1f
+        }
+
+        var y = 40f
+
+        // Title: Business Name
+        canvas.drawText(businessName.uppercase(Locale.ROOT), width / 2f, y, titlePaint)
+        y += 18f
+
+        // Subtitle: Table Name
+        boldPaint.textAlign = Paint.Align.CENTER
+        canvas.drawText("Table: $tableName", width / 2f, y, boldPaint)
+        boldPaint.textAlign = Paint.Align.LEFT
+        y += 14f
+
+        // Date & Time
+        val dateStr = SimpleDateFormat("dd MMM yyyy · h:mm a", Locale.getDefault()).format(Date())
+        canvas.drawText(dateStr, width / 2f, y, centerPaint)
+        y += 16f
+
+        // Payment status banner
+        if (!paymentMethod.isNullOrBlank()) {
+            val bannerText = "PAID VIA ${paymentMethod.uppercase(Locale.ROOT)}"
+            boldPaint.textAlign = Paint.Align.CENTER
+            canvas.drawText(bannerText, width / 2f, y, boldPaint)
+            boldPaint.textAlign = Paint.Align.LEFT
+            y += 16f
+        } else {
+            canvas.drawText("** GUEST CHECK / UNPAID **", width / 2f, y, centerPaint)
+            y += 16f
+        }
+
+        // Divider
+        canvas.drawLine(margin, y, width - margin, y, linePaint)
+        y += 14f
+
+        // Column Headers
+        boldPaint.textSize = 9f
+        canvas.drawText("ITEM", margin, y, boldPaint)
+        val rightHeaderPaint = Paint(rightPaint).apply {
+            textSize = 9f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        canvas.drawText("TOTAL", width - margin, y, rightHeaderPaint)
+        y += 6f
+        canvas.drawLine(margin, y, width - margin, y, linePaint)
+        y += 14f
+
+        // Items
+        boldPaint.textSize = 10f
+        for (order in orders) {
+            val name = if (order.productName.length > 30) order.productName.take(28) + "…" else order.productName
+            canvas.drawText(name, margin, y, boldPaint)
+            canvas.drawText(ksh(order.totalKsh), width - margin, y, rightPaint)
+            y += 12f
+            canvas.drawText("${order.quantity} × ${order.unitName} @ ${ksh(order.unitPriceKsh)}", margin, y, textPaint)
+            y += 15f
+        }
+
+        // Total Divider
+        canvas.drawLine(margin, y, width - margin, y, linePaint)
+        y += 18f
+
+        // Total
+        val totalLabelPaint = Paint().apply {
+            color = AndroidColor.BLACK
+            textSize = 12f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            isAntiAlias = true
+        }
+        canvas.drawText("TOTAL DUE", margin, y, totalLabelPaint)
+        canvas.drawText(ksh(total), width - margin, y, rightBoldPaint)
+        y += 18f
+        canvas.drawLine(margin, y, width - margin, y, linePaint)
+        y += 20f
+
+        // Footer
+        canvas.drawText("Thank you for dining with us!", width / 2f, y, centerPaint)
+        y += 12f
+        canvas.drawText("Powered by Counter POS", width / 2f, y, centerPaint)
+
+        pdf.finishPage(page)
+
+        try {
+            FileOutputStream(destination.fileDescriptor).use { out ->
+                pdf.writeTo(out)
+            }
+            callback.onWriteFinished(arrayOf(PageRange.ALL_PAGES))
+        } catch (e: Exception) {
+            callback.onWriteFailed(e.message)
+        } finally {
+            pdf.close()
+            printedPdfDocument = null
+        }
+    }
+}
+
+private fun String.centerInWidth(width: Int): String {
+    if (length >= width) return this
+    val padding = (width - length) / 2
+    return " ".repeat(padding) + this
+}
+
 private fun printTableReceipt(
     context: Context,
     businessName: String,
@@ -1524,101 +1723,56 @@ private fun printTableReceipt(
     paymentMethod: String? = null
 ) {
     if (orders.isEmpty()) return
-    val htmlEncode: (String) -> String = { value ->
-        value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;")
-    }
-    val rows = orders.joinToString("") { order ->
-        """
-        <tr>
-            <td style="padding: 5px 0; font-size: 13px;">
-                <div style="font-weight: 600;">${htmlEncode(order.productName)}</div>
-                <div style="font-size: 11px; color: #555;">${htmlEncode(order.unitName)} @ ${ksh(order.unitPriceKsh)}</div>
-            </td>
-            <td style="text-align: center; padding: 5px 0; font-size: 13px;">${order.quantity}</td>
-            <td style="text-align: right; padding: 5px 0; font-size: 13px; font-weight: 600;">${ksh(order.totalKsh)}</td>
-        </tr>
-        """.trimIndent()
-    }
-
-    val paymentBanner = if (!paymentMethod.isNullOrBlank()) {
-        """
-        <div style="text-align: center; margin: 8px 0; padding: 4px; border: 1px solid #000; font-weight: bold; font-size: 12px;">
-            PAID VIA ${htmlEncode(paymentMethod.uppercase(Locale.ROOT))}
-        </div>
-        """.trimIndent()
-    } else {
-        """
-        <div style="text-align: center; margin: 8px 0; font-size: 11px; color: #444;">
-            ** GUEST CHECK / UNPAID **
-        </div>
-        """.trimIndent()
-    }
-
-    val html = """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <style>
-                body {
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-                    font-size: 12px;
-                    margin: 0;
-                    padding: 16px;
-                    color: #000;
-                    max-width: 320px;
-                    margin: 0 auto;
-                }
-                .center { text-align: center; }
-                .bold { font-weight: bold; }
-                table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-                hr { border: none; border-top: 1px dashed #444; margin: 10px 0; }
-                .total-row { display: flex; justify-content: space-between; font-size: 16px; font-weight: 800; margin-top: 6px; }
-            </style>
-        </head>
-        <body>
-            <div class="center bold" style="font-size: 18px; letter-spacing: 0.5px;">${htmlEncode(businessName.uppercase(Locale.ROOT))}</div>
-            <div class="center bold" style="font-size: 14px; margin-top: 4px;">Table: ${htmlEncode(tableName)}</div>
-            <div class="center" style="font-size: 11px; color: #555; margin-top: 2px;">
-                ${SimpleDateFormat("dd MMM yyyy · h:mm a", Locale.getDefault()).format(Date())}
-            </div>
-            $paymentBanner
-            <hr>
-            <table>
-                <thead>
-                    <tr style="border-bottom: 1px dashed #444;">
-                        <th style="text-align: left; padding-bottom: 6px; font-size: 11px;">ITEM</th>
-                        <th style="text-align: center; padding-bottom: 6px; font-size: 11px;">QTY</th>
-                        <th style="text-align: right; padding-bottom: 6px; font-size: 11px;">TOTAL</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    $rows
-                </tbody>
-            </table>
-            <hr>
-            <div class="total-row">
-                <span>TOTAL DUE</span>
-                <span style="float: right;">${ksh(total)}</span>
-            </div>
-            <div style="clear: both;"></div>
-            <hr>
-            <div class="center" style="font-size: 11px; margin-top: 14px;">Thank you for dining with us!</div>
-            <div class="center" style="font-size: 10px; color: #777; margin-top: 2px;">Powered by Counter POS</div>
-        </body>
-        </html>
-    """.trimIndent()
-
-    val webView = WebView(context).apply {
-        webViewClient = object : WebViewClient() {
-            override fun onPageFinished(view: WebView?, url: String?) {
-                val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager
-                val adapter = view?.createPrintDocumentAdapter("Table-$tableName-Receipt")
-                if (printManager != null && adapter != null) {
-                    printManager.print("Table $tableName Receipt", adapter, PrintAttributes.Builder().build())
-                }
-            }
+    try {
+        val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager
+        if (printManager != null) {
+            val adapter = TableReceiptPrintAdapter(
+                context = context,
+                businessName = businessName,
+                tableName = tableName,
+                orders = orders,
+                total = total,
+                paymentMethod = paymentMethod
+            )
+            val printAttributes = PrintAttributes.Builder()
+                .setColorMode(PrintAttributes.COLOR_MODE_MONOCHROME)
+                .build()
+            printManager.print("Table $tableName Receipt", adapter, printAttributes)
+            return
         }
+    } catch (_: Exception) {
+        // Fallback to text sharing below if system print service encounters an issue
     }
-    webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+
+    runCatching {
+        val dateStr = SimpleDateFormat("dd MMM yyyy · h:mm a", Locale.getDefault()).format(Date())
+        val textReceipt = buildString {
+            appendLine("================================")
+            appendLine(businessName.uppercase(Locale.ROOT).centerInWidth(32))
+            appendLine("Table: $tableName".centerInWidth(32))
+            appendLine(dateStr.centerInWidth(32))
+            if (!paymentMethod.isNullOrBlank()) {
+                appendLine("[ PAID VIA ${paymentMethod.uppercase(Locale.ROOT)} ]".centerInWidth(32))
+            } else {
+                appendLine("[ GUEST CHECK / UNPAID ]".centerInWidth(32))
+            }
+            appendLine("--------------------------------")
+            orders.forEach { o ->
+                appendLine(o.productName)
+                appendLine("  ${o.quantity} x ${ksh(o.unitPriceKsh)} = ${ksh(o.totalKsh)}")
+            }
+            appendLine("--------------------------------")
+            appendLine("TOTAL DUE: ${ksh(total)}")
+            appendLine("================================")
+            appendLine("Thank you for dining with us!".centerInWidth(32))
+            appendLine("Powered by Counter POS".centerInWidth(32))
+        }
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(android.content.Intent.EXTRA_SUBJECT, "Receipt for Table $tableName")
+            putExtra(android.content.Intent.EXTRA_TEXT, textReceipt)
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(android.content.Intent.createChooser(intent, "Share / Print Receipt"))
+    }
 }

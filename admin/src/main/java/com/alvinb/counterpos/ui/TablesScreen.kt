@@ -3,8 +3,7 @@ package com.alvinb.counterpos.ui
 import android.content.Context
 import android.print.PrintAttributes
 import android.print.PrintManager
-import android.webkit.WebView
-import android.webkit.WebViewClient
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -294,13 +293,27 @@ private fun printTableReceipt(context: Context, tableName: String, orders: List<
         *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#17211c;margin:28px auto;max-width:680px;font-size:14px;line-height:1.4}.brand{text-align:center;border-bottom:2px solid #183d2d;padding:4px 0 16px}.brand h1{font-size:26px;letter-spacing:1px;margin:0;color:#183d2d}.brand p{margin:4px 0 0;color:#607168;font-size:11px;letter-spacing:2px;text-transform:uppercase}.title{font-weight:700;font-size:17px;text-align:center;margin:18px 0 3px}.meta{text-align:center;color:#5e6a63;font-size:12px}.table-name{text-align:center;font-size:15px;font-weight:700;margin:3px 0 14px}table{width:100%;border-collapse:collapse;margin-top:14px;border-top:1px solid #cbd5ce}td{padding:10px 3px;border-bottom:1px solid #dce3de;vertical-align:top}.item{width:74%}.detail{font-size:11px;color:#647168;margin-top:2px}.amount{text-align:right;white-space:nowrap;font-weight:700}.total{border-top:2px solid #183d2d;margin-top:8px;padding-top:12px;display:flex;justify-content:space-between;font-size:18px;font-weight:700}.foot{text-align:center;margin-top:22px;padding-top:10px;border-top:1px dashed #aab7ae;color:#607168;font-size:11px}@media print{body{margin:0 auto;padding:10px;max-width:100%}.brand h1{font-size:20px}.title{margin-top:12px}}
         </style></head><body><header class='brand'><h1>COUNTERPOS</h1><p>Thank you for choosing us</p></header><div class='title'>TABLE BILL</div><div class='table-name'>${htmlEncode(tableName)}</div><div class='meta'>${SimpleDateFormat("EEE, dd MMM yyyy · h:mm a", Locale.getDefault()).format(Date())}</div><table>$rows</table><div class='total'><span>TOTAL DUE</span><span>${ksh(total)}</span></div><div class='foot'>Please confirm your order before payment.<br/>We appreciate your visit.</div></body></html>
     """.trimIndent()
-    val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager ?: return
-    val webView = WebView(context)
-    webView.webViewClient = object : WebViewClient() {
-        override fun onPageFinished(view: WebView, url: String?) {
-            val adapter = view.createPrintDocumentAdapter("${tableName.replace(Regex("[^A-Za-z0-9_-]"), "_")}_receipt")
-            printManager.print("${tableName} receipt", adapter, PrintAttributes.Builder().build())
+    val dateStr = SimpleDateFormat("EEE, dd MMM yyyy · h:mm a", Locale.getDefault()).format(Date())
+    val textReceipt = buildString {
+        appendLine("================================")
+        appendLine("COUNTERPOS")
+        appendLine("Table: $tableName")
+        appendLine(dateStr)
+        appendLine("--------------------------------")
+        orders.forEach { item ->
+            appendLine(item.productName)
+            appendLine("  ${item.quantity} x ${item.unitName} @ ${ksh(item.unitPriceKsh)} = ${ksh(item.totalKsh)}")
         }
+        appendLine("--------------------------------")
+        appendLine("TOTAL DUE: ${ksh(total)}")
+        appendLine("================================")
+        appendLine("Thank you for choosing us")
     }
-    webView.loadDataWithBaseURL(null, html, "text/HTML", "UTF-8", null)
+    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(android.content.Intent.EXTRA_SUBJECT, "Receipt for Table $tableName")
+        putExtra(android.content.Intent.EXTRA_TEXT, textReceipt)
+        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    context.startActivity(android.content.Intent.createChooser(intent, "Share / Print Receipt"))
 }

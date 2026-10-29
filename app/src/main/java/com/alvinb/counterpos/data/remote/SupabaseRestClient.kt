@@ -307,6 +307,7 @@ class SupabaseRestClient(context: Context) {
                         row.optJSONObject("feature_flags")?.optBoolean(key, false) == true
                     }?.toSet()
                     val resolvedFlags = rawFlags ?: defaultFlags
+                    add(
                         BusinessMembership(
                             shopId = row.optString("shop_id"),
                             shopName = row.optString("shop_name"),
