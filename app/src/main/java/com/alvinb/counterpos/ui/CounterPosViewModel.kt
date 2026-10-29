@@ -697,7 +697,7 @@ class CounterPosViewModel(
 
     fun setEmployeeRole(userId: String, role: String) = viewModelScope.launch {
         runCatching { repository.setEmployeeRole(userId, role) }
-            .onSuccess { rows -> _uiState.update { it.copy(employeeMembers = (0 until rows.length()).mapNotNull(rows::optJSONObject), notice = "Employee role updated") } }
+            .onSuccess { rows -> _uiState.update { it.copy(employeeMembers = rows.toEmployeeMemberList(), notice = "Employee role updated") } }
             .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not update employee role") } }
     }
 
@@ -988,6 +988,7 @@ class CounterPosViewModel(
                             _uiState.update {
                                 it.copy(
                                     isScannerOpen = false,
+                                    isStaffManagementOpen = if (!isPlatformAdmin) true else it.isStaffManagementOpen,
                                     startupError = null,
                                     actionError = null,
                                     notice = if (isPlatformAdmin) {
@@ -1004,7 +1005,13 @@ class CounterPosViewModel(
                             val friendly = if (message.contains("expired", ignoreCase = true) || message.contains("session", ignoreCase = true) && message.contains("used", ignoreCase = true)) {
                                 "This QR session has expired. Ask the other phone to tap Refresh QR, then scan the new code."
                             } else message.ifBlank { "Could not approve sign-in QR" }
-                            _uiState.update { it.copy(isScannerOpen = false, startupError = friendly) }
+                            _uiState.update {
+                                it.copy(
+                                    isScannerOpen = false,
+                                    isStaffManagementOpen = if (!isPlatformAdmin) true else it.isStaffManagementOpen,
+                                    startupError = friendly
+                                )
+                            }
                         }
                 }
             }
@@ -1181,6 +1188,7 @@ class CounterPosViewModel(
                 isScannerOpen = true,
                 scannerMode = ScannerMode.ADMIN_QR,
                 isAccessLocked = false,
+                isStaffManagementOpen = false,
                 actionError = null,
                 notice = "Scan the employee's sign-in QR on their phone to enroll them in ${business.shopName}."
             )
@@ -1351,7 +1359,12 @@ class CounterPosViewModel(
     }
 
     fun closeScanner() = _uiState.update {
-        it.copy(isScannerOpen = false, unrecognizedBarcode = null)
+        val wasStaffScan = it.scannerMode == ScannerMode.ADMIN_QR && !session.value.isPlatformAdmin
+        it.copy(
+            isScannerOpen = false,
+            unrecognizedBarcode = null,
+            isStaffManagementOpen = if (wasStaffScan) true else it.isStaffManagementOpen
+        )
     }
 
     fun startBarcodeAssignment(product: ProductEntity) = _uiState.update {

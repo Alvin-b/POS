@@ -862,7 +862,7 @@ private fun ModernBusinessCard(
             ) {
                 StatPill(
                     icon = Icons.Default.Groups,
-                    value = business.memberCount.toString(),
+                    value = (business.memberCount - 1).coerceAtLeast(0).toString(),
                     label = "Staff",
                     modifier = Modifier.weight(1f)
                 )

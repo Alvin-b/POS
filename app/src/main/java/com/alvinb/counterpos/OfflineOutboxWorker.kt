@@ -61,7 +61,7 @@ class OfflineOutboxWorker(
 
                 WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
                     WORK_NAME,
-                    ExistingWorkPolicy.KEEP,
+                    ExistingWorkPolicy.REPLACE,
                     request
                 )
             } catch (_: Exception) {

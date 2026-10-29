@@ -477,6 +477,7 @@ class CounterPosRepository(
 
     suspend fun transferCounterStock(productCode: String, fromCounter: String, toCounter: String, quantity: Int): Boolean =
         withActiveProduct(productCode) { product ->
+            require(activeBusiness!!.role in setOf("owner", "manager", "inventory_clerk")) { "Only owners and managers can transfer counter stock." }
             require(quantity > 0 && fromCounter != toCounter) { "Choose two different counters and a positive quantity." }
             require(activeBusiness!!.counterInventoryMode == "per_counter") { "Counter transfers are only available in per-counter inventory mode." }
             val source = dao.getCounterStockQuantity(fromCounter, productCode)
@@ -565,15 +566,20 @@ class CounterPosRepository(
         var saved = dao.loadOfflineSession()
         account = try {
             remote.account().also {
-                check(dao.outboxCountForOtherActor(it.userId) == 0) {
-                    "This phone has unsynced POS changes from another account. Sign in with that account first so the saved work can sync."
+                val userShopIds = it.memberships.map { m -> m.shopId }
+                if (userShopIds.isNotEmpty()) {
+                    check(dao.outboxCountForOtherShops(userShopIds) == 0) {
+                        "This phone has unsynced POS changes from another business. Connect and sync them first."
+                    }
                 }
                 val cachedUserId = saved?.let { cached ->
                     runCatching { JSONObject(cached.snapshotJson).optString("user_id") }.getOrNull()
                 }
-                if (!cachedUserId.isNullOrBlank() && cachedUserId != it.userId) {
-                    check(dao.getPendingRemoteSales().isEmpty()) {
-                        "This phone has unsynced POS changes from another account. Sign in with that account first so the saved work can sync."
+                val cachedShopId = saved?.activeShopId
+                val switchingToDifferentShop = cachedShopId != null && userShopIds.none { id -> id == cachedShopId }
+                if (!cachedUserId.isNullOrBlank() && cachedUserId != it.userId && switchingToDifferentShop) {
+                    check(dao.getPendingRemoteSales().isEmpty() && dao.outboxCountAll() == 0) {
+                        "This phone has unsynced POS changes from another business. Sign in with that business's account first so the saved work can sync."
                     }
                     clearBusinessSnapshot()
                     dao.clearOfflineSession()
@@ -585,7 +591,8 @@ class CounterPosRepository(
         } catch (error: Exception) {
             if (!remote.hasSession || !isRetryable(error)) throw error
             val cached = saved?.let(::parseOfflineAccount) ?: throw error
-            if (remote.currentUserId != cached.userId) {
+            val userShopIds = cached.memberships.map { m -> m.shopId }
+            if (remote.currentUserId != cached.userId && (cached.memberships.isEmpty() || !cached.memberships.any { m -> m.shopId == saved?.activeShopId })) {
                 clearBusinessSnapshot()
                 dao.clearOfflineSession()
                 saved = null
@@ -593,8 +600,10 @@ class CounterPosRepository(
                 account = null
                 throw error
             }
-            check(dao.outboxCountForOtherActor(cached.userId) == 0) {
-                "This phone has unsynced POS changes from another account. Connect and sign in with the account that created them."
+            if (userShopIds.isNotEmpty()) {
+                check(dao.outboxCountForOtherShops(userShopIds) == 0) {
+                    "This phone has unsynced POS changes from another business. Connect and sign in with the account that created them."
+                }
             }
             account = cached
             activeBusiness = cached.memberships.firstOrNull { it.shopId == saved?.activeShopId }
@@ -606,7 +615,7 @@ class CounterPosRepository(
                 }
                 if (eligibleCachedMemberships.size == 1) activeBusiness = eligibleCachedMemberships.single()
             }
-            if (activeBusiness != null && saved?.activeShopId != activeBusiness?.shopId) {
+            if (activeBusiness != null && saved?.activeShopId != null && saved.activeShopId != activeBusiness?.shopId) {
                 check(dao.outboxCountAll() == 0 && dao.getPendingRemoteSales().isEmpty()) {
                     "Sync the previous business's saved POS changes before opening another business."
                 }
@@ -649,7 +658,7 @@ class CounterPosRepository(
             startRealtimeFor(selected)
             val cachedUserId = saved?.let { runCatching { JSONObject(it.snapshotJson).optString("user_id") }.getOrNull() }
             val cachedShopId = saved?.activeShopId.takeIf { cachedUserId == account?.userId }
-            if (cachedShopId != selected.shopId) {
+            if (cachedShopId != null && cachedShopId != selected.shopId) {
                 check(dao.outboxCountAll() == 0 && dao.getPendingRemoteSales().isEmpty()) {
                     "Sync the previous business's saved POS changes before opening another business."
                 }
@@ -1235,6 +1244,7 @@ class CounterPosRepository(
 
     suspend fun addFromLibrary(code: String, quantity: Int, priceKsh: Int, unitCostKsh: Int, selectedCounterId: String? = null): Boolean =
         withActiveBusiness {
+            require(activeBusiness!!.role in setOf("owner", "manager", "inventory_clerk")) { "Only business owners and managers can add products to stock." }
             require(quantity > 0 && priceKsh > 0 && unitCostKsh >= 0) { "Enter valid stock quantity, price, and cost." }
             val product = dao.getProductByCode(code) ?: return@withActiveBusiness false
             val counterId = selectedCounterId?.takeIf(String::isNotBlank)
@@ -1276,6 +1286,7 @@ class CounterPosRepository(
 
     suspend fun restock(code: String, quantity: Int, unitCostKsh: Int, selectedCounterId: String? = null): Boolean =
         withActiveProduct(code) { product ->
+            require(activeBusiness!!.role in setOf("owner", "manager", "inventory_clerk")) { "Only business owners and managers can restock inventory." }
             require(quantity > 0 && unitCostKsh >= 0) { "Enter a valid stock quantity and cost." }
             val counterId = selectedCounterId?.takeIf(String::isNotBlank)
                 ?: throw IllegalStateException("Choose the receiving counter first.")
@@ -1303,6 +1314,7 @@ class CounterPosRepository(
 
     suspend fun setStock(code: String, newStock: Int, selectedCounterId: String? = null): Boolean =
         withActiveProduct(code) { product ->
+            require(activeBusiness!!.role in setOf("owner", "manager", "inventory_clerk")) { "Only business owners and managers can adjust stock." }
             require(newStock >= 0) { "Stock cannot be negative." }
             val counterId = selectedCounterId?.takeIf(String::isNotBlank)
                 ?: throw IllegalStateException("Choose a counter before changing its stock count.")
@@ -1324,6 +1336,7 @@ class CounterPosRepository(
 
     suspend fun updateProduct(product: ProductEntity, selectedCounterId: String? = null): Boolean =
         withActiveProduct(product.catalogCode) { current ->
+            require(activeBusiness!!.role in setOf("owner", "manager", "inventory_clerk")) { "Only business owners and managers can edit products." }
             val counterId = selectedCounterId?.takeIf(String::isNotBlank)
                 ?: throw IllegalStateException("Choose a counter before changing this product.")
             val perCounter = activeBusiness!!.counterInventoryMode == "per_counter"
@@ -1412,6 +1425,7 @@ class CounterPosRepository(
         salesUnits: List<SaleUnit> = emptyList(),
         selectedCounterId: String? = null
     ): Boolean = withActiveBusiness {
+        require(activeBusiness!!.role in setOf("owner", "manager", "inventory_clerk")) { "Only business owners and managers can register products." }
         require(name.trim().isNotBlank() && priceKsh > 0 && initialStock > 0 && unitCostKsh >= 0) {
             "Enter a product name, price, and positive opening stock."
         }
@@ -1481,10 +1495,6 @@ class CounterPosRepository(
             val syncedResults = mutableMapOf<String, JSONObject>()
             while (true) {
                 val item = dao.nextPendingOutbox(shop.shopId) ?: break
-                if (item.actorUserId != userId) {
-                    _session.value = _session.value.copy(message = "Saved POS changes need the account that created them before they can sync.")
-                    break
-                }
                 try {
                     val payload = prepareOutboxPayload(item)
                     val result = when (item.operationType) {

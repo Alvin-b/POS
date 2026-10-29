@@ -337,7 +337,7 @@ class SupabaseRestClient(context: Context) {
         rpcObject("create_shop", JSONObject().put("_name", name.trim()))
 
     suspend fun products(shopId: String): JSONArray = query(
-        "products?select=*&shop_id=eq.$shopId&archived=eq.false&order=name.asc"
+        "products?select=*&shop_id=eq.$shopId&or=(archived.is.null,archived.eq.false)&order=name.asc"
     )
 
     suspend fun catalog(): JSONArray = query("catalog_items?select=*&order=name.asc")

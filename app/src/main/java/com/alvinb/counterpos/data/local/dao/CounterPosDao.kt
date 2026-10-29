@@ -77,6 +77,8 @@ interface CounterPosDao {
     suspend fun outboxCountAll(): Int
     @Query("SELECT COUNT(*) FROM sync_outbox WHERE actorUserId <> :userId")
     suspend fun outboxCountForOtherActor(userId: String): Int
+    @Query("SELECT COUNT(*) FROM sync_outbox WHERE shopId NOT IN (:shopIds)")
+    suspend fun outboxCountForOtherShops(shopIds: List<String>): Int
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun enqueueOutbox(item: OutboxEntity)
     @Query("UPDATE sync_outbox SET attempts = attempts + 1, lastError = :error WHERE operationId = :operationId")
@@ -175,6 +177,18 @@ interface CounterPosDao {
         clearProducts()
     }
 
+    @Query("DELETE FROM dining_tables WHERE id NOT IN (:ids)")
+    suspend fun deleteDiningTablesNotIn(ids: List<String>)
+
+    @Query("DELETE FROM table_orders WHERE saleId NOT IN (:saleIds)")
+    suspend fun deleteTableOrdersNotIn(saleIds: List<Long>)
+
+    @Query("DELETE FROM products WHERE catalogCode NOT IN (:codes)")
+    suspend fun deleteProductsNotIn(codes: List<String>)
+
+    @Query("DELETE FROM service_counters WHERE shopId = :shopId AND id NOT IN (:ids)")
+    suspend fun deleteServiceCountersNotIn(shopId: String, ids: List<String>)
+
     @Transaction
     suspend fun replaceBusinessSnapshot(
         shopId: String,
@@ -186,18 +200,38 @@ interface CounterPosDao {
         counterStock: List<CounterStockEntity>,
         preservePendingSales: Boolean
     ) {
-        clearTableOrders()
-        clearDiningTables()
-        if (preservePendingSales) clearSyncedSales() else clearSales()
-        clearProducts()
-        clearServiceCounters(shopId)
-        clearCounterStockForShop(shopId)
+        if (tables.isNotEmpty()) {
+            insertDiningTables(tables)
+            deleteDiningTablesNotIn(tables.map { it.id })
+        } else {
+            clearDiningTables()
+        }
 
-        if (products.isNotEmpty()) insertProducts(products)
+        if (orders.isNotEmpty()) {
+            insertTableOrders(orders)
+            deleteTableOrdersNotIn(orders.map { it.saleId })
+        } else {
+            clearTableOrders()
+        }
+
+        if (preservePendingSales) clearSyncedSales() else clearSales()
         if (sales.isNotEmpty()) insertSales(sales)
-        if (tables.isNotEmpty()) insertDiningTables(tables)
-        if (orders.isNotEmpty()) insertTableOrders(orders)
-        if (serviceCounters.isNotEmpty()) insertServiceCounters(serviceCounters)
+
+        if (products.isNotEmpty()) {
+            insertProducts(products)
+            deleteProductsNotIn(products.map { it.catalogCode })
+        } else {
+            clearProducts()
+        }
+
+        if (serviceCounters.isNotEmpty()) {
+            insertServiceCounters(serviceCounters)
+            deleteServiceCountersNotIn(shopId, serviceCounters.map { it.id })
+        } else {
+            clearServiceCounters(shopId)
+        }
+
+        clearCounterStockForShop(shopId)
         if (counterStock.isNotEmpty()) insertCounterStock(counterStock)
     }
 
