@@ -1448,6 +1448,14 @@ class CounterPosViewModel(
     }
 
     fun handleUnrecognizedBarcode(barcode: String) {
+        val clean = barcode.trim()
+        if (clean.startsWith("CPR1|") ||
+            clean.startsWith("CPX1.", ignoreCase = true) ||
+            clean.startsWith("CPT1|", ignoreCase = true)
+        ) {
+            handleAdminQrCode(clean)
+            return
+        }
         _uiState.update {
             it.copy(
                 isScannerOpen = false,

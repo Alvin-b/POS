@@ -127,7 +127,7 @@ class CounterPosRepository(
             ?: throw IllegalStateException("Sign in with the account that created this change.")
         val item = dao.blockedOutbox(shop.shopId).firstOrNull { it.operationId == operationId }
             ?: throw IllegalStateException("This saved change is no longer waiting for attention.")
-        check(item.actorUserId == userId) { "Sign in with the account that created this change before retrying it." }
+        check(item.actorUserId == userId || shop.role == "owner") { "Sign in with the account that created this change before retrying it." }
         check(dao.unblockOutboxItem(operationId) == 1) { "Could not retry this saved change." }
         syncPendingOutbox()
         val stillBlocked = dao.blockedOutbox(shop.shopId).firstOrNull { it.operationId == operationId }
@@ -738,7 +738,7 @@ class CounterPosRepository(
 
     private fun isRetryable(error: Throwable): Boolean = when (error) {
         is SupabaseUnauthorizedException -> false
-        is SupabaseHttpException -> error.statusCode == 404 || error.statusCode == 408 || error.statusCode == 429 || error.statusCode >= 500
+        is SupabaseHttpException -> error.statusCode == 300 || error.statusCode == 404 || error.statusCode == 408 || error.statusCode == 429 || error.statusCode >= 500
         else -> error is java.io.IOException
     }
 
@@ -1581,12 +1581,21 @@ class CounterPosRepository(
                 .put("product_id", productId())
                 .put("qty", local.optInt("quantity"))
                 .put("unit_cost", local.optInt("unit_cost"))
-            "add_catalog_product" -> JSONObject()
-                .put("catalog_id", local.optString("catalog_id"))
-                .put("counter_id", local.optString("counter_id"))
-                .put("qty", local.optInt("quantity"))
-                .put("price", local.optInt("price"))
-                .put("unit_cost", local.optInt("unit_cost"))
+            "add_catalog_product" -> {
+                val code = local.optString("product_code")
+                val product = if (code.isNotBlank()) dao.getProductByCode(code) else null
+                JSONObject()
+                    .put("catalog_id", local.optString("catalog_id").ifBlank { product?.remoteId.orEmpty() })
+                    .put("product_code", code)
+                    .put("counter_id", local.optString("counter_id"))
+                    .put("qty", local.optInt("quantity", local.optInt("qty", 1)))
+                    .put("price", local.optInt("price"))
+                    .put("unit_cost", local.optInt("unit_cost"))
+                    .put("name", product?.name.orEmpty())
+                    .put("brand", product?.brand.orEmpty())
+                    .put("size", product?.size.orEmpty())
+                    .put("category", product?.category ?: "Beverage")
+            }
             "register_product" -> JSONObject()
                 .put("code", local.optString("product_code"))
                 .put("name", local.optString("name"))

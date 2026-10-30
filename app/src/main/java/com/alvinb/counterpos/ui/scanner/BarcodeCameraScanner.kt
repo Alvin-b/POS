@@ -704,15 +704,26 @@ private fun handleBarcodeResult(
     onBarcodeAssigned: (String) -> Unit,
     onBarcodeNotRecognized: (String) -> Unit
 ) {
+    val clean = barcode.trim()
+
+    // Detect QR enrollment challenges or passkeys immediately in ANY scanner mode
+    if (clean.startsWith("CPR1|") ||
+        clean.startsWith("CPX1.", ignoreCase = true) ||
+        clean.startsWith("CPT1|", ignoreCase = true)
+    ) {
+        onAdminQrCodeScanned(clean)
+        return
+    }
+
     if (mode == ScannerMode.ADMIN_QR) {
-        onAdminQrCodeScanned(barcode.trim())
+        onAdminQrCodeScanned(clean)
         return
     }
     if (mode == ScannerMode.ASSIGN_BARCODE) {
-        onBarcodeAssigned(barcode.trim())
+        onBarcodeAssigned(clean)
         return
     }
-    val matched = findProductByCodeOrBarcode(barcode, products)
+    val matched = findProductByCodeOrBarcode(clean, products)
     if (matched != null) {
         when (mode) {
             ScannerMode.SELL -> onProductScannedForSale(matched)
@@ -722,6 +733,6 @@ private fun handleBarcodeResult(
             ScannerMode.ASSIGN_BARCODE -> Unit
         }
     } else {
-        onBarcodeNotRecognized(barcode)
+        onBarcodeNotRecognized(clean)
     }
 }

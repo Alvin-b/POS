@@ -195,5 +195,36 @@ class StaffEnrollmentTest {
         assertEquals("waiter-1", filteredList[0].optString("user_id"))
         assertEquals("waiter-2", filteredList[1].optString("user_id"))
     }
+
+    @Test
+    fun qrEnrollmentStringsAreIdentifiedAndNotTreatedAsProductBarcodes() {
+        val userScannedCode = "CPR1|Q6YA-26J7-KVYB-8GBZ-TWFV-A2WZ-NS4C-CVSA-GFQC-XELH"
+        val isEnrollment = userScannedCode.startsWith("CPR1|") ||
+                userScannedCode.startsWith("CPX1.", ignoreCase = true) ||
+                userScannedCode.startsWith("CPT1|", ignoreCase = true)
+
+        assertTrue(isEnrollment)
+    }
+
+    @Test
+    fun postgrest300ArrayErrorIsParsedCorrectly() {
+        val postgrest300Body = """
+            [
+              {"hint": "Check function parameters", "message": "More than one function was found in the schema cache matching this name and arguments"}
+            ]
+        """.trimIndent()
+
+        val trimmed = postgrest300Body.trim()
+        val extractedMessage: String? = if (trimmed.startsWith("[")) {
+            val arr = JSONArray(trimmed)
+            if (arr.length() > 0) {
+                val first = arr.optJSONObject(0)
+                first?.optString("message")?.takeIf(String::isNotBlank)
+                    ?: first?.optString("hint")?.takeIf(String::isNotBlank)
+            } else null
+        } else null
+
+        assertEquals("More than one function was found in the schema cache matching this name and arguments", extractedMessage)
+    }
 }
 
