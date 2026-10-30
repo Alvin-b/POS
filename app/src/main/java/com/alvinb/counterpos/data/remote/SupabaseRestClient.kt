@@ -214,23 +214,43 @@ class SupabaseRestClient(context: Context) {
                 true
             ))
         } catch (e: Exception) {
-            val msg = e.message.orEmpty()
-            if (msg.contains("not found", ignoreCase = true) ||
-                msg.contains("Requested function was not found", ignoreCase = true) ||
-                (e is SupabaseApiException && e.statusCode == 404)
-            ) {
+            if (isMissingEdgeFunction(e)) {
                 // When Edge Function /create-employee-recovery-pass is not deployed on Supabase,
                 // seamlessly fall back to issuing a cashier/waiter access pass for this business.
-                val pass = createAccessPass(shopId, "cashier")
-                val passkey = pass.optString("passkey").trim()
-                JSONObject()
-                    .put("passkey", passkey)
-                    .put("qr_payload", pass.optString("qr_payload").ifBlank { "CPX1.$passkey" })
-                    .put("expires_in_minutes", pass.optInt("expires_in_minutes", 20).coerceAtLeast(1))
+                try {
+                    val pass = createAccessPass(shopId, "cashier")
+                    val passkey = pass.optString("passkey").trim()
+                    require(passkey.isNotBlank()) { "The staff pass service returned an empty passkey." }
+                    JSONObject()
+                        .put("passkey", passkey)
+                        .put("qr_payload", pass.optString("qr_payload").ifBlank { "CPX1.$passkey" })
+                        .put("expires_in_minutes", pass.optInt("expires_in_minutes", 20).coerceAtLeast(1))
+                } catch (fallbackError: Exception) {
+                    if (isMissingEdgeFunction(fallbackError)) {
+                        throw IOException(
+                            "Staff re-enrollment is not enabled on this backend yet. Deploy the create-access-pass and create-employee-recovery-pass functions, then try again.",
+                            fallbackError
+                        )
+                    }
+                    throw fallbackError
+                }
             } else {
                 throw e
             }
         }
+    }
+
+    private fun isMissingEdgeFunction(error: Throwable): Boolean {
+        val messages = generateSequence(error) { it.cause }
+            .mapNotNull { it.message }
+            .toList()
+        return error is SupabaseApiException && error.statusCode == 404 ||
+            messages.any { message ->
+                message.contains("requested function was not found", ignoreCase = true) ||
+                    message.contains("function was not found", ignoreCase = true) ||
+                    message.contains("edge function not found", ignoreCase = true) ||
+                    message.contains("function_not_found", ignoreCase = true)
+            }
     }
 
     suspend fun setEmployeeDisplayName(shopId: String, userId: String, displayName: String): JSONObject =
