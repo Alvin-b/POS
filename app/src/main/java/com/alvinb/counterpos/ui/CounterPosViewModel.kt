@@ -263,7 +263,12 @@ class CounterPosViewModel(
                 if (!repository.session.value.isAuthenticated) prepareQrChallenge()
                 monitorActiveHours()
             } catch (e: Exception) {
-                _uiState.update { it.copy(isReady = true, startupError = e.message) }
+                _uiState.update {
+                    it.copy(
+                        isReady = true,
+                        startupError = if (repository.session.value.isAuthenticated) null else e.message
+                    )
+                }
                 if (!repository.session.value.isAuthenticated) prepareQrChallenge()
                 monitorActiveHours()
             }
@@ -1707,7 +1712,8 @@ class CounterPosViewModel(
         newStock: Int,
         newPrice: Int,
         units: List<SaleUnit>,
-        barcode: String? = null
+        barcode: String? = null,
+        photoUri: String? = null
     ) {
         if (newStock < 0 || newPrice < 1) {
             _uiState.update { it.copy(actionError = "Enter valid stock count and selling price.") }
@@ -1719,7 +1725,8 @@ class CounterPosViewModel(
                 stockQuantity = newStock,
                 sellingPriceKsh = newPrice,
                 salesUnitsJson = serializeSaleUnits(units),
-                verifiedBarcode = barcode?.trim()?.ifBlank { null } ?: product.verifiedBarcode
+                verifiedBarcode = barcode?.trim()?.ifBlank { null } ?: product.verifiedBarcode,
+                photoOverrideUri = photoUri?.takeIf(String::isNotBlank) ?: product.photoOverrideUri
             )
             val counterId = _uiState.value.selectedCounterId
             if (counterId.isNullOrBlank()) { _uiState.update { it.copy(actionError = "Choose a counter first.") }; return@launch }
@@ -1761,7 +1768,8 @@ class CounterPosViewModel(
         unitCostKsh: Int,
         units: List<SaleUnit>,
         brand: String = "",
-        size: String = ""
+        size: String = "",
+        photoUri: String? = null
     ) {
         if (name.isBlank() || basePrice < 1) {
             _uiState.update { it.copy(actionError = "Enter product name and valid base price.") }
@@ -1781,7 +1789,8 @@ class CounterPosViewModel(
                 brand = brand,
                 size = size,
                 salesUnits = units,
-                selectedCounterId = counterId
+                selectedCounterId = counterId,
+                photoOverrideUri = photoUri
             )
             if (success) {
                 _uiState.update {

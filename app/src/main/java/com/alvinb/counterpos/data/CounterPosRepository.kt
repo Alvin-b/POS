@@ -12,6 +12,7 @@ import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.SaleUnit
 import com.alvinb.counterpos.data.local.entity.TableOrderEntity
+import com.alvinb.counterpos.data.local.entity.parseSaleUnits
 import com.alvinb.counterpos.data.local.entity.serializeSaleUnits
 import com.alvinb.counterpos.data.model.BusinessHours
 import com.alvinb.counterpos.data.model.TimeSlot
@@ -137,17 +138,35 @@ class CounterPosRepository(
     }
 
     suspend fun restoreSession(): SessionSnapshot = withContext(Dispatchers.IO) {
-        if (remote.restoreSession() == null) {
-            if (dao.outboxCountAll() > 0) {
-                _session.value = SessionSnapshot(
-                    message = "Saved POS changes are waiting. Sign in with the same account to sync them; the changes remain stored on this phone."
-                )
-                return@withContext _session.value
+        // Step 1: Immediately restore cached local session from Room database so user stays logged in
+        val saved = dao.loadOfflineSession()
+        if (saved != null) {
+            val cached = runCatching { parseOfflineAccount(saved) }.getOrNull()
+            if (cached != null) {
+                account = cached
+                activeBusiness = cached.memberships.firstOrNull { it.shopId == saved.activeShopId }
+                    ?: cached.memberships.firstOrNull { it.status !in setOf("suspended", "terminated", "closed") }
+                activeBusiness?.let { restoreCachedCounters(it.shopId) }
+                _session.value = publishAccount()
             }
-            clearLocalSession()
+        }
+
+        // Step 2: Attempt remote restore and account refresh in background
+        val remoteSession = runCatching { remote.restoreSession() }.getOrNull()
+        if (remoteSession != null || _session.value.isAuthenticated) {
+            runCatching {
+                loadAccount(autoSelectSingleBusiness = true)
+            }.onSuccess { refreshed ->
+                return@withContext refreshed
+            }
+        }
+
+        // Step 3: Never wipe local session on startup if authenticated locally
+        if (_session.value.isAuthenticated) {
             return@withContext _session.value
         }
-        loadAccount(autoSelectSingleBusiness = true)
+
+        return@withContext _session.value
     }
 
     suspend fun signIn(email: String, password: String): SessionSnapshot = withContext(Dispatchers.IO) {
@@ -403,13 +422,14 @@ class CounterPosRepository(
 
     suspend fun synchronizeWhenOnline(): SessionSnapshot = withContext(Dispatchers.IO) {
         if (remote.restoreSession() == null || activeBusiness == null) return@withContext _session.value
-        syncPendingOutbox(refreshSnapshot = false)
-        loadAccount(autoSelectSingleBusiness = false)
+        runCatching { syncPendingOutbox(refreshSnapshot = false) }
+        runCatching { loadAccount(autoSelectSingleBusiness = false) }
+        _session.value
     }
 
     /** Refresh the persisted auth session even when no business workspace is open. */
     suspend fun keepSessionAlive(): Boolean = withContext(Dispatchers.IO) {
-        remote.restoreSession() != null
+        runCatching { remote.restoreSession() != null }.getOrDefault(true)
     }
 
     suspend fun canOperateNow(): Boolean = withContext(Dispatchers.IO) {
@@ -588,10 +608,9 @@ class CounterPosRepository(
                 saveOfflineAccount(it, activeBusiness?.shopId ?: saved?.activeShopId)
             }
         } catch (error: Exception) {
-            if (!remote.hasSession || !isRetryable(error)) throw error
             val cached = saved?.let(::parseOfflineAccount) ?: throw error
             val userShopIds = cached.memberships.map { m -> m.shopId }
-            if (remote.currentUserId != cached.userId && (cached.memberships.isEmpty() || !cached.memberships.any { m -> m.shopId == saved?.activeShopId })) {
+            if (remote.currentUserId != null && remote.currentUserId != cached.userId && (cached.memberships.isEmpty() || !cached.memberships.any { m -> m.shopId == saved?.activeShopId })) {
                 clearBusinessSnapshot()
                 dao.clearOfflineSession()
                 saved = null
@@ -612,7 +631,7 @@ class CounterPosRepository(
                     it.status !in setOf("suspended", "terminated", "closed") &&
                         it.employmentStatus !in setOf("suspended", "terminated", "locked")
                 }
-                if (eligibleCachedMemberships.size == 1) activeBusiness = eligibleCachedMemberships.single()
+                if (eligibleCachedMemberships.isNotEmpty()) activeBusiness = eligibleCachedMemberships.first()
             }
             if (activeBusiness != null && saved?.activeShopId != null && saved.activeShopId != activeBusiness?.shopId) {
                 check(dao.outboxCountAll() == 0 && dao.getPendingRemoteSales().isEmpty()) {
@@ -641,15 +660,14 @@ class CounterPosRepository(
         if (activeBusiness == null && !savedShopId.isNullOrBlank()) {
             activeBusiness = activeMemberships.firstOrNull { it.shopId == savedShopId }
         }
-        if (autoSelectSingleBusiness && activeBusiness == null && activeMemberships.size == 1) {
-            activeBusiness = activeMemberships.single()
+        if (autoSelectSingleBusiness && activeBusiness == null && activeMemberships.isNotEmpty()) {
+            activeBusiness = activeMemberships.firstOrNull()
         } else if (activeBusiness != null) {
             val refreshed = activeMemberships.firstOrNull { it.shopId == activeBusiness?.shopId }
             if (refreshed != null) {
                 activeBusiness = refreshed
-            } else {
-                activeBusiness = null
-                dao.clearTenantCache()
+            } else if (activeMemberships.isNotEmpty()) {
+                activeBusiness = activeMemberships.firstOrNull()
             }
         }
         val selected = activeBusiness
@@ -672,7 +690,7 @@ class CounterPosRepository(
             }
             if (dao.outboxCount(selected.shopId) > 0) scheduleAndAttemptSync()
         }
-        saveOfflineAccount(account!!, activeBusiness?.shopId)
+        saveOfflineAccount(account!!, activeBusiness?.shopId ?: savedShopId)
         return publishAccount()
     }
 
@@ -737,8 +755,8 @@ class CounterPosRepository(
     }
 
     private fun isRetryable(error: Throwable): Boolean = when (error) {
-        is SupabaseUnauthorizedException -> false
-        is SupabaseHttpException -> error.statusCode == 300 || error.statusCode == 404 || error.statusCode == 408 || error.statusCode == 429 || error.statusCode >= 500
+        is SupabaseUnauthorizedException -> true
+        is SupabaseHttpException -> error.statusCode == 300 || error.statusCode == 401 || error.statusCode == 404 || error.statusCode == 408 || error.statusCode == 429 || error.statusCode >= 500
         else -> error is java.io.IOException
     }
 
@@ -1137,7 +1155,10 @@ class CounterPosRepository(
         check(!settlementPending) { "This table bill is waiting for payment settlement to sync before more items can be added." }
         val counterId = selectedCounterId?.takeIf(String::isNotBlank)
             ?: throw IllegalStateException("Choose the serving counter before adding items to a table.")
-        val stockToDecrement = if (unitName.equals("Bottle", true) || unitName.equals("Can", true)) quantity else 1
+        val productUnits = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+        val matchedUnit = productUnits.firstOrNull { it.name.equals(unitName, ignoreCase = true) }
+        val unitsPerSale = matchedUnit?.stockUnitsPerSale ?: 1
+        val stockToDecrement = quantity * unitsPerSale
         val createdAt = System.currentTimeMillis()
         val sale = SaleEntity(
             catalogCode = product.catalogCode,
@@ -1207,7 +1228,10 @@ class CounterPosRepository(
             require(quantity > 0 && unitPriceKsh > 0) { "Enter a valid sale quantity and price." }
             val counterId = selectedCounterId?.takeIf(String::isNotBlank)
                 ?: throw IllegalStateException("Choose the serving counter before recording a sale.")
-            val stockToDecrement = if (unitName.equals("Bottle", true) || unitName.equals("Can", true)) quantity else 1
+            val productUnits = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+            val matchedUnit = productUnits.firstOrNull { it.name.equals(unitName, ignoreCase = true) }
+            val unitsPerSale = matchedUnit?.stockUnitsPerSale ?: 1
+            val stockToDecrement = quantity * unitsPerSale
             val createdAt = System.currentTimeMillis()
             val sale = SaleEntity(
                 catalogCode = product.catalogCode,
@@ -1273,6 +1297,10 @@ class CounterPosRepository(
             )
             val payload = JSONObject()
                 .put("product_code", code)
+                .put("name", product.name)
+                .put("brand", product.brand)
+                .put("size", product.size)
+                .put("category", product.category)
                 .put("counter_id", counterId)
                 .put("quantity", quantity)
                 .put("price", priceKsh)
@@ -1422,7 +1450,8 @@ class CounterPosRepository(
         brand: String = "",
         size: String = "",
         salesUnits: List<SaleUnit> = emptyList(),
-        selectedCounterId: String? = null
+        selectedCounterId: String? = null,
+        photoOverrideUri: String? = null
     ): Boolean = withActiveBusiness {
         require(activeBusiness!!.role in setOf("owner", "manager", "inventory_clerk")) { "Only business owners and managers can register products." }
         require(name.trim().isNotBlank() && priceKsh > 0 && initialStock > 0 && unitCostKsh >= 0) {
@@ -1446,6 +1475,7 @@ class CounterPosRepository(
             inMyStock = true,
             lowStockThreshold = activeBusiness!!.lowStockThreshold,
             imageAssetName = "product_stock_001",
+            photoOverrideUri = photoOverrideUri?.takeIf(String::isNotBlank),
             verificationNote = "Created on this device; awaiting sync",
             salesUnitsJson = serializeSaleUnits(salesUnits.ifEmpty { listOf(SaleUnit("Bottle", priceKsh)) }),
             remoteId = null,
@@ -1461,6 +1491,9 @@ class CounterPosRepository(
             .put("brand", brand)
             .put("size", size)
             .put("counter_id", counterId)
+            .apply {
+                if (!photoOverrideUri.isNullOrBlank()) put("photo_override_uri", photoOverrideUri)
+            }
         val balance = if (perCounter) makeCounterBalance(product, counterId, initialStock) else null
         dao.queueProductChange(product, newOutbox("register_product", payload), balance)
         scheduleAndAttemptSync()

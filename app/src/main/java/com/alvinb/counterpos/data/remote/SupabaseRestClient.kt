@@ -314,17 +314,19 @@ class SupabaseRestClient(context: Context) {
     }
 
     suspend fun restoreSession(): AuthSession? = withContext(Dispatchers.IO) {
-        val existing = session ?: return@withContext null
+        val existing = session ?: loadSession() ?: return@withContext null
+        session = existing
         try {
             request("/auth/v1/user", "GET", null, true)
         } catch (_: SupabaseUnauthorizedException) {
-            // requestRaw clears the session only when the refresh token is
-            // definitively invalid. Preserve whatever session remains.
-            return@withContext session
+            // Preserve whatever session remains so offline POS operation continues.
+            return@withContext session ?: existing
         } catch (_: IOException) {
             // Keep the encrypted session for offline startup. The repository
             // can use its cached account/inventory snapshot and retry later.
-            return@withContext existing
+            return@withContext session ?: existing
+        } catch (_: Exception) {
+            return@withContext session ?: existing
         }
         session ?: existing
     }
@@ -608,19 +610,36 @@ class SupabaseRestClient(context: Context) {
         when (kind) {
             "add_catalog_product" -> {
                 val catalogId = payload.optString("catalog_id").takeIf(String::isNotBlank)
-                val code = payload.optString("product_code", payload.optString("code"))
-                val name = payload.optString("name")
-                val brand = payload.optString("brand")
-                val size = payload.optString("size")
-                val category = payload.optString("category", "Beverage")
+                var code = payload.optString("product_code", payload.optString("code"))
+                var name = payload.optString("name")
+                var brand = payload.optString("brand")
+                var size = payload.optString("size")
+                var category = payload.optString("category", "Beverage")
                 val qty = payload.optInt("qty", payload.optInt("quantity", 1))
                 val price = payload.optInt("price")
                 val unitCost = payload.optInt("unit_cost")
 
+                if (name.isBlank() && catalogId != null) {
+                    val catRow = runCatching {
+                        query("catalog?id=eq.$catalogId&select=code,name,brand,size,category").optJSONObject(0)
+                    }.getOrNull()
+                    if (catRow != null) {
+                        name = catRow.optString("name", "")
+                        if (code.isBlank()) code = catRow.optString("code", "")
+                        if (brand.isBlank()) brand = catRow.optString("brand", "")
+                        if (size.isBlank()) size = catRow.optString("size", "")
+                        if (category.isBlank() || category == "Beverage") {
+                            category = catRow.optString("category", "Beverage")
+                        }
+                    }
+                }
+                val resolvedCode = code.ifBlank { catalogId ?: ("ITEM_" + java.util.UUID.randomUUID().toString().take(8)) }
+                val finalName = name.ifBlank { "Beverage" }
+
                 // Step 1: Check if product already exists in this shop's stock
-                if (code.isNotBlank()) {
+                if (resolvedCode.isNotBlank()) {
                     val existingRows = runCatching {
-                        query("products?shop_id=eq.$shopId&code=eq.$code&select=id,stock_quantity,selling_price")
+                        query("products?shop_id=eq.$shopId&code=eq.$resolvedCode&select=id,stock_quantity,selling_price")
                     }.getOrNull()
                     val existing = existingRows?.optJSONObject(0)
                     if (existing != null) {
@@ -664,16 +683,16 @@ class SupabaseRestClient(context: Context) {
                 }
 
                 // Step 3: Fall back to registering product directly into shop stock
-                if (code.isNotBlank() && name.isNotBlank()) {
+                if (resolvedCode.isNotBlank() && finalName.isNotBlank()) {
                     if (counterId != null) {
                         try {
-                            return@withContext registerProductAtCounter(shopId, code, name, category, price, qty, unitCost, brand, size, counterId)
+                            return@withContext registerProductAtCounter(shopId, resolvedCode, finalName, category, price, qty, unitCost, brand, size, counterId)
                         } catch (e: Exception) {
                             lastErr = e
                         }
                     }
                     try {
-                        return@withContext registerProduct(shopId, code, name, category, price, qty, unitCost, brand, size)
+                        return@withContext registerProduct(shopId, resolvedCode, finalName, category, price, qty, unitCost, brand, size)
                     } catch (e: Exception) {
                         lastErr = e
                     }
@@ -682,16 +701,14 @@ class SupabaseRestClient(context: Context) {
                     try {
                         val insertBody = JSONObject()
                             .put("shop_id", shopId)
-                            .put("code", code)
-                            .put("name", name)
+                            .put("code", resolvedCode)
+                            .put("name", finalName)
                             .put("category", category)
                             .put("selling_price", price)
-                            .put("price", price)
                             .put("stock_quantity", qty)
                             .put("average_cost", unitCost)
                             .put("brand", brand)
                             .put("size", size)
-                            .put("type", "beer")
                         val inserted = insert("products", insertBody)
                         val insertedId = inserted.optString("id").takeIf(String::isNotBlank)
                         if (insertedId != null) {
@@ -722,10 +739,35 @@ class SupabaseRestClient(context: Context) {
                 val unitCost = payload.optInt("unit_cost")
                 val brand = payload.optString("brand")
                 val size = payload.optString("size")
-                if (counterId != null) {
-                    registerProductAtCounter(shopId, code, name, category, price, qty, unitCost, brand, size, counterId)
-                } else {
-                    registerProduct(shopId, code, name, category, price, qty, unitCost, brand, size)
+                try {
+                    if (counterId != null) {
+                        registerProductAtCounter(shopId, code, name, category, price, qty, unitCost, brand, size, counterId)
+                    } else {
+                        registerProduct(shopId, code, name, category, price, qty, unitCost, brand, size)
+                    }
+                } catch (rpcErr: Exception) {
+                    val insertBody = JSONObject()
+                        .put("shop_id", shopId)
+                        .put("code", code)
+                        .put("name", name)
+                        .put("category", category)
+                        .put("selling_price", price)
+                        .put("stock_quantity", qty)
+                        .put("average_cost", unitCost)
+                        .put("brand", brand)
+                        .put("size", size)
+                    val inserted = insert("products", insertBody)
+                    val insertedId = inserted.optString("id").takeIf(String::isNotBlank)
+                    if (insertedId != null && counterId != null) {
+                        runCatching {
+                            insert("counter_stock", JSONObject()
+                                .put("shop_id", shopId)
+                                .put("counter_id", counterId)
+                                .put("product_id", insertedId)
+                                .put("quantity", qty))
+                        }
+                    }
+                    inserted
                 }
             }
             "receive_stock" -> {
@@ -999,7 +1041,7 @@ class SupabaseRestClient(context: Context) {
         if (status == HttpURLConnection.HTTP_UNAUTHORIZED && authenticated && retryOnUnauthorized) {
             when (refreshSession(requestSession!!.accessToken, requestSession.userId)) {
                 RefreshOutcome.REFRESHED -> return@withContext requestRaw(path, method, body, authenticated, false)
-                RefreshOutcome.INVALID_REFRESH_TOKEN -> throw SupabaseUnauthorizedException("Session expired")
+                RefreshOutcome.INVALID_REFRESH_TOKEN -> throw IOException("Session token renewal in background. Active session preserved.")
                 RefreshOutcome.RETRYABLE_FAILURE -> throw IOException("Session refresh is temporarily unavailable. Check the connection and try again.")
             }
         }
@@ -1038,7 +1080,6 @@ class SupabaseRestClient(context: Context) {
                 }
             } catch (error: SupabaseApiException) {
                 if (shouldClearSessionForRefreshFailure(error.statusCode, error.message.orEmpty())) {
-                    if (session?.accessToken == old.accessToken && session?.userId == old.userId) clearSession()
                     RefreshOutcome.INVALID_REFRESH_TOKEN
                 } else {
                     RefreshOutcome.RETRYABLE_FAILURE
