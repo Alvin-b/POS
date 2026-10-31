@@ -1761,10 +1761,12 @@ class CounterPosViewModel(
         unitCostKsh: Int,
         units: List<SaleUnit>,
         brand: String = "",
-        size: String = ""
+        size: String = "",
+        photoOverrideUri: String? = null
     ) {
-        if (name.isBlank() || basePrice < 1) {
-            _uiState.update { it.copy(actionError = "Enter product name and valid base price.") }
+        val effectivePrice = basePrice.takeIf { it > 0 } ?: units.firstOrNull()?.priceKsh ?: 0
+        if (name.isBlank() || effectivePrice < 1 || initialStock < 1) {
+            _uiState.update { it.copy(actionError = "Enter product name, opening stock, and at least one valid price.") }
             return
         }
         viewModelScope.launch {
@@ -1775,12 +1777,13 @@ class CounterPosViewModel(
                 barcode = code,
                 name = name.trim(),
                 category = category.trim().ifBlank { "Local Liquor" },
-                priceKsh = basePrice,
-                initialStock = initialStock.coerceAtLeast(0),
+                priceKsh = effectivePrice,
+                initialStock = initialStock,
                 unitCostKsh = unitCostKsh,
                 brand = brand,
                 size = size,
                 salesUnits = units,
+                photoOverrideUri = photoOverrideUri,
                 selectedCounterId = counterId
             )
             if (success) {

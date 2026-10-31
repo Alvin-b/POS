@@ -999,7 +999,9 @@ class SupabaseRestClient(context: Context) {
         if (status == HttpURLConnection.HTTP_UNAUTHORIZED && authenticated && retryOnUnauthorized) {
             when (refreshSession(requestSession!!.accessToken, requestSession.userId)) {
                 RefreshOutcome.REFRESHED -> return@withContext requestRaw(path, method, body, authenticated, false)
-                RefreshOutcome.INVALID_REFRESH_TOKEN -> throw SupabaseUnauthorizedException("Session expired")
+                // Keep the encrypted session even when Supabase rejects a refresh token.
+                // A temporary auth issue must not silently log the operator out.
+                RefreshOutcome.INVALID_REFRESH_TOKEN -> throw SupabaseUnauthorizedException("Authentication needs to be restored")
                 RefreshOutcome.RETRYABLE_FAILURE -> throw IOException("Session refresh is temporarily unavailable. Check the connection and try again.")
             }
         }
@@ -1038,7 +1040,9 @@ class SupabaseRestClient(context: Context) {
                 }
             } catch (error: SupabaseApiException) {
                 if (shouldClearSessionForRefreshFailure(error.statusCode, error.message.orEmpty())) {
-                    if (session?.accessToken == old.accessToken && session?.userId == old.userId) clearSession()
+                    // Never clear persisted credentials automatically. Refresh-token
+                    // rotation, clock skew, or a transient auth deployment issue should
+                    // not force an unexpected logout.
                     RefreshOutcome.INVALID_REFRESH_TOKEN
                 } else {
                     RefreshOutcome.RETRYABLE_FAILURE

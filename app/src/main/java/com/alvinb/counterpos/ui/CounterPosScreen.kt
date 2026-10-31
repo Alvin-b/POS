@@ -178,6 +178,7 @@ fun CounterPosWorkspace(
     val keyboardController = LocalSoftwareKeyboardController.current
     val snackbarHostState = remember { SnackbarHostState() }
     var photoTargetCode by remember { mutableStateOf<String?>(null) }
+    var newProductPhotoUri by remember { mutableStateOf<String?>(null) }
     var transferProductCode by remember { mutableStateOf<String?>(null) }
     var pendingSalesPdf by remember { mutableStateOf<ByteArray?>(null) }
 
@@ -194,6 +195,13 @@ fun CounterPosWorkspace(
             products.firstOrNull { it.catalogCode == code }?.let { product ->
                 viewModel.updatePhoto(product, uri.toString())
             }
+        }
+    }
+
+    val newProductPhotoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            newProductPhotoUri = uri.toString()
         }
     }
 
@@ -679,14 +687,17 @@ fun CounterPosWorkspace(
     if (state.isAddingNewProduct) {
         AddNewProductDialog(
             prefilledBarcode = state.prefilledBarcode,
+            photoUri = newProductPhotoUri,
             error = state.actionError,
             onDismiss = viewModel::dismissAddNewProduct,
+            onPickPhoto = { newProductPhotoPicker.launch(arrayOf("image/*")) },
             onScanBarcode = {
                 viewModel.dismissAddNewProduct()
                 viewModel.openScanner(ScannerMode.TAKE_STOCK)
             },
             onConfirm = { name, barcode, cat, price, stock, unitCost, units ->
-                viewModel.confirmCreateProduct(name, barcode, cat, price, stock, unitCost, units)
+                viewModel.confirmCreateProduct(name, barcode, cat, price, stock, unitCost, units, photoOverrideUri = newProductPhotoUri)
+                newProductPhotoUri = null
             }
         )
     }
@@ -3098,31 +3109,28 @@ private fun EditProductDialog(
 @Composable
 private fun AddNewProductDialog(
     prefilledBarcode: String?,
+    photoUri: String?,
     error: String?,
     onDismiss: () -> Unit,
+    onPickPhoto: () -> Unit,
     onScanBarcode: () -> Unit,
     onConfirm: (name: String, barcode: String, category: String, price: Int, stock: Int, unitCost: Int, units: List<SaleUnit>) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var barcode by remember(prefilledBarcode) { mutableStateOf(prefilledBarcode.orEmpty()) }
     var selectedCategory by remember { mutableStateOf("Local Liquor") }
-    var stockText by remember { mutableStateOf("12") }
-    var basePriceText by remember { mutableStateOf("250") }
+    var stockText by remember { mutableStateOf("") }
+    var basePriceText by remember { mutableStateOf("") }
     var unitCostText by remember { mutableStateOf("") }
 
     val categories = listOf("Local Liquor", "Beer", "Spirit", "Cider", "RTD", "Wine", "Soft Drink", "Water")
 
     // Default units of sale (e.g. Bottle, and optional Cup & Glass for liquor)
-    val unitsList = remember {
-        mutableStateListOf(
-            SaleUnit("Bottle", 250),
-            SaleUnit("Glass", 70),
-            SaleUnit("Cup", 35)
-        )
-    }
+    val unitsList = remember { mutableStateListOf<SaleUnit>() }
 
     var extraUnitName by remember { mutableStateOf("") }
     var extraUnitPriceText by remember { mutableStateOf("") }
+    var extraUnitStockText by remember { mutableStateOf("1") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -3135,6 +3143,17 @@ private fun AddNewProductDialog(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
             ) {
+                OutlinedButton(
+                    onClick = onPickPhoto,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                ) {
+                    Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (photoUri.isNullOrBlank()) "Set product picture" else "Change product picture")
+                }
+                if (!photoUri.isNullOrBlank()) {
+                    Text("Picture selected", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                }
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -3197,7 +3216,7 @@ private fun AddNewProductDialog(
                     OutlinedTextField(
                         value = stockText,
                         onValueChange = { stockText = it.filter(Char::isDigit) },
-                        label = { Text("Initial Stock (Bottles)") },
+                        label = { Text("Initial Stock (base units)") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(1f)
@@ -3212,7 +3231,7 @@ private fun AddNewProductDialog(
                                 unitsList[0] = unitsList[0].copy(priceKsh = p)
                             }
                         },
-                        label = { Text("Bottle Price (KSh)") },
+                        label = { Text("Base Price (KSh)") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(1f)
@@ -3251,7 +3270,7 @@ private fun AddNewProductDialog(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            "${unit.name} · ${ksh(unit.priceKsh)}",
+                            "${unit.name} · ${ksh(unit.priceKsh)} · uses ${unit.stockUnitsPerSale} stock",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Medium
                         )
@@ -3288,16 +3307,27 @@ private fun AddNewProductDialog(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(0.9f)
                     )
+                    OutlinedTextField(
+                        value = extraUnitStockText,
+                        onValueChange = { extraUnitStockText = it.filter(Char::isDigit) },
+                        placeholder = { Text("Stock", fontSize = 11.sp) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(0.65f)
+                    )
                     IconButton(
                         onClick = {
                             val p = extraUnitPriceText.toIntOrNull() ?: 0
-                            if (extraUnitName.isNotBlank() && p > 0) {
-                                unitsList.add(SaleUnit(extraUnitName.trim(), p))
+                            val stockUnits = extraUnitStockText.toIntOrNull() ?: 0
+                            if (extraUnitName.isNotBlank() && p > 0 && stockUnits > 0) {
+                                unitsList.add(SaleUnit(extraUnitName.trim(), p, stockUnits))
                                 extraUnitName = ""
                                 extraUnitPriceText = ""
+                                extraUnitStockText = "1"
                             }
                         },
-                        enabled = extraUnitName.isNotBlank() && (extraUnitPriceText.toIntOrNull() ?: 0) > 0
+                        enabled = extraUnitName.isNotBlank() && (extraUnitPriceText.toIntOrNull() ?: 0) > 0 &&
+                            (extraUnitStockText.toIntOrNull() ?: 0) > 0
                     ) {
                         Icon(Icons.Default.Add, contentDescription = "Add unit", tint = MaterialTheme.colorScheme.primary)
                     }
@@ -3311,12 +3341,13 @@ private fun AddNewProductDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val p = basePriceText.toIntOrNull() ?: 0
+                    val p = basePriceText.toIntOrNull() ?: unitsList.firstOrNull()?.priceKsh ?: 0
                     val s = stockText.toIntOrNull() ?: 0
                     val cost = unitCostText.toIntOrNull() ?: 0
                     onConfirm(name.trim(), barcode.trim(), selectedCategory, p, s, cost, unitsList.toList())
                 },
-                enabled = name.isNotBlank() && (basePriceText.toIntOrNull() ?: 0) > 0,
+                enabled = name.isNotBlank() && (stockText.toIntOrNull() ?: 0) > 0 &&
+                    ((basePriceText.toIntOrNull() ?: 0) > 0 || unitsList.any { it.priceKsh > 0 }),
                 modifier = Modifier.testTag("confirm_create_product_button")
             ) {
                 Text("Save & Add to Stock")

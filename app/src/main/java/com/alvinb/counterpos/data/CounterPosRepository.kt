@@ -1137,7 +1137,9 @@ class CounterPosRepository(
         check(!settlementPending) { "This table bill is waiting for payment settlement to sync before more items can be added." }
         val counterId = selectedCounterId?.takeIf(String::isNotBlank)
             ?: throw IllegalStateException("Choose the serving counter before adding items to a table.")
-        val stockToDecrement = if (unitName.equals("Bottle", true) || unitName.equals("Can", true)) quantity else 1
+        val configuredUnit = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+            .firstOrNull { it.name.equals(unitName, ignoreCase = true) }
+        val stockToDecrement = (configuredUnit?.stockUnitsPerSale ?: if (unitName.equals("Bottle", true) || unitName.equals("Can", true)) 1 else 1) * quantity
         val createdAt = System.currentTimeMillis()
         val sale = SaleEntity(
             catalogCode = product.catalogCode,
@@ -1207,7 +1209,9 @@ class CounterPosRepository(
             require(quantity > 0 && unitPriceKsh > 0) { "Enter a valid sale quantity and price." }
             val counterId = selectedCounterId?.takeIf(String::isNotBlank)
                 ?: throw IllegalStateException("Choose the serving counter before recording a sale.")
-            val stockToDecrement = if (unitName.equals("Bottle", true) || unitName.equals("Can", true)) quantity else 1
+            val configuredUnit = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+                .firstOrNull { it.name.equals(unitName, ignoreCase = true) }
+            val stockToDecrement = (configuredUnit?.stockUnitsPerSale ?: if (unitName.equals("Bottle", true) || unitName.equals("Can", true)) 1 else 1) * quantity
             val createdAt = System.currentTimeMillis()
             val sale = SaleEntity(
                 catalogCode = product.catalogCode,
@@ -1422,6 +1426,7 @@ class CounterPosRepository(
         brand: String = "",
         size: String = "",
         salesUnits: List<SaleUnit> = emptyList(),
+        photoOverrideUri: String? = null,
         selectedCounterId: String? = null
     ): Boolean = withActiveBusiness {
         require(activeBusiness!!.role in setOf("owner", "manager", "inventory_clerk")) { "Only business owners and managers can register products." }
@@ -1446,6 +1451,7 @@ class CounterPosRepository(
             inMyStock = true,
             lowStockThreshold = activeBusiness!!.lowStockThreshold,
             imageAssetName = "product_stock_001",
+            photoOverrideUri = photoOverrideUri,
             verificationNote = "Created on this device; awaiting sync",
             salesUnitsJson = serializeSaleUnits(salesUnits.ifEmpty { listOf(SaleUnit("Bottle", priceKsh)) }),
             remoteId = null,
