@@ -27,9 +27,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -734,7 +734,7 @@ internal fun TablesScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
-                    contentPadding = PaddingValues(bottom = 24.dp),
+                    contentPadding = PaddingValues(bottom = 32.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     items(matches, key = { it.catalogCode }) { product ->
@@ -1310,92 +1310,76 @@ internal fun TablesScreen(
                     }
                 }
 
-                // Running Total Bar
+                // Unified Compact Footer: Running Total & Actions
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 4.dp)
+                        .padding(top = 4.dp, bottom = 4.dp)
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
-                            Text("Running Check Total", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("${currentOrders.size} served line${if (currentOrders.size == 1) "" else "s"}", fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Check Total", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                ksh(tableTotal),
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Black,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                "${currentOrders.size} item${if (currentOrders.size == 1) "" else "s"}",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
-                        Text(ksh(tableTotal), fontSize = 22.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
-                    }
-                }
-
-                // Settle Bill Action (if bill is open)
-                if (canSettleTables && currentOrders.isNotEmpty()) {
-                    Button(
-                        onClick = { selectedPaymentMethod = "cash"; showSettlementDialog = true },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .testTag("settle_bill_button"),
-                        enabled = !isSettlingTable,
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        if (isSettlingTable) {
-                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        } else {
-                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Text("Close & Settle Bill · ${ksh(tableTotal)}", modifier = Modifier.padding(start = 6.dp), fontWeight = FontWeight.Bold)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = onScanProduct,
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                modifier = Modifier.testTag("scan_barcode_table_button")
+                            ) {
+                                Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Text("Scan", fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp))
+                            }
+                            Button(
+                                onClick = { productQuery = ""; showProductPicker = true },
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                modifier = Modifier.testTag("add_product_to_table_button")
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Text("Add Item", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp))
+                            }
+                            if (canSettleTables && currentOrders.isNotEmpty()) {
+                                Button(
+                                    onClick = { selectedPaymentMethod = "cash"; showSettlementDialog = true },
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                    enabled = !isSettlingTable,
+                                    modifier = Modifier.testTag("settle_bill_button")
+                                ) {
+                                    if (isSettlingTable) {
+                                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                                    } else {
+                                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Text("Settle", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp))
+                                    }
+                                }
+                            }
                         }
-                    }
-                }
-
-                // Primary Bottom Controls: Add Items, Scan Barcode, Print Receipt
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = { productQuery = ""; showProductPicker = true },
-                        modifier = Modifier
-                            .weight(1.2f)
-                            .testTag("add_product_to_table_button"),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Text("Add Item", modifier = Modifier.padding(start = 4.dp), fontWeight = FontWeight.Bold)
-                    }
-
-                    OutlinedButton(
-                        onClick = onScanProduct,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("scan_barcode_table_button"),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Text("Scan", modifier = Modifier.padding(start = 4.dp))
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            receiptOrdersToPreview = currentOrders
-                            receiptPaymentMethod = null
-                            showReceiptPreviewDialog = true
-                        },
-                        enabled = currentOrders.isNotEmpty(),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("print_table_button"),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(Icons.Default.Print, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Text("Print", modifier = Modifier.padding(start = 4.dp))
                     }
                 }
             } else {

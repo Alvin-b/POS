@@ -9,6 +9,7 @@ import android.net.Uri
 import androidx.core.content.FileProvider
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -178,7 +179,6 @@ fun CounterPosWorkspace(
     val keyboardController = LocalSoftwareKeyboardController.current
     val snackbarHostState = remember { SnackbarHostState() }
     var photoTargetCode by remember { mutableStateOf<String?>(null) }
-    var newProductPhotoUri by remember { mutableStateOf<String?>(null) }
     var transferProductCode by remember { mutableStateOf<String?>(null) }
     var pendingSalesPdf by remember { mutableStateOf<ByteArray?>(null) }
 
@@ -195,13 +195,6 @@ fun CounterPosWorkspace(
             products.firstOrNull { it.catalogCode == code }?.let { product ->
                 viewModel.updatePhoto(product, uri.toString())
             }
-        }
-    }
-
-    val newProductPhotoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-            newProductPhotoUri = uri.toString()
         }
     }
 
@@ -672,8 +665,8 @@ fun CounterPosWorkspace(
                 product = product,
                 error = state.actionError,
                 onDismiss = viewModel::dismissEditProduct,
-                onConfirm = { name, stock, price, units, barcode ->
-                    viewModel.confirmEditProduct(product, name, stock, price, units, barcode)
+                onConfirm = { name, stock, price, units, barcode, photoUri ->
+                    viewModel.confirmEditProduct(product, name, stock, price, units, barcode, photoUri)
                 },
                 onScanBarcode = {
                     viewModel.dismissEditProduct()
@@ -687,17 +680,14 @@ fun CounterPosWorkspace(
     if (state.isAddingNewProduct) {
         AddNewProductDialog(
             prefilledBarcode = state.prefilledBarcode,
-            photoUri = newProductPhotoUri,
             error = state.actionError,
             onDismiss = viewModel::dismissAddNewProduct,
-            onPickPhoto = { newProductPhotoPicker.launch(arrayOf("image/*")) },
             onScanBarcode = {
                 viewModel.dismissAddNewProduct()
                 viewModel.openScanner(ScannerMode.TAKE_STOCK)
             },
-            onConfirm = { name, barcode, cat, price, stock, unitCost, units ->
-                viewModel.confirmCreateProduct(name, barcode, cat, price, stock, unitCost, units, photoOverrideUri = newProductPhotoUri)
-                newProductPhotoUri = null
+            onConfirm = { name, barcode, cat, price, stock, unitCost, units, photoUri ->
+                viewModel.confirmCreateProduct(name, barcode, cat, price, stock, unitCost, units, photoUri = photoUri)
             }
         )
     }
@@ -2905,13 +2895,24 @@ private fun EditProductDialog(
     product: ProductEntity,
     error: String?,
     onDismiss: () -> Unit,
-    onConfirm: (name: String, stock: Int, price: Int, units: List<SaleUnit>, barcode: String?) -> Unit,
+    onConfirm: (name: String, stock: Int, price: Int, units: List<SaleUnit>, barcode: String?, photoUri: String?) -> Unit,
     onScanBarcode: () -> Unit
 ) {
     var name by remember(product.catalogCode) { mutableStateOf(product.name) }
     var barcodeText by remember(product.catalogCode) { mutableStateOf(product.verifiedBarcode ?: "") }
     var stockText by remember(product.catalogCode) { mutableStateOf(product.stockQuantity.toString()) }
     var priceText by remember(product.catalogCode) { mutableStateOf(product.sellingPriceKsh.toString()) }
+    var selectedPhotoUri by remember(product.catalogCode) {
+        mutableStateOf(product.photoOverrideUri?.takeIf(String::isNotBlank))
+    }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            selectedPhotoUri = uri.toString()
+        }
+    }
 
     val initialUnits = remember(product.catalogCode) {
         parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
@@ -2922,6 +2923,9 @@ private fun EditProductDialog(
 
     var newUnitName by remember { mutableStateOf("") }
     var newUnitPriceText by remember { mutableStateOf("") }
+    var newUnitStockUnitsText by remember { mutableStateOf("1") }
+
+    val quickUnits = listOf("Cup", "Glass", "Bottle", "Barrel", "Jug", "Tot", "Jerrican")
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -2934,6 +2938,72 @@ private fun EditProductDialog(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
             ) {
+                // Product Photo Section
+                Text(
+                    "Product Photo:",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    if (!selectedPhotoUri.isNullOrBlank()) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(selectedPhotoUri)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = "Product photo",
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.PhotoCamera,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        OutlinedButton(
+                            onClick = {
+                                photoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (selectedPhotoUri.isNullOrBlank()) "Set Product Photo" else "Change Photo", fontSize = 12.sp)
+                        }
+                        if (!selectedPhotoUri.isNullOrBlank()) {
+                            TextButton(
+                                onClick = { selectedPhotoUri = null },
+                                modifier = Modifier.align(Alignment.End)
+                            ) {
+                                Text("Remove Photo", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                }
+
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -2972,6 +3042,7 @@ private fun EditProductDialog(
                         value = stockText,
                         onValueChange = { stockText = it.filter(Char::isDigit) },
                         label = { Text("Shelf Stock") },
+                        supportingText = { Text("Base units", fontSize = 10.sp) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(1f)
@@ -2981,6 +3052,7 @@ private fun EditProductDialog(
                         value = priceText,
                         onValueChange = { priceText = it.filter(Char::isDigit) },
                         label = { Text("Base Price (KSh)") },
+                        supportingText = { Text("Main unit price", fontSize = 10.sp) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(1f)
@@ -2994,7 +3066,7 @@ private fun EditProductDialog(
                     fontSize = 13.sp
                 )
                 Text(
-                    "How you sell this drink (e.g. Bottle, Glass, Cup)",
+                    "How you sell this drink (e.g. Cup, Glass, Jug, Bottle, Barrel). For bulk liquor, set how many stock units each sale consumes.",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -3009,6 +3081,7 @@ private fun EditProductDialog(
                     Spacer(Modifier.width(6.dp))
                     Text(if (barcodeText.isBlank()) "Scan Barcode with Camera" else "Rescan Barcode")
                 }
+
                 // List of units
                 unitsList.forEachIndexed { index, unit ->
                     Row(
@@ -3018,11 +3091,20 @@ private fun EditProductDialog(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(
-                            "${unit.name} · ${ksh(unit.priceKsh)}",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "${unit.name} · ${ksh(unit.priceKsh)}",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            if (unit.stockUnitsPerSale > 1) {
+                                Text(
+                                    "Consumes ${unit.stockUnitsPerSale} stock units per sale",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
                         IconButton(
                             onClick = { if (unitsList.size > 1) unitsList.removeAt(index) },
                             enabled = unitsList.size > 1,
@@ -3033,20 +3115,46 @@ private fun EditProductDialog(
                     }
                 }
 
+                // Quick Unit chips
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    quickUnits.forEach { unitLabel ->
+                        FilterChip(
+                            selected = newUnitName.equals(unitLabel, ignoreCase = true),
+                            onClick = {
+                                newUnitName = unitLabel
+                                if (unitLabel.equals("Barrel", ignoreCase = true)) {
+                                    newUnitStockUnitsText = "100"
+                                } else if (unitLabel.equals("Jug", ignoreCase = true)) {
+                                    newUnitStockUnitsText = "5"
+                                } else {
+                                    newUnitStockUnitsText = "1"
+                                }
+                            },
+                            label = { Text(unitLabel, fontSize = 11.sp) }
+                        )
+                    }
+                }
+
                 // Add another unit
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 8.dp),
+                        .padding(top = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     OutlinedTextField(
                         value = newUnitName,
                         onValueChange = { newUnitName = it },
-                        placeholder = { Text("e.g. Glass, Cup", fontSize = 11.sp) },
+                        placeholder = { Text("Unit name", fontSize = 11.sp) },
                         singleLine = true,
-                        modifier = Modifier.weight(1.2f)
+                        modifier = Modifier.weight(1.1f)
                     )
                     OutlinedTextField(
                         value = newUnitPriceText,
@@ -3056,13 +3164,23 @@ private fun EditProductDialog(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(0.9f)
                     )
+                    OutlinedTextField(
+                        value = newUnitStockUnitsText,
+                        onValueChange = { newUnitStockUnitsText = it.filter(Char::isDigit) },
+                        placeholder = { Text("Units", fontSize = 11.sp) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(0.7f)
+                    )
                     IconButton(
                         onClick = {
                             val p = newUnitPriceText.toIntOrNull() ?: 0
+                            val stockUnits = newUnitStockUnitsText.toIntOrNull()?.coerceAtLeast(1) ?: 1
                             if (newUnitName.isNotBlank() && p > 0) {
-                                unitsList.add(SaleUnit(newUnitName.trim(), p))
+                                unitsList.add(SaleUnit(newUnitName.trim(), p, stockUnits))
                                 newUnitName = ""
                                 newUnitPriceText = ""
+                                newUnitStockUnitsText = "1"
                             }
                         },
                         enabled = newUnitName.isNotBlank() && (newUnitPriceText.toIntOrNull() ?: 0) > 0
@@ -3084,7 +3202,7 @@ private fun EditProductDialog(
                     if (unitsList.isEmpty()) {
                         unitsList.add(SaleUnit("Bottle", p))
                     }
-                    onConfirm(name.trim(), s, p, unitsList.toList(), barcodeText.trim().ifBlank { null })
+                    onConfirm(name.trim(), s, p, unitsList.toList(), barcodeText.trim().ifBlank { null }, selectedPhotoUri)
                 },
                 enabled = name.isNotBlank() && (priceText.toIntOrNull() ?: 0) > 0
             ) {
@@ -3109,12 +3227,10 @@ private fun EditProductDialog(
 @Composable
 private fun AddNewProductDialog(
     prefilledBarcode: String?,
-    photoUri: String?,
     error: String?,
     onDismiss: () -> Unit,
-    onPickPhoto: () -> Unit,
     onScanBarcode: () -> Unit,
-    onConfirm: (name: String, barcode: String, category: String, price: Int, stock: Int, unitCost: Int, units: List<SaleUnit>) -> Unit
+    onConfirm: (name: String, barcode: String, category: String, price: Int, stock: Int, unitCost: Int, units: List<SaleUnit>, photoUri: String?) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var barcode by remember(prefilledBarcode) { mutableStateOf(prefilledBarcode.orEmpty()) }
@@ -3122,15 +3238,25 @@ private fun AddNewProductDialog(
     var stockText by remember { mutableStateOf("") }
     var basePriceText by remember { mutableStateOf("") }
     var unitCostText by remember { mutableStateOf("") }
+    var selectedPhotoUri by remember { mutableStateOf<String?>(null) }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            selectedPhotoUri = uri.toString()
+        }
+    }
 
     val categories = listOf("Local Liquor", "Beer", "Spirit", "Cider", "RTD", "Wine", "Soft Drink", "Water")
+    val quickUnits = listOf("Cup", "Glass", "Bottle", "Barrel", "Jug", "Tot", "Jerrican")
 
-    // Default units of sale (e.g. Bottle, and optional Cup & Glass for liquor)
+    // Empty initial units of sale - user defines their own prices and units
     val unitsList = remember { mutableStateListOf<SaleUnit>() }
 
     var extraUnitName by remember { mutableStateOf("") }
     var extraUnitPriceText by remember { mutableStateOf("") }
-    var extraUnitStockText by remember { mutableStateOf("1") }
+    var extraStockUnitsText by remember { mutableStateOf("1") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -3143,17 +3269,72 @@ private fun AddNewProductDialog(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
             ) {
-                OutlinedButton(
-                    onClick = onPickPhoto,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                // Product Photo Section
+                Text(
+                    "Product Photo:",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(if (photoUri.isNullOrBlank()) "Set product picture" else "Change product picture")
+                    if (!selectedPhotoUri.isNullOrBlank()) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(selectedPhotoUri)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = "Product photo",
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.PhotoCamera,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        OutlinedButton(
+                            onClick = {
+                                photoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (selectedPhotoUri.isNullOrBlank()) "Set Product Photo" else "Change Photo", fontSize = 12.sp)
+                        }
+                        if (!selectedPhotoUri.isNullOrBlank()) {
+                            TextButton(
+                                onClick = { selectedPhotoUri = null },
+                                modifier = Modifier.align(Alignment.End)
+                            ) {
+                                Text("Remove Photo", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
                 }
-                if (!photoUri.isNullOrBlank()) {
-                    Text("Picture selected", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
-                }
+
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -3207,6 +3388,29 @@ private fun AddNewProductDialog(
                     }
                 }
 
+                // Helpful tip for bulk drinks / barrels
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp, bottom = 4.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f)
+                ) {
+                    Column(modifier = Modifier.padding(8.dp)) {
+                        Text(
+                            "Bulk Liquor / Barrel Tip:",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            "For drinks received in barrels or drums, enter your opening stock in your primary dispensing count (e.g. 100 cups). You can then sell single cups (1 stock unit), jugs (e.g. 5 stock units), or full barrels.",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -3216,7 +3420,8 @@ private fun AddNewProductDialog(
                     OutlinedTextField(
                         value = stockText,
                         onValueChange = { stockText = it.filter(Char::isDigit) },
-                        label = { Text("Initial Stock (base units)") },
+                        label = { Text("Opening Stock") },
+                        placeholder = { Text("e.g. 50 cups") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(1f)
@@ -3232,6 +3437,7 @@ private fun AddNewProductDialog(
                             }
                         },
                         label = { Text("Base Price (KSh)") },
+                        placeholder = { Text("e.g. 50") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(1f)
@@ -3250,15 +3456,41 @@ private fun AddNewProductDialog(
 
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    "Configure Units of Sales:",
+                    "Configure Units of Sale:",
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 13.sp
                 )
                 Text(
-                    "Products like local liquor are sold in cups, glass & bottles. Set their prices below:",
+                    "Set your selling units (e.g. Cup, Glass, Jug, Bottle, Barrel). Set how many stock units each sale consumes:",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+
+                // Quick Unit chips
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    quickUnits.forEach { unitLabel ->
+                        FilterChip(
+                            selected = extraUnitName.equals(unitLabel, ignoreCase = true),
+                            onClick = {
+                                extraUnitName = unitLabel
+                                if (unitLabel.equals("Barrel", ignoreCase = true)) {
+                                    extraStockUnitsText = "100"
+                                } else if (unitLabel.equals("Jug", ignoreCase = true)) {
+                                    extraStockUnitsText = "5"
+                                } else {
+                                    extraStockUnitsText = "1"
+                                }
+                            },
+                            label = { Text(unitLabel, fontSize = 11.sp) }
+                        )
+                    }
+                }
 
                 // Units List
                 unitsList.forEachIndexed { index, unit ->
@@ -3269,14 +3501,22 @@ private fun AddNewProductDialog(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(
-                            "${unit.name} · ${ksh(unit.priceKsh)} · uses ${unit.stockUnitsPerSale} stock",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "${unit.name} · ${ksh(unit.priceKsh)}",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            if (unit.stockUnitsPerSale > 1) {
+                                Text(
+                                    "Consumes ${unit.stockUnitsPerSale} stock units per sale",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
                         IconButton(
-                            onClick = { if (unitsList.size > 1) unitsList.removeAt(index) },
-                            enabled = unitsList.size > 1,
+                            onClick = { unitsList.removeAt(index) },
                             modifier = Modifier.size(28.dp)
                         ) {
                             Icon(Icons.Default.Delete, contentDescription = "Remove unit", modifier = Modifier.size(16.dp))
@@ -3295,39 +3535,38 @@ private fun AddNewProductDialog(
                     OutlinedTextField(
                         value = extraUnitName,
                         onValueChange = { extraUnitName = it },
-                        placeholder = { Text("Unit name (e.g. Tot)", fontSize = 11.sp) },
+                        placeholder = { Text("Unit (e.g. Cup)", fontSize = 11.sp) },
                         singleLine = true,
-                        modifier = Modifier.weight(1.2f)
+                        modifier = Modifier.weight(1.1f)
                     )
                     OutlinedTextField(
                         value = extraUnitPriceText,
                         onValueChange = { extraUnitPriceText = it.filter(Char::isDigit) },
-                        placeholder = { Text("Price KSh", fontSize = 11.sp) },
+                        placeholder = { Text("KSh", fontSize = 11.sp) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(0.9f)
                     )
                     OutlinedTextField(
-                        value = extraUnitStockText,
-                        onValueChange = { extraUnitStockText = it.filter(Char::isDigit) },
-                        placeholder = { Text("Stock", fontSize = 11.sp) },
+                        value = extraStockUnitsText,
+                        onValueChange = { extraStockUnitsText = it.filter(Char::isDigit) },
+                        placeholder = { Text("Units", fontSize = 11.sp) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.weight(0.65f)
+                        modifier = Modifier.weight(0.7f)
                     )
                     IconButton(
                         onClick = {
                             val p = extraUnitPriceText.toIntOrNull() ?: 0
-                            val stockUnits = extraUnitStockText.toIntOrNull() ?: 0
-                            if (extraUnitName.isNotBlank() && p > 0 && stockUnits > 0) {
+                            val stockUnits = extraStockUnitsText.toIntOrNull()?.coerceAtLeast(1) ?: 1
+                            if (extraUnitName.isNotBlank() && p > 0) {
                                 unitsList.add(SaleUnit(extraUnitName.trim(), p, stockUnits))
                                 extraUnitName = ""
                                 extraUnitPriceText = ""
-                                extraUnitStockText = "1"
+                                extraStockUnitsText = "1"
                             }
                         },
-                        enabled = extraUnitName.isNotBlank() && (extraUnitPriceText.toIntOrNull() ?: 0) > 0 &&
-                            (extraUnitStockText.toIntOrNull() ?: 0) > 0
+                        enabled = extraUnitName.isNotBlank() && (extraUnitPriceText.toIntOrNull() ?: 0) > 0
                     ) {
                         Icon(Icons.Default.Add, contentDescription = "Add unit", tint = MaterialTheme.colorScheme.primary)
                     }
@@ -3341,13 +3580,18 @@ private fun AddNewProductDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val p = basePriceText.toIntOrNull() ?: unitsList.firstOrNull()?.priceKsh ?: 0
+                    val p = basePriceText.toIntOrNull() ?: 0
                     val s = stockText.toIntOrNull() ?: 0
                     val cost = unitCostText.toIntOrNull() ?: 0
-                    onConfirm(name.trim(), barcode.trim(), selectedCategory, p, s, cost, unitsList.toList())
+                    val finalUnits = if (unitsList.isEmpty()) {
+                        val defaultUnitName = if (selectedCategory == "Local Liquor") "Cup" else "Bottle"
+                        listOf(SaleUnit(defaultUnitName, p, 1))
+                    } else {
+                        unitsList.toList()
+                    }
+                    onConfirm(name.trim(), barcode.trim(), selectedCategory, p, s, cost, finalUnits, selectedPhotoUri)
                 },
-                enabled = name.isNotBlank() && (stockText.toIntOrNull() ?: 0) > 0 &&
-                    ((basePriceText.toIntOrNull() ?: 0) > 0 || unitsList.any { it.priceKsh > 0 }),
+                enabled = name.isNotBlank() && (basePriceText.toIntOrNull() ?: 0) > 0,
                 modifier = Modifier.testTag("confirm_create_product_button")
             ) {
                 Text("Save & Add to Stock")

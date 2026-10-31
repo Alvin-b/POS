@@ -22,28 +22,39 @@ class EncryptedSessionStore(context: Context) {
 
     private val keyAlias = "counterpos_session_key"
 
-    private fun key(): SecretKey {
-        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        val existing = keyStore.getKey(keyAlias, null) as? SecretKey
-        if (existing != null) return existing
+    private fun fallbackKey(): SecretKey {
+        val installation = installationId().toByteArray(StandardCharsets.UTF_8)
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(installation)
+        return SecretKeySpec(digest, "AES")
+    }
 
-        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
-        generator.init(
-            KeyGenParameterSpec.Builder(
-                keyAlias,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+    private fun key(): SecretKey {
+        return try {
+            val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            val existing = keyStore.getKey(keyAlias, null) as? SecretKey
+            if (existing != null) return existing
+
+            val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+            generator.init(
+                KeyGenParameterSpec.Builder(
+                    keyAlias,
+                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+                )
+                    .setKeySize(256)
+                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                    .build()
             )
-                .setKeySize(256)
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .build()
-        )
-        return generator.generateKey()
+            generator.generateKey()
+        } catch (_: Exception) {
+            fallbackKey()
+        }
     }
 
     fun save(value: String) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, key())
+        val secretKey = runCatching { key() }.getOrElse { fallbackKey() }
+        cipher.init(Cipher.ENCRYPT_MODE, secretKey)
         val nonce = cipher.iv
         val ciphertext = cipher.doFinal(value.toByteArray(StandardCharsets.UTF_8))
         preferences.edit()
@@ -53,16 +64,24 @@ class EncryptedSessionStore(context: Context) {
 
     fun read(): String? {
         val stored = preferences.getString("payload", null) ?: return null
-        return runCatching {
-            val parts = stored.split('.', limit = 2)
-            require(parts.size == 2)
+        val parts = stored.split('.', limit = 2)
+        if (parts.size != 2) return null
+        val nonce = decode(parts[0])
+        val ciphertext = decode(parts[1])
+
+        // First attempt with primary key
+        val primaryResult = runCatching {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(
-                Cipher.DECRYPT_MODE,
-                key(),
-                GCMParameterSpec(128, decode(parts[0]))
-            )
-            String(cipher.doFinal(decode(parts[1])), StandardCharsets.UTF_8)
+            cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, nonce))
+            String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8)
+        }.getOrNull()
+        if (primaryResult != null) return primaryResult
+
+        // Second attempt with fallback installation key
+        return runCatching {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, fallbackKey(), GCMParameterSpec(128, nonce))
+            String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8)
         }.getOrNull()
     }
 
