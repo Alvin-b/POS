@@ -1016,7 +1016,12 @@ class CounterPosViewModel(
                                     }
                                 )
                             }
-                            if (!isPlatformAdmin) refreshAccessNow()
+                            if (isPlatformAdmin) {
+                                loadAdminBusinesses()
+                                loadAdminAuditEvents()
+                            } else {
+                                refreshAccessNow()
+                            }
                         }
                         .onFailure { error ->
                             val message = error.message.orEmpty()
