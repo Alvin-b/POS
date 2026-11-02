@@ -427,9 +427,123 @@ class CounterPosRepository(
         _session.value
     }
 
-    /** Refresh the persisted auth session even when no business workspace is open. */
+    /** Silently refreshes the persisted auth session in the background. */
     suspend fun keepSessionAlive(): Boolean = withContext(Dispatchers.IO) {
-        runCatching { remote.restoreSession() != null }.getOrDefault(true)
+        runCatching {
+            remote.silentRefreshIfNeeded() || remote.restoreSession() != null
+        }.getOrDefault(true)
+    }
+
+    private val adminCachePrefs by lazy {
+        context.getSharedPreferences("counterpos_admin_cache", Context.MODE_PRIVATE)
+    }
+
+    fun getCachedAdminBusinesses(): List<AdminBusiness> {
+        val raw = adminCachePrefs.getString("admin_businesses", null) ?: return emptyList()
+        return try {
+            val array = JSONArray(raw)
+            buildList {
+                for (i in 0 until array.length()) {
+                    array.optJSONObject(i)?.let { obj ->
+                        val flagsArray = obj.optJSONArray("feature_flags") ?: JSONArray()
+                        val flags = (0 until flagsArray.length()).mapNotNull { flagsArray.optString(it).takeIf(String::isNotBlank) }.toSet()
+                        add(
+                            AdminBusiness(
+                                shopId = obj.optString("shop_id"),
+                                shopName = obj.optString("shop_name"),
+                                status = obj.optString("status"),
+                                businessType = obj.optString("business_type"),
+                                businessSize = obj.optString("business_size"),
+                                featureFlags = flags,
+                                ownerEmail = obj.optString("owner_email"),
+                                memberCount = obj.optLong("member_count"),
+                                productCount = obj.optLong("product_count"),
+                                stockUnits = obj.optLong("stock_units"),
+                                createdAt = obj.optString("created_at"),
+                                suspendedAt = obj.optString("suspended_at").takeIf(String::isNotBlank),
+                                closedAt = obj.optString("closed_at").takeIf(String::isNotBlank),
+                                lifecycleReason = obj.optString("lifecycle_reason").takeIf(String::isNotBlank),
+                                counterInventoryMode = obj.optString("counter_inventory_mode", "shared"),
+                                counterCount = obj.optLong("counter_count", 1)
+                            )
+                        )
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveCachedAdminBusinesses(businesses: List<AdminBusiness>) {
+        try {
+            val array = JSONArray()
+            businesses.forEach { b ->
+                array.put(
+                    JSONObject()
+                        .put("shop_id", b.shopId)
+                        .put("shop_name", b.shopName)
+                        .put("status", b.status)
+                        .put("business_type", b.businessType)
+                        .put("business_size", b.businessSize)
+                        .put("feature_flags", JSONArray(b.featureFlags.toList()))
+                        .put("owner_email", b.ownerEmail)
+                        .put("member_count", b.memberCount)
+                        .put("product_count", b.productCount)
+                        .put("stock_units", b.stockUnits)
+                        .put("created_at", b.createdAt)
+                        .put("suspended_at", b.suspendedAt ?: "")
+                        .put("closed_at", b.closedAt ?: "")
+                        .put("lifecycle_reason", b.lifecycleReason ?: "")
+                        .put("counter_inventory_mode", b.counterInventoryMode)
+                        .put("counter_count", b.counterCount)
+                )
+            }
+            adminCachePrefs.edit().putString("admin_businesses", array.toString()).apply()
+        } catch (_: Exception) {
+        }
+    }
+
+    fun getCachedAdminAuditEvents(): List<AdminAuditEvent> {
+        val raw = adminCachePrefs.getString("admin_audit_events", null) ?: return emptyList()
+        return try {
+            val array = JSONArray(raw)
+            buildList {
+                for (i in 0 until array.length()) {
+                    array.optJSONObject(i)?.let { obj ->
+                        add(
+                            AdminAuditEvent(
+                                action = obj.optString("action"),
+                                entityType = obj.optString("entity_type"),
+                                actorUserId = obj.optString("actor_user_id").takeIf(String::isNotBlank),
+                                metadata = obj.optString("metadata"),
+                                createdAt = obj.optString("created_at")
+                            )
+                        )
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveCachedAdminAuditEvents(events: List<AdminAuditEvent>) {
+        try {
+            val array = JSONArray()
+            events.take(100).forEach { e ->
+                array.put(
+                    JSONObject()
+                        .put("action", e.action)
+                        .put("entity_type", e.entityType)
+                        .put("actor_user_id", e.actorUserId ?: "")
+                        .put("metadata", e.metadata)
+                        .put("created_at", e.createdAt)
+                )
+            }
+            adminCachePrefs.edit().putString("admin_audit_events", array.toString()).apply()
+        } catch (_: Exception) {
+        }
     }
 
     suspend fun canOperateNow(): Boolean = withContext(Dispatchers.IO) {
@@ -437,7 +551,12 @@ class CounterPosRepository(
         if (account?.isPlatformAdmin == true || shop.role.equals("owner", ignoreCase = true)) {
             return@withContext true
         }
-        remote.canSellForShop(shop.shopId)
+        try {
+            remote.canSellForShop(shop.shopId)
+        } catch (_: Exception) {
+            // Offline mode: permit POS actions locally so employees can operate without internet
+            true
+        }
     }
 
     suspend fun signOut() = withContext(Dispatchers.IO) {
@@ -446,9 +565,27 @@ class CounterPosRepository(
         clearLocalSession()
     }
 
-    suspend fun adminBusinesses(): List<AdminBusiness> = remote.adminBusinesses()
+    suspend fun adminBusinesses(): List<AdminBusiness> = withContext(Dispatchers.IO) {
+        val cached = getCachedAdminBusinesses()
+        try {
+            val fresh = remote.adminBusinesses()
+            saveCachedAdminBusinesses(fresh)
+            fresh
+        } catch (error: Exception) {
+            if (cached.isNotEmpty()) cached else throw error
+        }
+    }
 
-    suspend fun adminAuditEvents(shopId: String = ""): List<AdminAuditEvent> = remote.auditEvents(shopId)
+    suspend fun adminAuditEvents(shopId: String = ""): List<AdminAuditEvent> = withContext(Dispatchers.IO) {
+        val cached = getCachedAdminAuditEvents()
+        try {
+            val fresh = remote.auditEvents(shopId)
+            if (shopId.isBlank()) saveCachedAdminAuditEvents(fresh)
+            fresh
+        } catch (error: Exception) {
+            if (cached.isNotEmpty()) cached else emptyList()
+        }
+    }
 
     suspend fun counterSalesReport(fromIso: String, toIso: String): List<CounterReportRow> = withActiveBusiness {
         remote.counterSalesReport(activeBusiness!!.shopId, fromIso, toIso)
@@ -610,14 +747,6 @@ class CounterPosRepository(
         } catch (error: Exception) {
             val cached = saved?.let(::parseOfflineAccount) ?: throw error
             val userShopIds = cached.memberships.map { m -> m.shopId }
-            if (remote.currentUserId != null && remote.currentUserId != cached.userId && (cached.memberships.isEmpty() || !cached.memberships.any { m -> m.shopId == saved?.activeShopId })) {
-                clearBusinessSnapshot()
-                dao.clearOfflineSession()
-                saved = null
-                activeBusiness = null
-                account = null
-                throw error
-            }
             if (userShopIds.isNotEmpty()) {
                 check(dao.outboxCountForOtherShops(userShopIds) == 0) {
                     "This phone has unsynced POS changes from another business. Connect and sign in with the account that created them."

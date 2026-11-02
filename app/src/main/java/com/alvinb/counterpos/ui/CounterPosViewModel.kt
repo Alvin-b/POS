@@ -184,7 +184,7 @@ class CounterPosViewModel(
     private val connectivityManager: ConnectivityManager
 ) : ViewModel() {
     val session = repository.session.stateIn(viewModelScope, SharingStarted.Eagerly, SessionSnapshot())
-    private val _adminBusinesses = MutableStateFlow<List<AdminBusiness>>(emptyList())
+    private val _adminBusinesses = MutableStateFlow<List<AdminBusiness>>(repository.getCachedAdminBusinesses())
     val adminBusinesses = _adminBusinesses.asStateFlow()
     val products = repository.products.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val sales = repository.sales.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -192,7 +192,7 @@ class CounterPosViewModel(
     val tableOrders = repository.tableOrders.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val serviceCounters = repository.serviceCounters.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    private val _uiState = MutableStateFlow(CounterPosUiState())
+    private val _uiState = MutableStateFlow(CounterPosUiState(adminAuditEvents = repository.getCachedAdminAuditEvents()))
     val uiState = _uiState.asStateFlow()
     private var mutationInProgress = false
     private var reconnectSyncJob: Job? = null
@@ -205,6 +205,8 @@ class CounterPosViewModel(
             reconnectSyncJob = viewModelScope.launch {
                 delay(150)
                 runCatching {
+                    repository.keepSessionAlive()
+                    repository.syncPendingOutbox()
                     repository.synchronizeWhenOnline()
                     refreshCounterStock()
                 }
@@ -233,18 +235,17 @@ class CounterPosViewModel(
         runCatching { connectivityManager.registerDefaultNetworkCallback(networkCallback) }
         viewModelScope.launch {
             repository.session.collect { sess ->
+                if (sess.isPlatformAdmin) {
+                    loadAdminBusinesses()
+                    loadAdminAuditEvents()
+                }
                 if (sess.activeBusiness == null) {
                     _uiState.update { it.copy(businessHours = BusinessHours.Unrestricted, blockedOutbox = emptyList()) }
                 } else {
                     runCatching { repository.loadBusinessHours() }
                         .onSuccess { hours -> _uiState.update { it.copy(businessHours = hours) } }
-                        .onFailure { error ->
-                            _uiState.update {
-                                it.copy(
-                                    businessHours = BusinessHours.Unrestricted,
-                                    actionError = error.message ?: "Could not load business hours"
-                                )
-                            }
+                        .onFailure {
+                            _uiState.update { it.copy(businessHours = BusinessHours.Unrestricted) }
                         }
                     runCatching { repository.blockedOutboxItems() }
                         .onSuccess { items -> _uiState.update { it.copy(blockedOutbox = items) } }
@@ -831,19 +832,31 @@ class CounterPosViewModel(
     }
 
     fun loadAdminBusinesses() = viewModelScope.launch {
+        val cached = repository.getCachedAdminBusinesses()
+        if (cached.isNotEmpty() && _adminBusinesses.value.isEmpty()) {
+            _adminBusinesses.value = cached
+        }
         runCatching { repository.adminBusinesses() }
             .onSuccess { _adminBusinesses.value = it }
-            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not load businesses") } }
+            .onFailure { error ->
+                if (_adminBusinesses.value.isEmpty()) {
+                    _uiState.update { it.copy(startupError = error.message ?: "Could not load businesses") }
+                }
+            }
     }
 
     fun loadAdminAuditEvents(shopId: String = "") = viewModelScope.launch {
+        val cached = repository.getCachedAdminAuditEvents()
+        if (cached.isNotEmpty() && _uiState.value.adminAuditEvents.isEmpty()) {
+            _uiState.update { it.copy(adminAuditEvents = cached) }
+        }
         _uiState.update { it.copy(isLoadingAuditEvents = true) }
         runCatching { repository.adminAuditEvents(shopId) }
             .onSuccess { events ->
                 _uiState.update { it.copy(adminAuditEvents = events, isLoadingAuditEvents = false) }
             }
-            .onFailure { error ->
-                _uiState.update { it.copy(isLoadingAuditEvents = false, startupError = error.message) }
+            .onFailure {
+                _uiState.update { it.copy(isLoadingAuditEvents = false) }
             }
     }
 

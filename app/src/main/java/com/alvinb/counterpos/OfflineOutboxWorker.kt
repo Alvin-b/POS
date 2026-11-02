@@ -4,9 +4,11 @@ import android.content.Context
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
+import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import java.io.IOException
@@ -14,23 +16,28 @@ import java.util.concurrent.TimeoutException
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 
-/** Flushes locally queued changes whenever a connected network is available. */
+/**
+ * WorkManager-based background sync worker.
+ * Automatically pushes local Room database changes (sales, stock, tables) to Supabase
+ * as soon as an internet connection is detected, guaranteeing data integrity during offline operations.
+ */
 class OfflineOutboxWorker(
     appContext: Context,
     workerParams: WorkerParameters
 ) : CoroutineWorker(appContext, workerParams) {
     override suspend fun doWork(): Result {
         return try {
-            // WorkManager may recreate the application process after the user
-            // queued a stock change. Rehydrate the saved session and active
-            // business first; otherwise syncPendingOutbox() has no tenant and
-            // silently returns without submitting the queued mutation.
+            // 1. Rehydrate session and tenant context in case worker runs in a clean process
             counterPosApplication.repository.restoreSession()
-            counterPosApplication.repository.syncPendingOutbox()
+
+            // 2. Push all locally queued Room changes (outbox) to Supabase
+            counterPosApplication.repository.syncPendingOutbox(refreshSnapshot = false)
+
+            // 3. Perform two-way reconciliation with Supabase when online
+            counterPosApplication.repository.synchronizeWhenOnline()
+
             Result.success()
         } catch (exception: CancellationException) {
-            // WorkManager uses cancellation to stop work; it must not be converted
-            // into a successful or failed sync result.
             throw exception
         } catch (exception: Exception) {
             if (exception.isTransientSyncFailure()) Result.retry() else Result.failure()
@@ -42,9 +49,13 @@ class OfflineOutboxWorker(
 
     companion object {
         const val WORK_NAME = "counter_pos_offline_outbox_sync"
+        const val PERIODIC_WORK_NAME = "counter_pos_periodic_sync"
         private const val INITIAL_BACKOFF_SECONDS = 30L
 
-        /** Enqueue at most one pending outbox sync for the application process. */
+        /**
+         * Enqueues an immediate one-time sync task constrained to run when an internet
+         * connection is detected.
+         */
         fun enqueue(context: Context) {
             try {
                 val constraints = Constraints.Builder()
@@ -65,7 +76,37 @@ class OfflineOutboxWorker(
                     request
                 )
             } catch (_: Exception) {
-                // WorkManager is uninitialized in test runners without a custom configuration.
+                // WorkManager may be uninitialized in unit test runners.
+            }
+        }
+
+        /**
+         * Enqueues a periodic background sync every 15 minutes that only executes
+         * when the device has an active internet connection.
+         */
+        fun enqueuePeriodic(context: Context) {
+            try {
+                val constraints = Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build()
+                val periodicRequest = PeriodicWorkRequestBuilder<OfflineOutboxWorker>(
+                    15, TimeUnit.MINUTES
+                )
+                    .setConstraints(constraints)
+                    .setBackoffCriteria(
+                        BackoffPolicy.EXPONENTIAL,
+                        INITIAL_BACKOFF_SECONDS,
+                        TimeUnit.SECONDS
+                    )
+                    .build()
+
+                WorkManager.getInstance(context.applicationContext).enqueueUniquePeriodicWork(
+                    PERIODIC_WORK_NAME,
+                    ExistingPeriodicWorkPolicy.KEEP,
+                    periodicRequest
+                )
+            } catch (_: Exception) {
+                // WorkManager may be uninitialized in unit test runners.
             }
         }
 

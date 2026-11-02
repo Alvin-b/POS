@@ -34,6 +34,9 @@ class CounterPosApplication : Application() {
         // Initialize the shared repository before a worker can be created and
         // ensure any outbox entries left by a previous process are considered.
         repository
-        runCatching { OfflineOutboxWorker.enqueue(this) }
+        runCatching {
+            OfflineOutboxWorker.enqueue(this)
+            OfflineOutboxWorker.enqueuePeriodic(this)
+        }
     }
 }

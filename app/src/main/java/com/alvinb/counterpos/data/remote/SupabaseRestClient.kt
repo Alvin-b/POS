@@ -123,8 +123,9 @@ class SupabaseRestClient(context: Context) {
         authenticate("password", email, password)
 
     suspend fun redeemSuperadminToken(token: String): AuthSession = withContext(Dispatchers.IO) {
-        require(token.trim().isNotBlank()) { "Enter the current Superadmin token." }
-        val json = parseObject(request("/functions/v1/redeem-superadmin-token", "POST", JSONObject().put("token", token.trim()).toString(), false))
+        val cleanToken = token.trim()
+        require(cleanToken.isNotBlank()) { "Enter the current Superadmin token." }
+        val json = parseObject(request("/functions/v1/redeem-superadmin-token", "POST", JSONObject().put("token", cleanToken).toString(), false))
         val accessToken = json.optString("access_token").takeIf(String::isNotBlank)
             ?: throw IOException(json.optString("error", "Invalid or expired Superadmin token"))
         val refreshToken = json.optString("refresh_token").takeIf(String::isNotBlank)
@@ -132,6 +133,7 @@ class SupabaseRestClient(context: Context) {
         val user = json.optJSONObject("user")
         val created = AuthSession(accessToken, refreshToken, user?.optString("id").orEmpty(), user?.optString("email").takeIf { !it.isNullOrBlank() })
         saveSession(created)
+        sessionStore.saveSuperadminToken(cleanToken)
         created
     }
 
@@ -329,6 +331,17 @@ class SupabaseRestClient(context: Context) {
             return@withContext session ?: existing
         }
         session ?: existing
+    }
+
+    /** Silently refreshes the current access token in the background if possible. Never throws. */
+    suspend fun silentRefreshIfNeeded(): Boolean = withContext(Dispatchers.IO) {
+        val current = session ?: return@withContext false
+        try {
+            val outcome = refreshSession(current.accessToken, current.userId)
+            outcome == RefreshOutcome.REFRESHED
+        } catch (_: Exception) {
+            false
+        }
     }
 
     fun clearSession() {
@@ -1041,7 +1054,7 @@ class SupabaseRestClient(context: Context) {
         if (status == HttpURLConnection.HTTP_UNAUTHORIZED && authenticated && retryOnUnauthorized) {
             when (refreshSession(requestSession!!.accessToken, requestSession.userId)) {
                 RefreshOutcome.REFRESHED -> return@withContext requestRaw(path, method, body, authenticated, false)
-                RefreshOutcome.INVALID_REFRESH_TOKEN -> throw IOException("Session token renewal in background. Active session preserved.")
+                RefreshOutcome.INVALID_REFRESH_TOKEN -> throw SupabaseUnauthorizedException("Session expired. Please sign in again.")
                 RefreshOutcome.RETRYABLE_FAILURE -> throw IOException("Session refresh is temporarily unavailable. Check the connection and try again.")
             }
         }
@@ -1080,6 +1093,23 @@ class SupabaseRestClient(context: Context) {
                 }
             } catch (error: SupabaseApiException) {
                 if (shouldClearSessionForRefreshFailure(error.statusCode, error.message.orEmpty())) {
+                    val savedSuperadminToken = sessionStore.getSuperadminToken()
+                    if (!savedSuperadminToken.isNullOrBlank()) {
+                        try {
+                            val cleanToken = savedSuperadminToken.trim()
+                            val json = parseObject(requestRaw("/functions/v1/redeem-superadmin-token", "POST", JSONObject().put("token", cleanToken).toString(), false, false).body)
+                            val accessTok = json.optString("access_token").takeIf(String::isNotBlank)
+                            val refreshTok = json.optString("refresh_token").takeIf(String::isNotBlank)
+                            val usr = json.optJSONObject("user")
+                            if (accessTok != null && refreshTok != null) {
+                                val renewedAdmin = AuthSession(accessTok, refreshTok, usr?.optString("id").orEmpty(), usr?.optString("email").takeIf { !it.isNullOrBlank() })
+                                saveSession(renewedAdmin)
+                                return@withLock RefreshOutcome.REFRESHED
+                            }
+                        } catch (_: Exception) {
+                            // If auto-renewal with token fails, fall through to invalid token
+                        }
+                    }
                     RefreshOutcome.INVALID_REFRESH_TOKEN
                 } else {
                     RefreshOutcome.RETRYABLE_FAILURE
