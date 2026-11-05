@@ -2,6 +2,7 @@ package com.alvinb.counterpos.data
 
 import android.content.Context
 import android.content.res.AssetManager
+import android.net.Uri
 import com.alvinb.counterpos.OfflineOutboxWorker
 import com.alvinb.counterpos.BuildConfig
 import com.alvinb.counterpos.data.local.dao.CounterPosDao
@@ -41,6 +42,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -88,6 +91,8 @@ class CounterPosRepository(
     val diningTables: Flow<List<DiningTableEntity>> = dao.observeDiningTables()
     val tableOrders: Flow<List<TableOrderEntity>> = dao.observeTableOrders()
     val pendingSyncCount: Flow<Int> = dao.observePendingOutboxCount()
+    fun observeTableSettlementOutbox(shopId: String): Flow<List<OutboxEntity>> =
+        dao.observeTableSettlementOutbox(shopId)
     private val _serviceCounters = MutableStateFlow<List<ServiceCounter>>(emptyList())
     val serviceCounters = _serviceCounters.asStateFlow()
 
@@ -1019,7 +1024,7 @@ class CounterPosRepository(
                             inMyStock = true,
                             lowStockThreshold = membership.lowStockThreshold,
                             imageAssetName = fallback,
-                            photoOverrideUri = row.optNullableString("photo_url"),
+                            photoOverrideUri = localProductPhoto(membership.shopId, code),
                             productSourceUrl = row.optNullableString("product_source_url") ?: bundled?.productSourceUrl,
                             imageSourceUrl = imageUrl,
                             verificationNote = "Business inventory",
@@ -1209,6 +1214,9 @@ class CounterPosRepository(
         require(cleanName.isNotBlank()) { "Enter a name for the table." }
         require(cleanName.length <= 40) { "Table names must be 40 characters or fewer." }
         return withActiveBusiness {
+            require(activeBusiness!!.role in setOf("owner", "manager", "cashier")) {
+                "Only business staff can create tables."
+            }
             require(dao.getDiningTableByName(cleanName) == null) { "A table with this name already exists." }
             val table = DiningTableEntity(
                 id = UUID.randomUUID().toString(),
@@ -1226,8 +1234,8 @@ class CounterPosRepository(
     }
 
     suspend fun deleteDiningTable(tableId: String): Boolean = withActiveBusiness {
-        require(activeBusiness!!.role in setOf("owner", "manager", "cashier")) {
-            "Only business staff can delete a table."
+        require(activeBusiness!!.role in setOf("owner", "manager")) {
+            "Only owners and managers can delete tables."
         }
         val table = dao.getDiningTable(tableId) ?: return@withActiveBusiness false
         val openCount = dao.openTableOrderCount(tableId)
@@ -1502,10 +1510,22 @@ class CounterPosRepository(
             val targetCount = product.stockQuantity
             require(targetCount >= 0) { "Stock cannot be negative." }
             val stockChanged = targetCount != oldCount
+            val photoChanged = product.photoOverrideUri != current.photoOverrideUri
+            val updatedPhotoUri = when {
+                !photoChanged -> current.photoOverrideUri
+                product.photoOverrideUri.isNullOrBlank() -> null
+                else -> {
+                    require(activeBusiness!!.role in setOf("owner", "manager")) {
+                        "Only owners and managers can change product photos."
+                    }
+                    persistProductPhoto(activeBusiness!!.shopId, product.catalogCode, product.photoOverrideUri)
+                }
+            }
             val localProduct = product.copy(
                 remoteId = current.remoteId,
                 inMyStock = current.inMyStock,
-                stockQuantity = if (perCounter) current.stockQuantity else targetCount
+                stockQuantity = if (perCounter) current.stockQuantity else targetCount,
+                photoOverrideUri = updatedPhotoUri
             )
             val fields = JSONObject()
                 .put("product_code", product.catalogCode)
@@ -1550,10 +1570,56 @@ class CounterPosRepository(
         true
     }
 
-    suspend fun updatePhoto(product: ProductEntity, uri: String): Boolean {
-        // The local URI is intentionally not treated as a backend authority.
-        // A future upload flow can put it in Storage and then PATCH photo_path.
-        return dao.updatePhotoOverride(product.catalogCode, uri) == 1
+    suspend fun updatePhoto(product: ProductEntity, uri: String): Boolean =
+        withActiveProduct(product.catalogCode) { current ->
+            val shop = activeBusiness!!
+            require(shop.role in setOf("owner", "manager")) { "Only owners and managers can change product photos." }
+            check(current.remoteId == product.remoteId && current.name == product.name) {
+                "This product changed businesses. Reopen the active shop’s product list and try again."
+            }
+            val storedUri = persistProductPhoto(shop.shopId, product.catalogCode, uri)
+            dao.updatePhotoOverride(product.catalogCode, storedUri) == 1
+        }
+
+    private suspend fun persistProductPhoto(shopId: String, productCode: String, source: String): String =
+        withContext(Dispatchers.IO) {
+            val sourceUri = Uri.parse(source)
+            val extension = when (context.contentResolver.getType(sourceUri)?.lowercase(Locale.ROOT)) {
+                "image/jpeg", "image/jpg" -> "jpg"
+                "image/png" -> "png"
+                "image/webp" -> "webp"
+                else -> "img"
+            }
+            val safeShopId = shopId.filter { it.isLetterOrDigit() || it == '-' }
+            val safeProductCode = productCode.filter { it.isLetterOrDigit() || it == '-' || it == '_' }.take(64)
+            val photoDirectory = File(context.filesDir, "product-photos/$safeShopId")
+            if (!photoDirectory.exists() && !photoDirectory.mkdirs()) {
+                throw IOException("Could not save the selected product photo.")
+            }
+            val destination = File(photoDirectory, "${safeProductCode.ifBlank { "product" }}_${UUID.randomUUID()}.$extension")
+            val input = context.contentResolver.openInputStream(sourceUri)
+                ?: throw IOException("Could not read the selected photo. Choose the image again and retry.")
+            try {
+                input.use { sourceStream ->
+                    destination.outputStream().use { targetStream -> sourceStream.copyTo(targetStream) }
+                }
+            } catch (error: Exception) {
+                destination.delete()
+                throw error
+            }
+            Uri.fromFile(destination).toString()
+        }
+
+    private fun localProductPhoto(shopId: String, productCode: String): String? {
+        val safeShopId = shopId.filter { it.isLetterOrDigit() || it == '-' }
+        val safeProductCode = productCode.filter { it.isLetterOrDigit() || it == '-' || it == '_' }
+            .take(64).ifBlank { "product" }
+        val directory = File(context.filesDir, "product-photos/$safeShopId")
+        return directory.listFiles()
+            ?.asSequence()
+            ?.filter { it.isFile && it.name.startsWith("${safeProductCode}_") }
+            ?.maxByOrNull { it.lastModified() }
+            ?.let { Uri.fromFile(it).toString() }
     }
 
     suspend fun assignBarcode(code: String, barcode: String): Boolean =
@@ -1591,6 +1657,9 @@ class CounterPosRepository(
         val counterId = selectedCounterId?.takeIf(String::isNotBlank)
             ?: throw IllegalStateException("Choose the receiving counter first.")
         val perCounter = activeBusiness!!.counterInventoryMode == "per_counter"
+        val storedPhotoUri = photoOverrideUri?.takeIf(String::isNotBlank)?.let {
+            persistProductPhoto(activeBusiness!!.shopId, code, it)
+        }
         val product = ProductEntity(
             catalogCode = code,
             verifiedBarcode = barcode.trim().takeIf(String::isNotBlank),
@@ -1604,7 +1673,7 @@ class CounterPosRepository(
             inMyStock = true,
             lowStockThreshold = activeBusiness!!.lowStockThreshold,
             imageAssetName = "product_stock_001",
-            photoOverrideUri = photoOverrideUri?.takeIf(String::isNotBlank),
+            photoOverrideUri = storedPhotoUri,
             verificationNote = "Created on this device; awaiting sync",
             salesUnitsJson = serializeSaleUnits(salesUnits.ifEmpty { listOf(SaleUnit("Bottle", priceKsh)) }),
             remoteId = null,
@@ -1620,9 +1689,6 @@ class CounterPosRepository(
             .put("brand", brand)
             .put("size", size)
             .put("counter_id", counterId)
-            .apply {
-                if (!photoOverrideUri.isNullOrBlank()) put("photo_override_uri", photoOverrideUri)
-            }
         val balance = if (perCounter) makeCounterBalance(product, counterId, initialStock) else null
         dao.queueProductChange(product, newOutbox("register_product", payload), balance)
         scheduleAndAttemptSync()

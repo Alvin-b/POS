@@ -102,6 +102,7 @@ import androidx.compose.ui.unit.sp
 import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.TableOrderEntity
+import com.alvinb.counterpos.data.TableSettlementResult
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -116,12 +117,13 @@ internal fun TablesScreen(
     actionError: String?,
     isCreatingTable: Boolean,
     canManageTables: Boolean,
+    canDeleteTables: Boolean = false,
     canSettleTables: Boolean,
     isSettlingTable: Boolean,
     isDeletingTable: Boolean,
     onCreateTable: (String) -> Unit,
     onDeleteTable: (String) -> Unit,
-    onSettleTable: (String, String) -> Unit,
+    onSettleTable: (String, String, (TableSettlementResult?) -> Unit) -> Unit,
     onOpenTable: (DiningTableEntity) -> Unit,
     onBackToTables: () -> Unit,
     onNextTable: (Int) -> Unit = {},
@@ -130,7 +132,10 @@ internal fun TablesScreen(
     onScanProduct: () -> Unit,
     showCounterLabels: Boolean = false,
     registeredWaiterEmails: Set<String> = emptySet(),
-    businessName: String = "Counter POS"
+    businessName: String = "Counter POS",
+    isRefreshingTables: Boolean = false,
+    pendingSettlementTableIds: Set<String> = emptySet(),
+    blockedSettlementTableIds: Set<String> = emptySet()
 ) {
     val context = LocalContext.current
     val selected = tables.firstOrNull { it.id == selectedTableId }
@@ -153,6 +158,7 @@ internal fun TablesScreen(
     var receiptPaymentMethod by remember { mutableStateOf<String?>(null) }
     var tableDetailTab by remember { mutableStateOf(0) } // 0 = Active Bill, 1 = Settled Receipts
     var settlementSuccessMessage by remember { mutableStateOf<String?>(null) }
+    var settlementPendingMessage by remember { mutableStateOf<String?>(null) }
 
     val currentOrders = orders.filter { it.tableId == selectedTableId && it.settlementId == null }
     val settledOrders = orders.filter { it.tableId == selectedTableId && it.settlementId != null }
@@ -398,6 +404,19 @@ internal fun TablesScreen(
     }
 
     // -----------------------------------------------------------------
+    if (settlementPendingMessage != null) {
+        AlertDialog(
+            onDismissRequest = { settlementPendingMessage = null },
+            title = { Text("Settlement Pending", fontWeight = FontWeight.Bold) },
+            text = { Text(settlementPendingMessage!!) },
+            confirmButton = {
+                TextButton(onClick = { settlementPendingMessage = null }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
     // DIALOG: CLOSE & SETTLE BILL
     // -----------------------------------------------------------------
     if (showSettlementDialog && selected != null) {
@@ -481,24 +500,34 @@ internal fun TablesScreen(
                 Button(
                     onClick = {
                         val snapshotOrders = currentOrders.toList()
-                        val snapshotTotal = tableTotal
                         val method = selectedPaymentMethod
                         val willPrint = printReceiptOnSettlement
 
-                        onSettleTable(selected.id, method)
-                        showSettlementDialog = false
-
-                        if (willPrint) {
-                            printTableReceipt(
-                                context = context,
-                                businessName = businessName,
-                                tableName = selected.name,
-                                orders = snapshotOrders,
-                                total = snapshotTotal,
-                                paymentMethod = method
-                            )
+                        val tableName = selected.name
+                        onSettleTable(selected.id, method) { settlement ->
+                            when {
+                                settlement?.synced == true -> {
+                                    showSettlementDialog = false
+                                    if (willPrint) {
+                                        printTableReceipt(
+                                            context = context,
+                                            businessName = businessName,
+                                            tableName = tableName,
+                                            orders = snapshotOrders,
+                                            total = settlement.amountKsh,
+                                            paymentMethod = method
+                                        )
+                                    }
+                                    settlementSuccessMessage = "$tableName bill of ${ksh(settlement.amountKsh)} settled via ${method.uppercase(Locale.ROOT)}."
+                                }
+                                settlement != null -> {
+                                    showSettlementDialog = false
+                                    settlementPendingMessage = "The settlement is saved and waiting for server confirmation. No paid receipt was printed. After synchronization, reprint it from Settled Receipts."
+                                }
+                                // Keep the dialog open on failure so the error can be reviewed and retried.
+                                else -> Unit
+                            }
                         }
-                        settlementSuccessMessage = "${selected.name} bill of ${ksh(snapshotTotal)} settled via ${method.uppercase(Locale.ROOT)}."
                     },
                     enabled = !isSettlingTable,
                     modifier = Modifier.testTag("confirm_settle_table_button")
@@ -830,7 +859,11 @@ internal fun TablesScreen(
                 }
 
                 IconButton(onClick = onRefresh, modifier = Modifier.size(40.dp).testTag("tables_refresh_button")) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Refresh floor", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (isRefreshingTables) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Default.Refresh, contentDescription = "Refresh floor", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
                 Spacer(Modifier.width(6.dp))
                 if (canManageTables) {
@@ -912,7 +945,17 @@ internal fun TablesScreen(
                 }
             }
 
-            if (tables.isEmpty()) {
+            if (tables.isEmpty() && isRefreshingTables) {
+                Box(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator()
+                        Text("Checking for tables…", modifier = Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            } else if (tables.isEmpty()) {
                 // Empty Floor State
                 Box(
                     modifier = Modifier
@@ -978,6 +1021,8 @@ internal fun TablesScreen(
                         val lines = orders.filter { it.tableId == table.id && it.settlementId == null }
                         val total = lines.sumOf { it.totalKsh.toLong() }
                         val hasOrders = lines.isNotEmpty()
+                        val settlementPending = table.id in pendingSettlementTableIds
+                        val settlementBlocked = table.id in blockedSettlementTableIds
 
                         Card(
                             modifier = Modifier
@@ -1003,18 +1048,33 @@ internal fun TablesScreen(
                                     // Status pill
                                     Surface(
                                         shape = RoundedCornerShape(6.dp),
-                                        color = if (hasOrders) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
+                                        color = when {
+                                            settlementBlocked -> MaterialTheme.colorScheme.errorContainer
+                                            settlementPending -> MaterialTheme.colorScheme.tertiaryContainer
+                                            hasOrders -> MaterialTheme.colorScheme.primary
+                                            else -> MaterialTheme.colorScheme.surfaceVariant
+                                        }
                                     ) {
                                         Text(
-                                            if (hasOrders) "ACTIVE" else "FREE",
-                                            color = if (hasOrders) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            when {
+                                                settlementBlocked -> "SYNC ISSUE"
+                                                settlementPending -> "SYNCING"
+                                                hasOrders -> "ACTIVE"
+                                                else -> "FREE"
+                                            },
+                                            color = when {
+                                                settlementBlocked -> MaterialTheme.colorScheme.onErrorContainer
+                                                settlementPending -> MaterialTheme.colorScheme.onTertiaryContainer
+                                                hasOrders -> MaterialTheme.colorScheme.onPrimary
+                                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Black,
                                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                         )
                                     }
 
-                                    if (!hasOrders && canManageTables) {
+                                    if (!hasOrders && canDeleteTables) {
                                         IconButton(
                                             onClick = {
                                                 tableToDelete = table
@@ -1146,7 +1206,7 @@ internal fun TablesScreen(
                 }
 
                 // Delete table button (if empty)
-                if (canManageTables) {
+                if (canDeleteTables && currentOrders.isEmpty()) {
                     IconButton(
                         onClick = {
                             tableToDelete = selected
@@ -1362,17 +1422,23 @@ internal fun TablesScreen(
                                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Text("Add Item", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp))
                             }
+                            val settlementPending = selected.id in pendingSettlementTableIds
+                            val settlementBlocked = selected.id in blockedSettlementTableIds
                             if (canSettleTables && currentOrders.isNotEmpty()) {
                                 Button(
                                     onClick = { selectedPaymentMethod = "cash"; showSettlementDialog = true },
                                     shape = RoundedCornerShape(10.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
                                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                    enabled = !isSettlingTable,
+                                    enabled = !isSettlingTable && !settlementPending && !settlementBlocked,
                                     modifier = Modifier.testTag("settle_bill_button")
                                 ) {
                                     if (isSettlingTable) {
                                         CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                                    } else if (settlementBlocked) {
+                                        Text("Sync issue", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    } else if (settlementPending) {
+                                        Text("Syncing…", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                     } else {
                                         Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Text("Settle", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp))

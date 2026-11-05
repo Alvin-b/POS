@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.alvinb.counterpos.data.CounterPosRepository
+import com.alvinb.counterpos.data.TableSettlementResult
 import com.alvinb.counterpos.data.remote.AdminBusiness
 import com.alvinb.counterpos.data.remote.AdminAuditEvent
 import com.alvinb.counterpos.data.remote.CounterReportRow
@@ -114,6 +115,9 @@ data class CounterPosUiState(
     val isDeletingTable: Boolean = false,
     val isSettlingTable: Boolean = false,
     val isSyncingData: Boolean = false,
+    val isRefreshingBusinessData: Boolean = false,
+    val pendingTableSettlementIds: Set<String> = emptySet(),
+    val blockedTableSettlementIds: Set<String> = emptySet(),
     val adminSelectedBusinessId: String? = null,
     val adminQrRole: String = "owner",
     val isCreatingAdminBusiness: Boolean = false,
@@ -196,6 +200,7 @@ class CounterPosViewModel(
     val uiState = _uiState.asStateFlow()
     private var mutationInProgress = false
     private var reconnectSyncJob: Job? = null
+    private var tableSettlementOutboxJob: Job? = null
     private var loginQrJob: Job? = null
     private var lastSessionKeepAliveAt = 0L
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
@@ -235,13 +240,42 @@ class CounterPosViewModel(
         runCatching { connectivityManager.registerDefaultNetworkCallback(networkCallback) }
         viewModelScope.launch {
             repository.session.collect { sess ->
+                tableSettlementOutboxJob?.cancel()
                 if (sess.isPlatformAdmin) {
                     loadAdminBusinesses()
                     loadAdminAuditEvents()
                 }
                 if (sess.activeBusiness == null) {
-                    _uiState.update { it.copy(businessHours = BusinessHours.Unrestricted, blockedOutbox = emptyList()) }
+                    _uiState.update {
+                        it.copy(
+                            businessHours = BusinessHours.Unrestricted,
+                            blockedOutbox = emptyList(),
+                            pendingTableSettlementIds = emptySet(),
+                            blockedTableSettlementIds = emptySet()
+                        )
+                    }
                 } else {
+                    val shopId = sess.activeBusiness.shopId
+                    tableSettlementOutboxJob = viewModelScope.launch {
+                        repository.observeTableSettlementOutbox(shopId).collect { items ->
+                            val pendingIds = items.asSequence()
+                                .filterNot { it.blocked }
+                                .mapNotNull { runCatching { JSONObject(it.payloadJson).optString("table_local_id") }.getOrNull() }
+                                .filter(String::isNotBlank)
+                                .toSet()
+                            val blockedIds = items.asSequence()
+                                .filter { it.blocked }
+                                .mapNotNull { runCatching { JSONObject(it.payloadJson).optString("table_local_id") }.getOrNull() }
+                                .filter(String::isNotBlank)
+                                .toSet()
+                            _uiState.update {
+                                it.copy(
+                                    pendingTableSettlementIds = pendingIds,
+                                    blockedTableSettlementIds = blockedIds
+                                )
+                            }
+                        }
+                    }
                     runCatching { repository.loadBusinessHours() }
                         .onSuccess { hours -> _uiState.update { it.copy(businessHours = hours) } }
                         .onFailure {
@@ -1105,7 +1139,8 @@ class CounterPosViewModel(
             previousTab = it.tab,
             actionError = null,
             isSearchActive = false,
-            searchQuery = ""
+            searchQuery = "",
+            isRefreshingBusinessData = it.isRefreshingBusinessData || tab == PosTab.TABLES
         )
     }
 
@@ -1167,8 +1202,16 @@ class CounterPosViewModel(
     }
 
     fun refreshBusinessData() = viewModelScope.launch {
-        runCatching { repository.synchronizeWhenOnline() }
-            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not refresh business data") } }
+        _uiState.update { it.copy(isRefreshingBusinessData = true) }
+        try {
+            repository.synchronizeWhenOnline()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            _uiState.update { it.copy(actionError = error.message ?: "Could not refresh business data") }
+        } finally {
+            _uiState.update { it.copy(isRefreshingBusinessData = false) }
+        }
     }
 
     private fun syncInventoryQuietly(counterId: String?) {
@@ -1274,7 +1317,11 @@ class CounterPosViewModel(
         }
     }
 
-    fun settleTableBill(tableId: String, paymentMethod: String) {
+    fun settleTableBill(
+        tableId: String,
+        paymentMethod: String,
+        onComplete: (TableSettlementResult?) -> Unit = {}
+    ) {
         if (_uiState.value.isSettlingTable) return
         _uiState.update { it.copy(isSettlingTable = true, actionError = null) }
         viewModelScope.launch {
@@ -1297,11 +1344,13 @@ class CounterPosViewModel(
                             }
                         )
                     }
+                    onComplete(settlement)
                 }
                 .onFailure { error ->
                     _uiState.update {
                         it.copy(isSettlingTable = false, actionError = error.message ?: "Could not close this table bill.")
                     }
+                    onComplete(null)
                 }
         }
     }
@@ -1797,31 +1846,37 @@ class CounterPosViewModel(
             val counterId = _uiState.value.selectedCounterId
             if (counterId.isNullOrBlank()) { _uiState.update { it.copy(actionError = "Choose a receiving counter first.") }; return@launch }
             val code = barcode.trim().ifBlank { "PROD_" + UUID.randomUUID().toString().take(8) }
-            val success = repository.registerNewProduct(
-                barcode = code,
-                name = name.trim(),
-                category = category.trim().ifBlank { "Local Liquor" },
-                priceKsh = basePrice,
-                initialStock = initialStock.coerceAtLeast(0),
-                unitCostKsh = unitCostKsh,
-                brand = brand,
-                size = size,
-                salesUnits = units,
-                selectedCounterId = counterId,
-                photoOverrideUri = photoUri
-            )
-            if (success) {
-                _uiState.update {
-                    it.copy(
-                        isAddingNewProduct = false,
-                        prefilledBarcode = null,
-                        actionError = null,
-                        notice = null
-                    )
+            try {
+                val success = repository.registerNewProduct(
+                    barcode = code,
+                    name = name.trim(),
+                    category = category.trim().ifBlank { "Local Liquor" },
+                    priceKsh = basePrice,
+                    initialStock = initialStock.coerceAtLeast(0),
+                    unitCostKsh = unitCostKsh,
+                    brand = brand,
+                    size = size,
+                    salesUnits = units,
+                    selectedCounterId = counterId,
+                    photoOverrideUri = photoUri
+                )
+                if (success) {
+                    _uiState.update {
+                        it.copy(
+                            isAddingNewProduct = false,
+                            prefilledBarcode = null,
+                            actionError = null,
+                            notice = null
+                        )
+                    }
+                    syncInventoryQuietly(counterId)
+                } else {
+                    _uiState.update { it.copy(actionError = "Failed to add product.") }
                 }
-                syncInventoryQuietly(counterId)
-            } else {
-                _uiState.update { it.copy(actionError = "Failed to add product.") }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _uiState.update { it.copy(actionError = error.message ?: "Failed to add product.") }
             }
         }
     }
@@ -1890,8 +1945,17 @@ class CounterPosViewModel(
 
     fun updatePhoto(product: ProductEntity, uri: String) {
         viewModelScope.launch {
-            repository.updatePhoto(product, uri)
-            _uiState.update { it.copy(notice = "Photo updated for ${product.name}") }
+            try {
+                val updated = repository.updatePhoto(product, uri)
+                _uiState.update {
+                    if (updated) it.copy(notice = "Photo updated for ${product.name}", actionError = null)
+                    else it.copy(actionError = "Could not save the selected photo. Try choosing it again.")
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _uiState.update { it.copy(actionError = error.message ?: "Could not update the product photo.") }
+            }
         }
     }
 }

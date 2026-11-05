@@ -446,7 +446,7 @@ class SupabaseRestClient(context: Context) {
     }
 
     suspend fun diningTables(shopId: String): JSONArray =
-        query("dining_tables?select=*&shop_id=eq.$shopId&order=created_at.asc,name.asc")
+        query("dining_tables?select=*&shop_id=eq.$shopId&archived=eq.false&order=created_at.asc,name.asc")
 
     suspend fun tableOrders(shopId: String): JSONArray = query(
         "table_orders?select=*&shop_id=eq.$shopId&order=served_at.asc"
@@ -652,15 +652,15 @@ class SupabaseRestClient(context: Context) {
                 // Step 1: Check if product already exists in this shop's stock
                 if (resolvedCode.isNotBlank()) {
                     val existingRows = runCatching {
-                        query("products?shop_id=eq.$shopId&code=eq.$resolvedCode&select=id,stock_quantity,selling_price")
+                        query("products?shop_id=eq.$shopId&code=eq.$resolvedCode&select=id")
                     }.getOrNull()
                     val existing = existingRows?.optJSONObject(0)
                     if (existing != null) {
                         val existingId = existing.getString("id")
                         if (counterId != null) {
-                            runCatching { receiveStockAtCounter(counterId, existingId, qty, unitCost) }
+                            receiveStockAtCounter(counterId, existingId, qty, unitCost)
                         } else {
-                            runCatching { receiveStock(existingId, qty, unitCost) }
+                            receiveStock(existingId, qty, unitCost)
                         }
                         return@withContext JSONObject().put("product_id", existingId).put("id", existingId)
                     }
@@ -675,23 +675,12 @@ class SupabaseRestClient(context: Context) {
                         } catch (e: Exception) {
                             lastErr = e
                         }
-                    }
-                    try {
-                        return@withContext addFromCatalog(shopId, catalogId, qty, price, unitCost)
-                    } catch (e: Exception) {
-                        lastErr = e
-                    }
-                    try {
-                        return@withContext rpcObject(
-                            "add_from_catalog",
-                            JSONObject()
-                                .put("_shop", shopId)
-                                .put("_catalog", catalogId)
-                                .put("_qty", qty)
-                                .put("_price", price)
-                        )
-                    } catch (e: Exception) {
-                        lastErr = e
+                    } else {
+                        try {
+                            return@withContext addFromCatalog(shopId, catalogId, qty, price, unitCost)
+                        } catch (e: Exception) {
+                            lastErr = e
+                        }
                     }
                 }
 
@@ -703,41 +692,12 @@ class SupabaseRestClient(context: Context) {
                         } catch (e: Exception) {
                             lastErr = e
                         }
-                    }
-                    try {
-                        return@withContext registerProduct(shopId, resolvedCode, finalName, category, price, qty, unitCost, brand, size)
-                    } catch (e: Exception) {
-                        lastErr = e
-                    }
-
-                    // Direct REST table insert as safe fallback if RPCs have overloaded signature conflicts
-                    try {
-                        val insertBody = JSONObject()
-                            .put("shop_id", shopId)
-                            .put("code", resolvedCode)
-                            .put("name", finalName)
-                            .put("category", category)
-                            .put("selling_price", price)
-                            .put("stock_quantity", qty)
-                            .put("average_cost", unitCost)
-                            .put("brand", brand)
-                            .put("size", size)
-                        val inserted = insert("products", insertBody)
-                        val insertedId = inserted.optString("id").takeIf(String::isNotBlank)
-                        if (insertedId != null) {
-                            if (counterId != null) {
-                                runCatching {
-                                    insert("counter_stock", JSONObject()
-                                        .put("shop_id", shopId)
-                                        .put("counter_id", counterId)
-                                        .put("product_id", insertedId)
-                                        .put("quantity", qty))
-                                }
-                            }
-                            return@withContext JSONObject().put("product_id", insertedId).put("id", insertedId)
+                    } else {
+                        try {
+                            return@withContext registerProduct(shopId, resolvedCode, finalName, category, price, qty, unitCost, brand, size)
+                        } catch (e: Exception) {
+                            lastErr = e
                         }
-                    } catch (e: Exception) {
-                        lastErr = e
                     }
                 }
 
@@ -752,35 +712,10 @@ class SupabaseRestClient(context: Context) {
                 val unitCost = payload.optInt("unit_cost")
                 val brand = payload.optString("brand")
                 val size = payload.optString("size")
-                try {
-                    if (counterId != null) {
-                        registerProductAtCounter(shopId, code, name, category, price, qty, unitCost, brand, size, counterId)
-                    } else {
-                        registerProduct(shopId, code, name, category, price, qty, unitCost, brand, size)
-                    }
-                } catch (rpcErr: Exception) {
-                    val insertBody = JSONObject()
-                        .put("shop_id", shopId)
-                        .put("code", code)
-                        .put("name", name)
-                        .put("category", category)
-                        .put("selling_price", price)
-                        .put("stock_quantity", qty)
-                        .put("average_cost", unitCost)
-                        .put("brand", brand)
-                        .put("size", size)
-                    val inserted = insert("products", insertBody)
-                    val insertedId = inserted.optString("id").takeIf(String::isNotBlank)
-                    if (insertedId != null && counterId != null) {
-                        runCatching {
-                            insert("counter_stock", JSONObject()
-                                .put("shop_id", shopId)
-                                .put("counter_id", counterId)
-                                .put("product_id", insertedId)
-                                .put("quantity", qty))
-                        }
-                    }
-                    inserted
+                if (counterId != null) {
+                    registerProductAtCounter(shopId, code, name, category, price, qty, unitCost, brand, size, counterId)
+                } else {
+                    registerProduct(shopId, code, name, category, price, qty, unitCost, brand, size)
                 }
             }
             "receive_stock" -> {

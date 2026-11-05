@@ -61,6 +61,8 @@ interface CounterPosDao {
     }
     @Query("SELECT * FROM sync_outbox WHERE shopId = :shopId AND blocked = 0 ORDER BY createdAt ASC, operationId ASC")
     suspend fun pendingOutbox(shopId: String): List<OutboxEntity>
+    @Query("SELECT * FROM sync_outbox WHERE shopId = :shopId AND operationType = 'settle_table_bill' ORDER BY createdAt ASC, operationId ASC")
+    fun observeTableSettlementOutbox(shopId: String): Flow<List<OutboxEntity>>
     @Query("SELECT * FROM sync_outbox WHERE shopId = :shopId AND blocked = 0 ORDER BY createdAt ASC, operationId ASC LIMIT 1")
     suspend fun nextPendingOutbox(shopId: String): OutboxEntity?
     @Query("SELECT COUNT(*) FROM sync_outbox")

@@ -9,7 +9,6 @@ import android.net.Uri
 import androidx.core.content.FileProvider
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -213,6 +212,7 @@ fun CounterPosWorkspace(
     val isClub = rawBusinessType in setOf("big_club", "club", "") || session.activeBusiness == null
     val supportsTables = "tables" in enabledFeatures
     val canManageTables = role in setOf("owner", "manager", "cashier")
+    val canDeleteTables = role in setOf("owner", "manager")
     val canSettleTables = role in setOf("owner", "manager", "cashier")
     val registeredWaiterEmails = remember(state.employeeMembers) {
         state.employeeMembers.asSequence()
@@ -526,16 +526,22 @@ fun CounterPosWorkspace(
                         actionError = state.actionError,
                         isCreatingTable = state.isCreatingTable,
                         canManageTables = canManageTables,
+                        canDeleteTables = canDeleteTables,
                         canSettleTables = canSettleTables,
                         isSettlingTable = state.isSettlingTable,
+                        isRefreshingTables = state.isRefreshingBusinessData,
+                        pendingSettlementTableIds = state.pendingTableSettlementIds,
+                        blockedSettlementTableIds = state.blockedTableSettlementIds,
                         isDeletingTable = state.isDeletingTable,
                         onCreateTable = viewModel::createDiningTable,
                         onDeleteTable = viewModel::deleteDiningTable,
-                        onSettleTable = viewModel::settleTableBill,
+                        onSettleTable = { tableId, paymentMethod, onComplete ->
+                            viewModel.settleTableBill(tableId, paymentMethod, onComplete)
+                        },
                         onOpenTable = viewModel::openTable,
                         onBackToTables = viewModel::backToTables,
                         onNextTable = viewModel::selectNextTable,
-                        onRefresh = { viewModel.synchronizeData(showNotice = true) },
+                        onRefresh = { viewModel.refreshBusinessData() },
                         onAddProduct = viewModel::openTableSale,
                         onScanProduct = { viewModel.openScanner(ScannerMode.TABLE_ADD) },
                         showCounterLabels = serviceCounters.size > 1,
@@ -2180,15 +2186,28 @@ private fun StockProductCard(
             verticalAlignment = Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            ProductThumbnail(
-                product,
-                Modifier
-                    .size(76.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(2.dp)
-                    .clickable(enabled = canEditProducts, onClick = onChangePhoto)
-            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                ProductThumbnail(
+                    product,
+                    Modifier
+                        .size(76.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(2.dp)
+                        .clickable(enabled = canEditProducts, onClick = onChangePhoto)
+                )
+                if (canEditProducts) {
+                    TextButton(
+                        onClick = onChangePhoto,
+                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp),
+                        modifier = Modifier.height(28.dp).testTag("change_product_photo_${product.catalogCode}")
+                    ) {
+                        Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(12.dp))
+                        Spacer(Modifier.width(3.dp))
+                        Text("Change", fontSize = 10.sp, maxLines = 1)
+                    }
+                }
+            }
 
             Column(Modifier.weight(1f)) {
                 Text(
@@ -2905,11 +2924,18 @@ private fun EditProductDialog(
     var selectedPhotoUri by remember(product.catalogCode) {
         mutableStateOf(product.photoOverrideUri?.takeIf(String::isNotBlank))
     }
+    val context = LocalContext.current
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
             selectedPhotoUri = uri.toString()
         }
     }
@@ -2983,9 +3009,7 @@ private fun EditProductDialog(
                     Column(modifier = Modifier.weight(1f)) {
                         OutlinedButton(
                             onClick = {
-                                photoPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
+                                photoPickerLauncher.launch(arrayOf("image/*"))
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
@@ -3239,11 +3263,18 @@ private fun AddNewProductDialog(
     var basePriceText by remember { mutableStateOf("") }
     var unitCostText by remember { mutableStateOf("") }
     var selectedPhotoUri by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
             selectedPhotoUri = uri.toString()
         }
     }
@@ -3314,9 +3345,7 @@ private fun AddNewProductDialog(
                     Column(modifier = Modifier.weight(1f)) {
                         OutlinedButton(
                             onClick = {
-                                photoPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
+                                photoPickerLauncher.launch(arrayOf("image/*"))
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
