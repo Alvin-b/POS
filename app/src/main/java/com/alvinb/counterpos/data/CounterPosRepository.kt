@@ -1084,7 +1084,8 @@ class CounterPosRepository(
                             counterName = counterName,
                             waiterName = waiterName,
                             tableId = tableId,
-                            tableName = tableName
+                            tableName = tableName,
+                            paymentMethod = row.optString("payment_method", "cash")
                         )
                     )
                 }
@@ -1280,7 +1281,8 @@ class CounterPosRepository(
         unitPriceKsh: Int,
         selectedCounterId: String? = null,
         counterName: String? = null,
-        waiterName: String? = null
+        waiterName: String? = null,
+        paymentMethod: String = "cash"
     ): Boolean = withActiveProduct(code) { product ->
         require(quantity > 0 && unitPriceKsh > 0) { "Enter a valid sale quantity and price." }
         val shopId = activeBusiness?.shopId ?: throw IllegalStateException("Select an active business first.")
@@ -1312,7 +1314,8 @@ class CounterPosRepository(
             waiterName = waiterName ?: account?.email?.substringBefore("@"),
             tableId = tableId,
             tableName = dao.getDiningTable(tableId)?.name,
-            sourceCounterId = counterId
+            sourceCounterId = counterId,
+            paymentMethod = paymentMethod
         )
         val resolvedCounterName = counterName ?: _serviceCounters.value.firstOrNull { it.id == counterId }?.name
         val resolvedWaiterName = waiterName ?: account?.email?.substringBefore("@")
@@ -1337,6 +1340,7 @@ class CounterPosRepository(
             .put("quantity", quantity)
             .put("unit_name", unitName)
             .put("unit_price", unitPriceKsh)
+            .put("payment_method", paymentMethod)
             .apply {
                 if (resolvedCounterName != null) put("counter_name", resolvedCounterName)
                 if (resolvedWaiterName != null) put("waiter_name", resolvedWaiterName)
@@ -1358,6 +1362,7 @@ class CounterPosRepository(
         selectedCounterId: String? = null,
         counterName: String? = null,
         waiterName: String? = null,
+        paymentMethod: String = "cash",
         tableId: String? = null,
         tableName: String? = null
     ): Boolean =
@@ -1385,7 +1390,8 @@ class CounterPosRepository(
                 waiterName = waiterName ?: account?.email?.substringBefore("@"),
                 tableId = tableId,
                 tableName = tableName,
-                sourceCounterId = counterId
+                sourceCounterId = counterId,
+                paymentMethod = paymentMethod
             )
             val payload = JSONObject()
                 .put("product_code", product.catalogCode)
@@ -1393,6 +1399,7 @@ class CounterPosRepository(
                 .put("quantity", quantity)
                 .put("unit_name", unitName)
                 .put("unit_price", unitPriceKsh)
+                .put("payment_method", paymentMethod)
             val queued = dao.queueSaleAtCounter(
                 sale, newOutbox("sale", payload), counterId, stockToDecrement,
                 activeBusiness!!.counterInventoryMode == "per_counter"

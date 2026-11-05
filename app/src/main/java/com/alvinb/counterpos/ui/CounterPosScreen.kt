@@ -643,9 +643,11 @@ fun CounterPosWorkspace(
                     selectedCounterId = state.selectedServingCounterId ?: state.selectedCounterId ?: serviceCounters.firstOrNull()?.id,
                     onSelectCounter = { id, name -> viewModel.selectServingCounter(id, name) },
                     selectedWaiter = session.email,
+                    selectedPaymentMethod = state.selectedPaymentMethod,
                     selectedTableName = selectedTable?.name,
                     onSelectUnit = viewModel::selectSaleUnit,
                     onQuantityChange = viewModel::adjustSaleQuantity,
+                    onSelectPaymentMethod = viewModel::selectPaymentMethod,
                     onConfirm = viewModel::confirmSale
                 )
             }
@@ -2352,9 +2354,11 @@ private fun SaleWithUnitsSheet(
     selectedCounterId: String? = null,
     onSelectCounter: ((String, String) -> Unit)? = null,
     selectedWaiter: String = "",
+    selectedPaymentMethod: String = "cash",
     selectedTableName: String? = null,
     onSelectUnit: (SaleUnit) -> Unit,
     onQuantityChange: (Int) -> Unit,
+    onSelectPaymentMethod: (String) -> Unit,
     onConfirm: () -> Unit
 ) {
     val units = remember(product.salesUnitsJson, product.sellingPriceKsh) {
@@ -2441,6 +2445,19 @@ private fun SaleWithUnitsSheet(
             Text("Recorded by ${selectedWaiter}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
         }
 
+        if (selectedTableName.isNullOrBlank()) {
+            Text("Payment method", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("cash" to "Cash", "mpesa" to "M-Pesa").forEach { (key, label) ->
+                    FilterChip(
+                        selected = selectedPaymentMethod == key,
+                        onClick = { onSelectPaymentMethod(key) },
+                        label = { Text(label) },
+                        leadingIcon = if (selectedPaymentMethod == key) { { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) } } else null
+                    )
+                }
+            }
+        }
         // Unit of Sale Selector (Bottle, Glass, Cup, etc.)
         Text(
             "Select Unit of Sale:",
@@ -2534,12 +2551,12 @@ private fun SaleWithUnitsSheet(
 
         Button(
             onClick = onConfirm,
-            enabled = serviceCounters.isNotEmpty() && selectedCounterId != null && units.isNotEmpty() && selectedUnitPrice > 0,
+            enabled = serviceCounters.isNotEmpty() && selectedCounterId != null && units.isNotEmpty() && selectedUnitPrice > 0 && (selectedTableName != null || selectedPaymentMethod in setOf("cash", "mpesa")),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 20.dp)
         ) {
-            val label = if (!selectedTableName.isNullOrBlank()) "Add to $selectedTableName check · ${ksh(total)}" else "Complete Sale · ${ksh(total)}"
+            val label = if (!selectedTableName.isNullOrBlank()) "Add to $selectedTableName check · ${ksh(total)}" else "Complete ${if (selectedPaymentMethod == "mpesa") "M-Pesa" else "Cash"} Sale · ${ksh(total)}"
             Text(label, fontSize = 15.sp, fontWeight = FontWeight.Bold)
         }
     }

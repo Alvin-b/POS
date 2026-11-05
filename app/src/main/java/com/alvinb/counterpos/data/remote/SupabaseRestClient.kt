@@ -478,11 +478,11 @@ class SupabaseRestClient(context: Context) {
 
     suspend fun recordTableSaleFromCounter(
         shopId: String, tableId: String, productId: String, counterId: String,
-        quantity: Int, unitName: String, unitPrice: Int
+        quantity: Int, unitName: String, unitPrice: Int, paymentMethod: String = "cash"
     ): JSONObject = rpcObject(
         "record_table_sale_from_counter",
         JSONObject().put("_shop", shopId).put("_table", tableId).put("_product", productId)
-            .put("_counter", counterId).put("_qty", quantity).put("_unit_name", unitName).put("_unit_price", unitPrice)
+            .put("_counter", counterId).put("_qty", quantity).put("_unit_name", unitName).put("_unit_price", unitPrice).put("_payment_method", paymentMethod)
     )
 
     suspend fun settleTableBill(shopId: String, tableId: String, operationId: String, paymentMethod: String): JSONObject =
@@ -505,7 +505,7 @@ class SupabaseRestClient(context: Context) {
                 .put("_unit_price", unitPrice)
         )
 
-    suspend fun recordSaleUnitFromCounter(productId: String, counterId: String, quantity: Int, unitName: String, unitPrice: Int): JSONObject =
+    suspend fun recordSaleUnitFromCounter(productId: String, counterId: String, quantity: Int, unitName: String, unitPrice: Int, paymentMethod: String = "cash"): JSONObject =
         rpcObject(
             "record_sale_unit_from_counter",
             JSONObject().put("_product", productId).put("_counter", counterId).put("_qty", quantity)
@@ -743,8 +743,9 @@ class SupabaseRestClient(context: Context) {
                 val qty = payload.optInt("qty", payload.optInt("quantity", 1))
                 val unitName = payload.optString("unit_name", "Bottle")
                 val unitPrice = payload.optInt("unit_price")
+                val paymentMethod = payload.optString("payment_method", "cash")
                 if (counterId != null) {
-                    recordSaleUnitFromCounter(productId, counterId, qty, unitName, unitPrice)
+                    recordSaleUnitFromCounter(productId, counterId, qty, unitName, unitPrice, paymentMethod)
                 } else {
                     recordSaleUnit(productId, qty, unitName, unitPrice)
                 }
@@ -756,7 +757,7 @@ class SupabaseRestClient(context: Context) {
                 val unitName = payload.optString("unit_name", "Bottle")
                 val unitPrice = payload.optInt("unit_price")
                 if (counterId != null) {
-                    recordTableSaleFromCounter(shopId, tableId, productId, counterId, qty, unitName, unitPrice)
+                    recordTableSaleFromCounter(shopId, tableId, productId, counterId, qty, unitName, unitPrice, payload.optString("payment_method", "cash"))
                 } else {
                     recordTableSale(shopId, tableId, productId, qty, unitName, unitPrice)
                 }

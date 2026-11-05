@@ -104,6 +104,7 @@ data class CounterPosUiState(
     val selectedServingCounterId: String? = null,
     val selectedServingCounterName: String? = null,
     val selectedWaiterName: String = "",
+    val selectedPaymentMethod: String = "cash",
     val availableWaiters: List<String> = emptyList(),
     val reportFilter: String = "today",
     val reportCounterFilter: String = "all",
@@ -1373,6 +1374,7 @@ class CounterPosViewModel(
                 selectedUnitPrice = defaultUnit.priceKsh,
                 selectedServingCounterId = defaultCounterId,
                 saleQuantity = 1,
+                selectedPaymentMethod = "cash",
                 actionError = null
             )
         }
@@ -1546,6 +1548,7 @@ class CounterPosViewModel(
                 selectedUnitName = defaultUnit.name,
                 selectedUnitPrice = defaultUnit.priceKsh,
                 saleQuantity = 1,
+                selectedPaymentMethod = "cash",
                 actionError = null
             )
         }
@@ -1578,6 +1581,9 @@ class CounterPosViewModel(
 
     fun selectWaiter(waiterName: String) = _uiState.update {
         it.copy(selectedWaiterName = waiterName)
+    }
+    fun selectPaymentMethod(method: String) = _uiState.update {
+        it.copy(selectedPaymentMethod = method.lowercase())
     }
 
     fun setReportFilter(filter: String) = _uiState.update {
@@ -1655,6 +1661,10 @@ class CounterPosViewModel(
             _uiState.update { it.copy(actionError = "Select a valid quantity and sale price.") }
             return
         }
+        if (state.selectedPaymentMethod !in setOf("cash", "mpesa")) {
+            _uiState.update { it.copy(actionError = "Choose Cash or M-Pesa before completing the sale.") }
+            return
+        }
         val counters = serviceCounters.value
         val requestedCounterId = state.selectedServingCounterId ?: state.selectedCounterId ?: counters.firstOrNull()?.id
         val selectedCounter = counters.firstOrNull { it.id == requestedCounterId }
@@ -1681,7 +1691,8 @@ class CounterPosViewModel(
                         unitPriceKsh = state.selectedUnitPrice,
                         selectedCounterId = counterId,
                         counterName = counterName,
-                        waiterName = waiterName
+                        waiterName = waiterName,
+                        paymentMethod = state.selectedPaymentMethod
                     )
                 } else {
                     repository.sellWithUnit(
@@ -1692,6 +1703,7 @@ class CounterPosViewModel(
                         selectedCounterId = counterId,
                         counterName = counterName,
                         waiterName = waiterName,
+                        paymentMethod = state.selectedPaymentMethod,
                         tableId = null,
                         tableName = "Direct Sale"
                     )
