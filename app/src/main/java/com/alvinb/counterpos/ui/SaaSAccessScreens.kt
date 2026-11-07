@@ -106,6 +106,9 @@ fun CounterPosApp(
             !session.isAuthenticated -> AuthScreen(
                 error = state.startupError,
                 notice = state.notice,
+                isAuthenticating = state.isAuthenticating,
+                onEmailSignIn = viewModel::signIn,
+                onCreateAccount = viewModel::signUp,
                 onCredentialSignIn = viewModel::signInWithCredential,
                 onOpenScanner = { viewModel.openScanner(ScannerMode.ADMIN_QR) },
                 onRefreshQr = viewModel::prepareQrChallenge,
@@ -139,8 +142,14 @@ fun CounterPosApp(
             )
             else -> BusinessSetupScreen(
                 email = session.email,
-                onSignOut = viewModel::signOut,
-                error = state.startupError
+                error = state.startupError,
+                notice = state.notice,
+                isCreating = state.isCreatingBusiness,
+                onClearError = viewModel::clearStartupError,
+                onCreateBusiness = { name, type, size, mode, count ->
+                    viewModel.createBusiness(name, type, size, mode, count)
+                },
+                onSignOut = viewModel::signOut
             )
         }
     }
@@ -159,6 +168,9 @@ private fun LoadingScreen() {
 private fun AuthScreen(
     error: String?,
     notice: String?,
+    isAuthenticating: Boolean,
+    onEmailSignIn: (String, String) -> Unit,
+    onCreateAccount: (String, String) -> Unit,
     onCredentialSignIn: (String) -> Unit,
     onOpenScanner: () -> Unit,
     onRefreshQr: () -> Unit,
@@ -166,8 +178,16 @@ private fun AuthScreen(
     onClearError: () -> Unit
 ) {
     var credential by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var passwordConfirmation by remember { mutableStateOf("") }
+    var creatingAccount by remember { mutableStateOf(false) }
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
+    val emailValid = android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()
+    val canSubmitEmail = emailValid && password.isNotBlank() &&
+        (!creatingAccount || password == passwordConfirmation) && !isAuthenticating
+    val visibleAuthError = error?.takeUnless { it.contains("QR", ignoreCase = true) }
 
     fun pasteFromClipboard() {
         val clipText = clipboardManager.getText()?.text
@@ -220,6 +240,115 @@ private fun AuthScreen(
                 fontSize = 14.sp
             )
             Spacer(Modifier.height(25.dp))
+            if (!visibleAuthError.isNullOrBlank()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Text(
+                        visibleAuthError,
+                        modifier = Modifier.padding(14.dp),
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        fontSize = 13.sp
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+            }
+            if (!notice.isNullOrBlank() && !notice.contains("QR", ignoreCase = true)) {
+                Text(
+                    notice,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = 13.sp
+                )
+            }
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(20.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        if (creatingAccount) "Create an owner account" else "Sign in with email",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        if (creatingAccount) "Create your account, then set up your business profile."
+                        else "Use your business email and password, or sign in with a QR code or passkey below.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 13.sp,
+                        lineHeight = 19.sp
+                    )
+                    OutlinedTextField(
+                        value = email,
+                        onValueChange = { email = it; onClearError() },
+                        modifier = Modifier.fillMaxWidth().testTag("email_signin_field"),
+                        label = { Text("Email address") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                        singleLine = true,
+                        enabled = !isAuthenticating,
+                        isError = email.isNotBlank() && !emailValid
+                    )
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it; onClearError() },
+                        modifier = Modifier.fillMaxWidth().testTag("password_signin_field"),
+                        label = { Text("Password") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        singleLine = true,
+                        enabled = !isAuthenticating
+                    )
+                    if (creatingAccount) {
+                        OutlinedTextField(
+                            value = passwordConfirmation,
+                            onValueChange = { passwordConfirmation = it; onClearError() },
+                            modifier = Modifier.fillMaxWidth().testTag("password_confirmation_field"),
+                            label = { Text("Confirm password") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            singleLine = true,
+                            enabled = !isAuthenticating,
+                            isError = passwordConfirmation.isNotEmpty() && passwordConfirmation != password
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            if (creatingAccount) onCreateAccount(email.trim(), password)
+                            else onEmailSignIn(email.trim(), password)
+                        },
+                        enabled = canSubmitEmail,
+                        modifier = Modifier.fillMaxWidth().height(50.dp).testTag("email_auth_submit_button")
+                    ) {
+                        if (isAuthenticating) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(19.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Spacer(Modifier.width(10.dp))
+                        }
+                        Text(if (isAuthenticating) "Please wait…" else if (creatingAccount) "Create account" else "Sign in")
+                    }
+                    TextButton(
+                        onClick = {
+                            creatingAccount = !creatingAccount
+                            passwordConfirmation = ""
+                            onClearError()
+                        },
+                        enabled = !isAuthenticating,
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    ) {
+                        Text(if (creatingAccount) "Already have an account? Sign in" else "New here? Create an owner account")
+                    }
+                }
+            }
+            Spacer(Modifier.height(18.dp))
+            Text("OR SIGN IN WITH QR / PASSKEY", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(10.dp))
             val qrExpired = error?.let { message ->
                 message.contains("expired", ignoreCase = true) ||
                     message.contains("session expired", ignoreCase = true) ||
@@ -303,12 +432,13 @@ private fun AuthScreen(
                         }
                         Button(
                             onClick = { onCredentialSignIn(credential.trim()) },
-                            enabled = credential.isNotBlank(),
+                            enabled = credential.isNotBlank() && !isAuthenticating,
                             modifier = Modifier.weight(1.1f).testTag("continue_signin_button")
-                        ) { Text("Continue", maxLines = 1) }
-                    }
-                    if (!notice.isNullOrBlank() && !notice.contains("QR", ignoreCase = true)) {
-                        Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                        ) {
+                            if (isAuthenticating) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            } else Text("Continue", maxLines = 1)
+                        }
                     }
                 }
             }
@@ -353,16 +483,188 @@ private fun WorkingHoursLockedScreen(
 private fun BusinessSetupScreen(
     email: String,
     error: String?,
+    notice: String?,
+    isCreating: Boolean,
+    onClearError: () -> Unit,
+    onCreateBusiness: (String, String, String, String, Int) -> Unit,
     onSignOut: () -> Unit
 ) {
-    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
-        Text("Business access pending", fontSize = 26.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(8.dp))
-        Text("Signed in as $email. Client businesses are registered by the platform superadmin. Ask the administrator to scan your business QR and add your account as the owner.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(18.dp))
-        if (!error.isNullOrBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
-        Text("After authorization, sign in again to access the business workspace.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-        TextButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
+    var businessName by remember { mutableStateOf("") }
+    var businessType by remember { mutableStateOf("big_club") }
+    var businessSize by remember { mutableStateOf("medium") }
+    var inventoryMode by remember { mutableStateOf("shared") }
+    var counterCount by remember { mutableStateOf("1") }
+    val isClub = businessType == "big_club"
+    val parsedCounterCount = counterCount.toIntOrNull()
+    val canCreate = businessName.trim().isNotEmpty() && businessName.length <= 120 &&
+        (!isClub || (parsedCounterCount ?: 0) in 1..50) && !isCreating
+
+    Box(
+        modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding(),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 480.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text("Set up your business", fontSize = 27.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "Signed in as $email. Create the business profile for this owner account.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 14.sp
+            )
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(20.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text("Business profile", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    OutlinedTextField(
+                        value = businessName,
+                        onValueChange = { businessName = it.take(120); onClearError() },
+                        modifier = Modifier.fillMaxWidth().testTag("owner_business_name_field"),
+                        label = { Text("Business name") },
+                        placeholder = { Text("e.g. Euphoria Lounge") },
+                        singleLine = true,
+                        enabled = !isCreating
+                    )
+                    Text("Business type", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = isClub,
+                            onClick = {
+                                businessType = "big_club"
+                                onClearError()
+                            },
+                            label = { Text("Bar & Club") },
+                            modifier = Modifier.weight(1f),
+                            enabled = !isCreating
+                        )
+                        FilterChip(
+                            selected = !isClub,
+                            onClick = {
+                                businessType = "counter_seller"
+                                businessSize = "medium"
+                                inventoryMode = "shared"
+                                counterCount = "1"
+                                onClearError()
+                            },
+                            label = { Text("Liquor Store") },
+                            modifier = Modifier.weight(1f),
+                            enabled = !isCreating
+                        )
+                    }
+                    if (isClub) {
+                        Text("Club size", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf("small" to "Small", "medium" to "Medium", "large" to "Large").forEach { (value, label) ->
+                                FilterChip(
+                                    selected = businessSize == value,
+                                    onClick = { businessSize = value; onClearError() },
+                                    label = { Text(label) },
+                                    modifier = Modifier.weight(1f),
+                                    enabled = !isCreating
+                                )
+                            }
+                        }
+                        Text("Inventory strategy", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            FilterChip(
+                                selected = inventoryMode == "shared",
+                                onClick = { inventoryMode = "shared"; onClearError() },
+                                label = { Text("Shared stock") },
+                                modifier = Modifier.weight(1f),
+                                enabled = !isCreating
+                            )
+                            FilterChip(
+                                selected = inventoryMode == "per_counter",
+                                onClick = { inventoryMode = "per_counter"; onClearError() },
+                                label = { Text("By counter") },
+                                modifier = Modifier.weight(1f),
+                                enabled = !isCreating
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Service counters", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                Text("Choose 1–50 stations", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                            }
+                            OutlinedButton(
+                                onClick = { counterCount = ((parsedCounterCount ?: 1) - 1).coerceAtLeast(1).toString(); onClearError() },
+                                enabled = !isCreating && (parsedCounterCount ?: 1) > 1
+                            ) { Text("−") }
+                            Text(
+                                parsedCounterCount?.toString() ?: "1",
+                                modifier = Modifier.width(34.dp),
+                                textAlign = TextAlign.Center,
+                                fontWeight = FontWeight.Bold
+                            )
+                            OutlinedButton(
+                                onClick = { counterCount = ((parsedCounterCount ?: 1) + 1).coerceAtMost(50).toString(); onClearError() },
+                                enabled = !isCreating && (parsedCounterCount ?: 1) < 50
+                            ) { Text("+") }
+                        }
+                    } else {
+                        Text(
+                            "Liquor stores use one counter with shared stock and retail checkout.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+            Text(
+                "You will be the owner of this business. It will appear in the platform admin business list.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp
+            )
+            if (!notice.isNullOrBlank()) {
+                Text(notice, color = MaterialTheme.colorScheme.primary, fontSize = 13.sp)
+            }
+            if (!error.isNullOrBlank()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Text(error, modifier = Modifier.padding(14.dp), color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 13.sp)
+                }
+            }
+            Button(
+                onClick = {
+                    onCreateBusiness(
+                        businessName.trim(),
+                        businessType,
+                        businessSize,
+                        inventoryMode,
+                        if (isClub) parsedCounterCount ?: 1 else 1
+                    )
+                },
+                enabled = canCreate,
+                modifier = Modifier.fillMaxWidth().height(52.dp).testTag("create_owner_business_button"),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                if (isCreating) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Creating business…")
+                } else Text("Create business")
+            }
+            TextButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth(), enabled = !isCreating) { Text("Sign out") }
+        }
     }
 }
 

@@ -383,9 +383,29 @@ class CounterPosRepository(
         _session.value
     }
 
-    suspend fun createBusiness(name: String): SessionSnapshot = withContext(Dispatchers.IO) {
-        require(name.trim().isNotBlank()) { "Enter a business name." }
-        remote.createShop(name.trim())
+    suspend fun createBusiness(
+        name: String,
+        businessType: String = "big_club",
+        businessSize: String = "medium",
+        inventoryMode: String = "shared",
+        counterCount: Int = 1
+    ): SessionSnapshot = withContext(Dispatchers.IO) {
+        require(name.trim().length in 1..120) { "Enter a business name (up to 120 characters)." }
+        require(businessType in setOf("big_club", "counter_seller")) { "Choose a valid business type." }
+        val isLiquorStore = businessType == "counter_seller"
+        val selectedSize = if (isLiquorStore) "medium" else businessSize
+        val selectedInventoryMode = if (isLiquorStore) "shared" else inventoryMode
+        val selectedCounterCount = if (isLiquorStore) 1 else counterCount
+        require(selectedSize in setOf("small", "medium", "large")) { "Choose a valid business size." }
+        require(selectedInventoryMode in setOf("shared", "per_counter")) { "Choose a valid inventory mode." }
+        require(selectedCounterCount in 1..50) { "Choose between 1 and 50 service counters." }
+        remote.createOwnerBusinessProfile(
+            name.trim(),
+            businessType,
+            selectedSize,
+            selectedInventoryMode,
+            selectedCounterCount
+        )
         loadAccount(autoSelectSingleBusiness = true)
     }
 

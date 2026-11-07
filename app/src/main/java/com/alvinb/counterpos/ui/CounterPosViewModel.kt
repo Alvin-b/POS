@@ -122,12 +122,14 @@ data class CounterPosUiState(
     val adminSelectedBusinessId: String? = null,
     val adminQrRole: String = "owner",
     val isCreatingAdminBusiness: Boolean = false,
+    val isCreatingBusiness: Boolean = false,
     val adminAuditEvents: List<AdminAuditEvent> = emptyList(),
     val isLoadingAuditEvents: Boolean = false,
     val isTeamPanelOpen: Boolean = false,
     val loginQrPayload: String? = null,
     val loginQrExpiresAtMillis: Long? = null,
     val isQrPolling: Boolean = false,
+    val isAuthenticating: Boolean = false,
     val employeeMembers: List<JSONObject> = emptyList(),
     val isSavingBusinessName: Boolean = false,
     val isLoadingEmployeeMembers: Boolean = false,
@@ -336,34 +338,57 @@ class CounterPosViewModel(
         super.onCleared()
     }
 
-    fun signIn(email: String, password: String) = viewModelScope.launch {
-        _uiState.update { it.copy(startupError = null, notice = null) }
-        runCatching { repository.signIn(email, password) }
-            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Sign in failed") } }
-    }
-
-    fun signInWithPasskey(passkey: String) = _uiState.update {
-        it.copy(startupError = null, notice = "Verifying access passkey…")
-    }.also {
-        viewModelScope.launch {
-            runCatching { repository.signInWithPasskey(passkey) }
-                .onSuccess { session ->
-                    val shopName = session.activeBusiness?.shopName ?: "business"
-                    _uiState.update { state -> state.copy(startupError = null, notice = "Signed in to $shopName") }
-                }
-                .onFailure { error -> _uiState.update { state -> state.copy(notice = null, startupError = error.message ?: "Passkey sign-in failed") } }
+    private fun runAuthentication(
+        progressMessage: String,
+        fallbackMessage: String,
+        action: suspend () -> SessionSnapshot,
+        successNotice: (SessionSnapshot) -> String? = { snapshot ->
+            snapshot.message
+                ?: snapshot.activeBusiness?.shopName?.let { "Signed in to $it" }
+                ?: if (snapshot.isPlatformAdmin) "Superadmin access granted" else null
+        }
+    ) = viewModelScope.launch {
+        if (_uiState.value.isAuthenticating) return@launch
+        _uiState.update { it.copy(isAuthenticating = true, startupError = null, notice = progressMessage) }
+        try {
+            val snapshot = action()
+            _uiState.update { it.copy(startupError = null, notice = successNotice(snapshot)) }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            val rawMessage = error.message.orEmpty()
+            val friendlyMessage = when {
+                rawMessage.contains("invalid login credentials", ignoreCase = true) ->
+                    "These credentials were not accepted. Check them and try again."
+                rawMessage.contains("email not confirmed", ignoreCase = true) || rawMessage.contains("email_not_confirmed", ignoreCase = true) ->
+                    "Confirm your email address before signing in."
+                rawMessage.contains("user already registered", ignoreCase = true) || rawMessage.contains("already registered", ignoreCase = true) ->
+                    "An account with this email already exists. Sign in instead."
+                else -> rawMessage.ifBlank { fallbackMessage }
+            }
+            _uiState.update { it.copy(startupError = friendlyMessage, notice = null) }
+        } finally {
+            _uiState.update { it.copy(isAuthenticating = false) }
         }
     }
 
-    fun signInWithSuperadminToken(token: String) = _uiState.update {
-        it.copy(startupError = null, notice = "Verifying Superadmin token…")
-    }.also {
-        viewModelScope.launch {
-            runCatching { repository.signInWithSuperadminToken(token) }
-                .onSuccess { _uiState.update { state -> state.copy(notice = "Superadmin access granted") } }
-                .onFailure { error -> _uiState.update { state -> state.copy(notice = null, startupError = error.message ?: "Superadmin token sign-in failed") } }
-        }
-    }
+    fun signIn(email: String, password: String) = runAuthentication(
+        progressMessage = "Signing in…",
+        fallbackMessage = "Sign in failed",
+        action = { repository.signIn(email, password) }
+    )
+
+    fun signInWithPasskey(passkey: String) = runAuthentication(
+        progressMessage = "Verifying access passkey…",
+        fallbackMessage = "Passkey sign-in failed",
+        action = { repository.signInWithPasskey(passkey) }
+    )
+
+    fun signInWithSuperadminToken(token: String) = runAuthentication(
+        progressMessage = "Verifying Superadmin token…",
+        fallbackMessage = "Superadmin token sign-in failed",
+        action = { repository.signInWithSuperadminToken(token) }
+    ) { "Superadmin access granted" }
 
     fun signInWithCredential(credential: String) {
         val value = credential.trim()
@@ -464,18 +489,41 @@ class CounterPosViewModel(
         }
     }
 
-    fun signUp(email: String, password: String) = viewModelScope.launch {
-        _uiState.update { it.copy(startupError = null, notice = null) }
-        runCatching { repository.signUp(email, password) }
-            .onSuccess { snapshot ->
-                snapshot.message?.let { message -> _uiState.update { it.copy(notice = message) } }
-            }
-            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not create account") } }
-    }
+    fun signUp(email: String, password: String) = runAuthentication(
+        progressMessage = "Creating your account…",
+        fallbackMessage = "Could not create account",
+        action = { repository.signUp(email, password) },
+        successNotice = { it.message }
+    )
 
-    fun createBusiness(name: String) = viewModelScope.launch {
-        runCatching { repository.createBusiness(name) }
-            .onFailure { error -> _uiState.update { it.copy(startupError = error.message ?: "Could not create business") } }
+    fun createBusiness(
+        name: String,
+        businessType: String = "big_club",
+        businessSize: String = "medium",
+        inventoryMode: String = "shared",
+        counterCount: Int = 1
+    ) = viewModelScope.launch {
+        if (_uiState.value.isCreatingBusiness) return@launch
+        _uiState.update { it.copy(isCreatingBusiness = true, startupError = null, notice = "Creating your business…") }
+        try {
+            repository.createBusiness(name, businessType, businessSize, inventoryMode, counterCount)
+            _uiState.update { it.copy(startupError = null, notice = "Business created. Opening your workspace…") }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            val message = error.message.orEmpty()
+            val friendly = when {
+                message.contains("PGRST202", ignoreCase = true) ||
+                    (message.contains("create_owner_business_profile", ignoreCase = true) && message.contains("not found", ignoreCase = true)) ->
+                    "Business setup is not enabled on this backend yet. Apply the latest backend migrations, then try again."
+                message.contains("business_name_already_exists", ignoreCase = true) ->
+                    "A business with this name already exists for this account. Sign in to it or choose a different name."
+                else -> message.ifBlank { "Could not create business" }
+            }
+            _uiState.update { it.copy(startupError = friendly, notice = null) }
+        } finally {
+            _uiState.update { it.copy(isCreatingBusiness = false) }
+        }
     }
 
     fun selectBusiness(shopId: String) = viewModelScope.launch {

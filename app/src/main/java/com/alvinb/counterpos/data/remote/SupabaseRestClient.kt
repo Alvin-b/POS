@@ -398,6 +398,22 @@ class SupabaseRestClient(context: Context) {
     suspend fun createShop(name: String): JSONObject =
         rpcObject("create_shop", JSONObject().put("_name", name.trim()))
 
+    suspend fun createOwnerBusinessProfile(
+        name: String,
+        businessType: String,
+        businessSize: String,
+        inventoryMode: String,
+        counterCount: Int
+    ): JSONObject = rpcObject(
+        "create_owner_business_profile",
+        JSONObject()
+            .put("_name", name.trim())
+            .put("_business_type", businessType)
+            .put("_business_size", businessSize)
+            .put("_counter_inventory_mode", inventoryMode)
+            .put("_counter_count", counterCount)
+    )
+
     suspend fun products(shopId: String): JSONArray = query(
         "products?select=*&shop_id=eq.$shopId&or=(archived.is.null,archived.eq.false)&order=name.asc"
     )
