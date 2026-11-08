@@ -540,8 +540,8 @@ class CounterPosViewModel(
                 _uiState.update {
                     it.copy(
                         isAuthenticating = false,
-                        startupError = null,
-                        notice = sessionSnapshot.message ?: "Account created! Confirm your email, then sign in with your email and password to open $cleanName."
+                        startupError = "Your account was created, but the business cannot launch until email confirmation is complete. Check $cleanEmail, confirm the account, then sign in to finish setting up $cleanName.",
+                        notice = null
                     )
                 }
                 return@launch
