@@ -298,7 +298,6 @@ class CounterPosViewModel(
             try {
                 repository.restoreSession()
                 _uiState.update { it.copy(isReady = true) }
-                if (!repository.session.value.isAuthenticated) prepareQrChallenge()
                 monitorActiveHours()
             } catch (e: Exception) {
                 _uiState.update {
@@ -307,7 +306,6 @@ class CounterPosViewModel(
                         startupError = if (repository.session.value.isAuthenticated) null else e.message
                     )
                 }
-                if (!repository.session.value.isAuthenticated) prepareQrChallenge()
                 monitorActiveHours()
             }
         }
@@ -625,7 +623,6 @@ class CounterPosViewModel(
     fun signOut() = viewModelScope.launch {
         repository.signOut()
         _uiState.update { it.copy(loginQrPayload = null, loginQrExpiresAtMillis = null, isQrPolling = false, adminEnrollmentCredential = null, startupError = null, notice = null) }
-        prepareQrChallenge()
     }
 
     fun clearStartupError() = _uiState.update { it.copy(startupError = null) }
