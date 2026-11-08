@@ -135,11 +135,7 @@ fun RegisterBusinessScreen(
     val isLiquorStore = businessType == "counter_seller" || businessType == "liquor_store"
 
     val emailValid = android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()
-    val passwordValid = password.length >= 10 &&
-        password.any(Char::isUpperCase) &&
-        password.any(Char::isLowerCase) &&
-        password.any(Char::isDigit) &&
-        password.any { !it.isLetterOrDigit() }
+    val passwordValid = password.length >= 6
     val passwordsMatch = password.isNotBlank() && password == passwordConfirmation
     val businessNameValid = businessName.trim().length in 2..120
     val counterCountValid = !isClub || (counterCount.toIntOrNull()?.let { it in 1..50 } == true)
@@ -314,7 +310,7 @@ fun RegisterBusinessScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("register_password_input"),
-                            label = { Text("Password (10+ characters)") },
+                            label = { Text("Password (min 6 characters)") },
                             visualTransformation = PasswordVisualTransformation(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             singleLine = true,
@@ -322,7 +318,7 @@ fun RegisterBusinessScreen(
                             isError = password.isNotEmpty() && !passwordValid,
                             supportingText = {
                                 if (password.isNotEmpty() && !passwordValid) {
-                                    Text("Use 10+ characters with uppercase, lowercase, a number, and a symbol. Avoid common or reused passwords.")
+                                    Text("Password must be at least 6 characters.")
                                 }
                             },
                             shape = RoundedCornerShape(14.dp)
