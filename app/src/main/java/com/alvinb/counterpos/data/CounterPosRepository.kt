@@ -1211,7 +1211,8 @@ class CounterPosRepository(
                 counterId = counterId,
                 quantity = sale.quantity,
                 unitName = sale.unitName,
-                unitPrice = sale.unitPriceKsh
+                unitPrice = sale.unitPriceKsh,
+                paymentMethod = sale.paymentMethod
             )
             val remoteId = result.optString("id").takeIf(String::isNotBlank) ?: "offline-${sale.id}"
             dao.markSaleUploaded(sale.id, remoteId)
@@ -1626,6 +1627,26 @@ class CounterPosRepository(
             check(current.remoteId == product.remoteId && current.name == product.name) {
                 "This product changed businesses. Reopen the active shop’s product list and try again."
             }
+            val sourceUri = Uri.parse(uri)
+            val mimeType = context.contentResolver.getType(sourceUri)?.lowercase(Locale.ROOT) ?: "image/jpeg"
+            val extension = when (mimeType) {
+                "image/png" -> "png"
+                "image/webp" -> "webp"
+                else -> "jpg"
+            }
+            val bytes = withContext(Dispatchers.IO) {
+                context.contentResolver.openInputStream(sourceUri)?.use { it.readBytes() }
+                    ?: throw IOException("Could not read the selected photo. Choose the image again and retry.")
+            }
+            val remoteId = current.remoteId ?: throw IllegalStateException("This product is not synced yet. Sync the product before adding a photo.")
+            remote.uploadProductPhoto(
+                productId = remoteId,
+                shopId = shop.shopId,
+                productCode = product.catalogCode,
+                bytes = bytes,
+                contentType = mimeType,
+                extension = extension
+            )
             val storedUri = persistProductPhoto(shop.shopId, product.catalogCode, uri)
             dao.updatePhotoOverride(product.catalogCode, storedUri) == 1
         }
@@ -1744,6 +1765,46 @@ class CounterPosRepository(
         true
     }
 
+    suspend fun recordDispensation(
+        code: String,
+        quantity: Int,
+        unitName: String,
+        counterId: String,
+        waiterName: String,
+        tableId: String? = null,
+        tableName: String? = null
+    ): Boolean = withActiveProduct(code) { product ->
+        require(activeBusiness!!.role in setOf("owner", "manager", "cashier")) {
+            "Only business staff can record dispensations."
+        }
+        require(quantity > 0) { "Quantity must be greater than zero." }
+        val stockToDecrement = when (unitName.lowercase(Locale.ROOT)) {
+            "bottle", "can", "unit" -> quantity
+            else -> 1
+        }
+        val note = buildString {
+            append("Taken by ").append(waiterName.ifBlank { "staff" })
+            tableName?.takeIf(String::isNotBlank)?.let { append(" at ").append(it) }
+            tableId?.takeIf(String::isNotBlank)?.let { append(" (").append(it).append(")") }
+        }
+        val payload = JSONObject()
+            .put("product_code", product.catalogCode)
+            .put("counter_id", counterId)
+            .put("quantity", quantity)
+            .put("unit_name", unitName)
+            .put("note", note)
+        val queued = dao.queueDispensationAtCounter(
+            newOutbox("dispensation", payload),
+            product.catalogCode,
+            counterId,
+            stockToDecrement,
+            activeBusiness!!.counterInventoryMode == "per_counter"
+        )
+        check(queued) { "Not enough stock is available at this counter." }
+        scheduleAndAttemptSync()
+        true
+    }
+
     private suspend fun <T> withActiveBusiness(block: suspend () -> T): T {
         check(activeBusiness != null) { "Select an active business first." }
         return block()
@@ -1774,6 +1835,14 @@ class CounterPosRepository(
                 try {
                     val payload = prepareOutboxPayload(item)
                     val result = when (item.operationType) {
+                        "dispensation" -> remote.recordDispensationFromCounter(
+                            shopId = item.shopId,
+                            productId = payload.optString("product_id"),
+                            counterId = payload.optString("counter_id"),
+                            quantity = payload.optInt("qty", 1),
+                            unitName = payload.optString("unit_name", "Bottle"),
+                            note = payload.optString("note").takeIf(String::isNotBlank)
+                        )
                         "settle_table_bill" -> remote.settleTableBill(
                             item.shopId,
                             payload.optString("table_id"),
@@ -1845,6 +1914,12 @@ class CounterPosRepository(
                     ?: throw java.io.IOException("Waiting for the queued table creation to sync first.")
                 JSONObject().put("table_id", tableId).put("payment_method", local.optString("payment_method"))
             }
+            "dispensation" -> JSONObject()
+                .put("product_id", productId())
+                .put("counter_id", local.optString("counter_id"))
+                .put("qty", local.optInt("quantity", 1))
+                .put("unit_name", local.optString("unit_name", "Bottle"))
+                .put("note", local.optString("note"))
             "sale" -> coreSaleFields()
             "table_sale" -> {
                 val table = dao.getDiningTable(local.optString("table_local_id"))

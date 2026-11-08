@@ -332,6 +332,27 @@ interface CounterPosDao {
     }
 
     @Transaction
+    suspend fun queueDispensationAtCounter(
+        outbox: OutboxEntity,
+        productCode: String,
+        counterId: String,
+        stockToDecrement: Int,
+        perCounter: Boolean
+    ): Boolean {
+        if (stockToDecrement < 1) return false
+        val product = getProductByCode(productCode) ?: return false
+        if (!product.inMyStock) return false
+        if (perCounter) {
+            val stock = getCounterStockQuantity(counterId, productCode) ?: return false
+            if (stock < stockToDecrement || decrementCounterStock(counterId, productCode, stockToDecrement) != 1) return false
+        } else {
+            if (product.stockQuantity < stockToDecrement || decrementStock(productCode, stockToDecrement) != 1) return false
+        }
+        enqueueOutbox(outbox)
+        return true
+    }
+
+    @Transaction
     suspend fun queueTableSale(order: TableOrderEntity, sale: SaleEntity, outbox: OutboxEntity, stockToDecrement: Int): Long? {
         if (stockToDecrement < 0 || getDiningTable(order.tableId) == null) return null
         val product = getProductByCode(sale.catalogCode) ?: return null

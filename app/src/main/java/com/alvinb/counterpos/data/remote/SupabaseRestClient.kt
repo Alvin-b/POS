@@ -12,6 +12,7 @@ import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.UUID
 
 open class SupabaseHttpException(val statusCode: Int, message: String) : IOException(message)
 
@@ -447,11 +448,65 @@ class SupabaseRestClient(context: Context) {
         )
     }
 
-    suspend fun products(shopId: String): JSONArray = query(
-        "products?select=*&shop_id=eq.$shopId&or=(archived.is.null,archived.eq.false)&order=name.asc"
-    )
+    suspend fun products(shopId: String): JSONArray {
+        val rows = query(
+            "products?select=*&shop_id=eq.$shopId&or=(archived.is.null,archived.eq.false)&order=name.asc"
+        )
+        for (index in 0 until rows.length()) {
+            val row = rows.optJSONObject(index) ?: continue
+            if (row.optString("photo_url").isBlank()) {
+                val path = row.optString("photo_path").takeIf(String::isNotBlank)
+                if (path != null) {
+                    runCatching { signedProductPhotoUrl(path) }
+                        .getOrNull()
+                        ?.let { row.put("photo_url", it) }
+                }
+            }
+        }
+        return rows
+    }
 
     suspend fun catalog(): JSONArray = query("catalog_items?select=*&order=name.asc")
+
+    suspend fun uploadProductPhoto(
+        productId: String,
+        shopId: String,
+        productCode: String,
+        bytes: ByteArray,
+        contentType: String,
+        extension: String
+    ): String = withContext(Dispatchers.IO) {
+        require(bytes.isNotEmpty()) { "The selected photo is empty." }
+        val safeCode = productCode.filter { it.isLetterOrDigit() || it == '-' || it == '_' }.take(64).ifBlank { "product" }
+        val objectPath = "$shopId/${safeCode}_${UUID.randomUUID()}.$extension"
+        requestBinary(
+            "/storage/v1/object/product-photos/$objectPath",
+            "POST",
+            bytes,
+            contentType,
+            mapOf("x-upsert" to "true")
+        )
+        patch(
+            "products?id=eq.$productId",
+            JSONObject().put("photo_path", objectPath).put("photo_url", JSONObject.NULL)
+        )
+        objectPath
+    }
+
+    suspend fun signedProductPhotoUrl(objectPath: String): String? = withContext(Dispatchers.IO) {
+        val path = objectPath.trim().trimStart('/')
+        if (path.isBlank()) return@withContext null
+        val response = request(
+            "/storage/v1/object/sign/product-photos",
+            "POST",
+            JSONObject().put("expiresIn", 604800).put("paths", org.json.JSONArray().put(path)).toString(),
+            true
+        )
+        val rows = parseArray(response)
+        val signed = rows.optJSONObject(0)?.optString("signedURL").orEmpty()
+        signed.takeIf(String::isNotBlank)?.let { if (it.startsWith("http")) it else baseUrl + "/storage/v1" + it }
+    }
+
 
     suspend fun sales(shopId: String): JSONArray = query(
         "sales?select=*&shop_id=eq.$shopId&order=created_at.desc&limit=200"
@@ -544,6 +599,24 @@ class SupabaseRestClient(context: Context) {
                 .put("_payment_method", paymentMethod)
         )
 
+    suspend fun recordDispensationFromCounter(
+        shopId: String,
+        productId: String,
+        counterId: String,
+        quantity: Int,
+        unitName: String,
+        note: String?
+    ): JSONObject = rpcObject(
+        "record_dispensation_from_counter",
+        JSONObject()
+            .put("_shop", shopId)
+            .put("_product", productId)
+            .put("_counter", counterId)
+            .put("_qty", quantity)
+            .put("_unit_name", unitName)
+            .putNullable("_note", note)
+    )
+
     suspend fun recordSaleUnit(productId: String, quantity: Int, unitName: String, unitPrice: Int): JSONObject =
         rpcObject(
             "record_sale_unit",
@@ -559,6 +632,7 @@ class SupabaseRestClient(context: Context) {
             "record_sale_unit_from_counter",
             JSONObject().put("_product", productId).put("_counter", counterId).put("_qty", quantity)
                 .put("_unit_name", unitName).put("_unit_price", unitPrice)
+                .put("_payment_method", paymentMethod)
         )
 
     suspend fun undoSale(shopId: String): JSONObject =
@@ -1058,6 +1132,43 @@ class SupabaseRestClient(context: Context) {
     private suspend fun request(path: String, method: String, body: String?, authenticated: Boolean): String {
         val response = requestRaw(path, method, body, authenticated)
         return response.body
+    }
+
+    private suspend fun requestBinary(
+        path: String,
+        method: String,
+        body: ByteArray,
+        contentType: String,
+        extraHeaders: Map<String, String> = emptyMap(),
+        retryOnUnauthorized: Boolean = true
+    ): HttpResponse = withContext(Dispatchers.IO) {
+        val requestSession = session ?: throw IOException("Not signed in")
+        val connection = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
+            requestMethod = method
+            connectTimeout = 15_000
+            readTimeout = 30_000
+            doInput = true
+            doOutput = true
+            setRequestProperty("apikey", publishableKey)
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("Content-Type", contentType)
+            extraHeaders.forEach { (key, value) -> setRequestProperty(key, value) }
+            setRequestProperty("Authorization", "Bearer ${requestSession.accessToken}")
+            outputStream.use { it.write(body) }
+        }
+        val status = connection.responseCode
+        val stream = if (status in 200..299) connection.inputStream else connection.errorStream ?: runCatching { connection.inputStream }.getOrNull()
+        val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        connection.disconnect()
+        if (status == HttpURLConnection.HTTP_UNAUTHORIZED && retryOnUnauthorized) {
+            when (refreshSession(requestSession.accessToken, requestSession.userId)) {
+                RefreshOutcome.REFRESHED -> return@withContext requestBinary(path, method, body, contentType, extraHeaders, false)
+                RefreshOutcome.INVALID_REFRESH_TOKEN -> throw SupabaseUnauthorizedException("Session expired. Please sign in again.")
+                RefreshOutcome.RETRYABLE_FAILURE -> throw IOException("Session refresh is temporarily unavailable. Check the connection and try again.")
+            }
+        }
+        if (status !in 200..299) throw SupabaseApiException(status, extractError(text, status))
+        HttpResponse(status, text)
     }
 
     private suspend fun requestRaw(

@@ -1764,35 +1764,20 @@ class CounterPosViewModel(
         unitName: String,
         unitPriceKsh: Int
     ) = viewModelScope.launch {
-        if (quantity < 1 || unitPriceKsh < 1) {
-            _uiState.update { it.copy(actionError = "Select a valid quantity and sale price.") }
+        if (quantity < 1) {
+            _uiState.update { it.copy(actionError = "Select a valid quantity.") }
             return@launch
         }
         try {
-            if (tableId != null) {
-                repository.sellToTable(
-                    tableId = tableId,
-                    code = productCode,
-                    quantity = quantity,
-                    unitName = unitName,
-                    unitPriceKsh = unitPriceKsh,
-                    selectedCounterId = counterId,
-                    counterName = counterName,
-                    waiterName = waiterName
-                )
-            } else {
-                repository.sellWithUnit(
-                    code = productCode,
-                    quantity = quantity,
-                    unitName = unitName,
-                    unitPriceKsh = unitPriceKsh,
-                    selectedCounterId = counterId,
-                    counterName = counterName,
-                    waiterName = waiterName,
-                    tableId = null,
-                    tableName = "Direct Walk-in"
-                )
-            }
+            repository.recordDispensation(
+                code = productCode,
+                quantity = quantity,
+                unitName = unitName,
+                counterId = counterId,
+                waiterName = waiterName,
+                tableId = tableId,
+                tableName = tableName
+            )
             runCatching { refreshCounterStock(counterId) }
             _uiState.update {
                 it.copy(
