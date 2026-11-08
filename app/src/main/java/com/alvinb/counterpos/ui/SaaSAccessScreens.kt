@@ -45,6 +45,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -86,6 +87,7 @@ fun CounterPosApp(
 ) {
     val session by viewModel.session.collectAsStateWithLifecycle()
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    var showRegisterScreen by rememberSaveable { mutableStateOf(false) }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         when {
@@ -107,6 +109,10 @@ fun CounterPosApp(
                     viewModel.signInWithCredential(payload)
                 }
             )
+            !session.isAuthenticated && showRegisterScreen -> RegisterBusinessScreen(
+                viewModel = viewModel,
+                onNavigateToSignIn = { showRegisterScreen = false }
+            )
             !session.isAuthenticated -> AuthScreen(
                 error = state.startupError,
                 notice = state.notice,
@@ -116,6 +122,7 @@ fun CounterPosApp(
                 onRegisterBusiness = { email, password, name, type, size, mode, count ->
                     viewModel.registerOwnerAndBusiness(email, password, name, type, size, mode, count)
                 },
+                onNavigateToRegister = { showRegisterScreen = true },
                 onCredentialSignIn = viewModel::signInWithCredential,
                 onOpenScanner = { viewModel.openScanner(ScannerMode.ADMIN_QR) },
                 onRefreshQr = viewModel::prepareQrChallenge,
@@ -179,6 +186,7 @@ private fun AuthScreen(
     onEmailSignIn: (String, String) -> Unit,
     onCreateAccount: (String, String) -> Unit,
     onRegisterBusiness: (String, String, String, String, String, String, Int) -> Unit,
+    onNavigateToRegister: () -> Unit = {},
     onCredentialSignIn: (String) -> Unit,
     onOpenScanner: () -> Unit,
     onRefreshQr: () -> Unit,
@@ -293,7 +301,10 @@ private fun AuthScreen(
                     }
                 }
                 Surface(
-                    onClick = { authTab = 1; onClearError() },
+                    onClick = {
+                        onClearError()
+                        onNavigateToRegister()
+                    },
                     shape = RoundedCornerShape(10.dp),
                     color = if (authTab == 1) MaterialTheme.colorScheme.primary else Color.Transparent,
                     modifier = Modifier.weight(1.3f).testTag("auth_tab_register")
@@ -398,8 +409,8 @@ private fun AuthScreen(
                         }
                         TextButton(
                             onClick = {
-                                authTab = 1
                                 onClearError()
+                                onNavigateToRegister()
                             },
                             enabled = !isAuthenticating,
                             modifier = Modifier.align(Alignment.CenterHorizontally).testTag("switch_to_register_button")
