@@ -510,8 +510,15 @@ class CounterPosViewModel(
             _uiState.update { it.copy(startupError = "Please enter a valid email address.") }
             return@launch
         }
-        if (password.length < 6) {
-            _uiState.update { it.copy(startupError = "Password must be at least 6 characters.") }
+        val strongPassword = password.length >= 10 &&
+            password.any(Char::isUpperCase) &&
+            password.any(Char::isLowerCase) &&
+            password.any(Char::isDigit) &&
+            password.any { !it.isLetterOrDigit() }
+        if (!strongPassword) {
+            _uiState.update {
+                it.copy(startupError = "Use a unique password with at least 10 characters, uppercase and lowercase letters, a number, and a symbol.")
+            }
             return@launch
         }
         if (cleanName.isBlank()) {
