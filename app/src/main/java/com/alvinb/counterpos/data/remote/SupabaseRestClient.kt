@@ -414,6 +414,39 @@ class SupabaseRestClient(context: Context) {
             .put("_counter_count", counterCount)
     )
 
+    suspend fun patchShopProfile(
+        shopId: String,
+        businessType: String,
+        businessSize: String,
+        inventoryMode: String,
+        counterCount: Int
+    ): JSONObject = withContext(Dispatchers.IO) {
+        val flags = if (businessType == "big_club") {
+            JSONObject()
+                .put("tables", true)
+                .put("employee_management", true)
+                .put("working_hours", true)
+                .put("fifo_inventory", true)
+                .put("sales_analytics", true)
+        } else {
+            JSONObject()
+                .put("tables", false)
+                .put("employee_management", true)
+                .put("working_hours", false)
+                .put("fifo_inventory", true)
+                .put("sales_analytics", false)
+        }
+        patch(
+            "shops?id=eq.$shopId",
+            JSONObject()
+                .put("business_type", businessType)
+                .put("business_size", businessSize)
+                .put("counter_inventory_mode", inventoryMode)
+                .put("counter_count", counterCount)
+                .put("feature_flags", flags)
+        )
+    }
+
     suspend fun products(shopId: String): JSONArray = query(
         "products?select=*&shop_id=eq.$shopId&or=(archived.is.null,archived.eq.false)&order=name.asc"
     )
@@ -673,12 +706,31 @@ class SupabaseRestClient(context: Context) {
                     val existing = existingRows?.optJSONObject(0)
                     if (existing != null) {
                         val existingId = existing.getString("id")
-                        if (counterId != null) {
-                            receiveStockAtCounter(counterId, existingId, qty, unitCost)
-                        } else {
-                            receiveStock(existingId, qty, unitCost)
+                        try {
+                            if (counterId != null) {
+                                receiveStockAtCounter(counterId, existingId, qty, unitCost)
+                            } else {
+                                receiveStock(existingId, qty, unitCost)
+                            }
+                            return@withContext JSONObject().put("product_id", existingId).put("id", existingId)
+                        } catch (recvErr: Exception) {
+                            // If receive_stock_with_cost fails (e.g. HTTP 300 or missing overload), try receive_stock without cost
+                            try {
+                                if (counterId != null) {
+                                    rpcObject("receive_stock_at_counter", JSONObject().put("_counter", counterId).put("_product", existingId).put("_qty", qty))
+                                } else {
+                                    rpcObject("receive_stock", JSONObject().put("_product", existingId).put("_qty", qty))
+                                }
+                                return@withContext JSONObject().put("product_id", existingId).put("id", existingId)
+                            } catch (_: Exception) {
+                                // Fall back to direct patch on products table stock
+                                val currentStock = runCatching {
+                                    query("products?id=eq.$existingId&select=stock").optJSONObject(0)?.optInt("stock", 0) ?: 0
+                                }.getOrDefault(0)
+                                patch("products?id=eq.$existingId", JSONObject().put("stock", currentStock + qty))
+                                return@withContext JSONObject().put("product_id", existingId).put("id", existingId)
+                            }
                         }
-                        return@withContext JSONObject().put("product_id", existingId).put("id", existingId)
                     }
                 }
 
@@ -690,12 +742,22 @@ class SupabaseRestClient(context: Context) {
                             return@withContext addFromCatalogAtCounter(shopId, catalogId, counterId, qty, price, unitCost)
                         } catch (e: Exception) {
                             lastErr = e
+                            try {
+                                return@withContext rpcObject("add_from_catalog_at_counter", JSONObject().put("_shop", shopId).put("_catalog", catalogId).put("_counter", counterId).put("_qty", qty).put("_price", price))
+                            } catch (e2: Exception) {
+                                lastErr = e2
+                            }
                         }
                     } else {
                         try {
                             return@withContext addFromCatalog(shopId, catalogId, qty, price, unitCost)
                         } catch (e: Exception) {
                             lastErr = e
+                            try {
+                                return@withContext rpcObject("add_from_catalog", JSONObject().put("_shop", shopId).put("_catalog", catalogId).put("_qty", qty).put("_price", price))
+                            } catch (e2: Exception) {
+                                lastErr = e2
+                            }
                         }
                     }
                 }
@@ -707,13 +769,39 @@ class SupabaseRestClient(context: Context) {
                             return@withContext registerProductAtCounter(shopId, resolvedCode, finalName, category, price, qty, unitCost, brand, size, counterId)
                         } catch (e: Exception) {
                             lastErr = e
+                            try {
+                                return@withContext rpcObject("register_product_at_counter", JSONObject().put("_shop", shopId).put("_code", resolvedCode).put("_name", finalName).put("_price", price).put("_qty", qty.coerceAtLeast(1)).put("_counter", counterId))
+                            } catch (e2: Exception) {
+                                lastErr = e2
+                            }
                         }
                     } else {
                         try {
                             return@withContext registerProduct(shopId, resolvedCode, finalName, category, price, qty, unitCost, brand, size)
                         } catch (e: Exception) {
                             lastErr = e
+                            try {
+                                return@withContext rpcObject("register_product", JSONObject().put("_shop", shopId).put("_code", resolvedCode).put("_name", finalName).put("_price", price).put("_qty", qty.coerceAtLeast(1)))
+                            } catch (e2: Exception) {
+                                lastErr = e2
+                            }
                         }
+                    }
+
+                    // Direct REST insertion into products table if all RPCs fail
+                    try {
+                        val newProduct = JSONObject()
+                            .put("shop_id", shopId)
+                            .put("code", resolvedCode)
+                            .put("name", finalName)
+                            .putNullable("brand", brand.ifBlank { null })
+                            .putNullable("size", size.ifBlank { null })
+                            .put("category", category)
+                            .put("price", price)
+                            .put("stock", qty)
+                        return@withContext insert("products", newProduct)
+                    } catch (_: Exception) {
+                        // ignore and throw lastErr
                     }
                 }
 
@@ -988,7 +1076,7 @@ class SupabaseRestClient(context: Context) {
             setRequestProperty("apikey", publishableKey)
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Content-Type", "application/json")
-            if (path.startsWith("/rest/v1/") && (method == "POST" || method == "PATCH")) {
+            if (path.startsWith("/rest/v1/") && !path.startsWith("/rest/v1/rpc/") && (method == "POST" || method == "PATCH")) {
                 setRequestProperty("Prefer", "return=representation")
             }
             if (authenticated) {
@@ -1000,7 +1088,11 @@ class SupabaseRestClient(context: Context) {
             }
         }
         val status = connection.responseCode
-        val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+        val stream = if (status in 200..299) {
+            connection.inputStream
+        } else {
+            connection.errorStream ?: runCatching { connection.inputStream }.getOrNull()
+        }
         val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
         connection.disconnect()
         if (status == HttpURLConnection.HTTP_UNAUTHORIZED && authenticated && retryOnUnauthorized) {

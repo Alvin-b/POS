@@ -16,13 +16,17 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -106,9 +110,12 @@ fun CounterPosApp(
             !session.isAuthenticated -> AuthScreen(
                 error = state.startupError,
                 notice = state.notice,
-                isAuthenticating = state.isAuthenticating,
+                isAuthenticating = state.isAuthenticating || state.isCreatingBusiness,
                 onEmailSignIn = viewModel::signIn,
                 onCreateAccount = viewModel::signUp,
+                onRegisterBusiness = { email, password, name, type, size, mode, count ->
+                    viewModel.registerOwnerAndBusiness(email, password, name, type, size, mode, count)
+                },
                 onCredentialSignIn = viewModel::signInWithCredential,
                 onOpenScanner = { viewModel.openScanner(ScannerMode.ADMIN_QR) },
                 onRefreshQr = viewModel::prepareQrChallenge,
@@ -171,22 +178,38 @@ private fun AuthScreen(
     isAuthenticating: Boolean,
     onEmailSignIn: (String, String) -> Unit,
     onCreateAccount: (String, String) -> Unit,
+    onRegisterBusiness: (String, String, String, String, String, String, Int) -> Unit,
     onCredentialSignIn: (String) -> Unit,
     onOpenScanner: () -> Unit,
     onRefreshQr: () -> Unit,
     qrPayload: String?,
     onClearError: () -> Unit
 ) {
+    var authTab by remember { mutableStateOf(0) } // 0 = Sign In, 1 = Register Business & Account
     var credential by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var passwordConfirmation by remember { mutableStateOf("") }
-    var creatingAccount by remember { mutableStateOf(false) }
+
+    // Business Profile Fields
+    var businessName by remember { mutableStateOf("") }
+    var businessType by remember { mutableStateOf("big_club") } // "big_club" vs "counter_seller"
+    var businessSize by remember { mutableStateOf("medium") } // "small", "medium", "large"
+    var inventoryMode by remember { mutableStateOf("shared") } // "shared" vs "per_counter"
+    var counterCount by remember { mutableStateOf("1") }
+
+    val isClub = businessType == "big_club"
+    val parsedCounterCount = counterCount.toIntOrNull() ?: 1
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
     val emailValid = android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()
-    val canSubmitEmail = emailValid && password.isNotBlank() &&
-        (!creatingAccount || password == passwordConfirmation) && !isAuthenticating
+    val passwordsMatch = password.isNotBlank() && password == passwordConfirmation
+
+    val canSubmitSignIn = emailValid && password.isNotBlank() && !isAuthenticating
+    val canSubmitRegister = emailValid && password.length >= 6 && passwordsMatch &&
+        businessName.trim().isNotBlank() && businessName.length <= 120 &&
+        (!isClub || parsedCounterCount in 1..50) && !isAuthenticating
+
     val visibleAuthError = error?.takeUnless { it.contains("QR", ignoreCase = true) }
 
     fun pasteFromClipboard() {
@@ -212,9 +235,9 @@ private fun AuthScreen(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .widthIn(max = 460.dp)
+                .widthIn(max = 480.dp)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 30.dp)
+                .padding(horizontal = 20.dp, vertical = 24.dp)
                 .heightIn(min = maxHeight),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
@@ -222,24 +245,75 @@ private fun AuthScreen(
             Surface(
                 shape = RoundedCornerShape(22.dp),
                 color = MaterialTheme.colorScheme.primaryContainer,
-                modifier = Modifier.size(74.dp)
+                modifier = Modifier.size(72.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Image(
                         painter = painterResource(R.drawable.ic_counterpos_logo),
                         contentDescription = "Counter POS logo",
-                        modifier = Modifier.size(48.dp)
+                        modifier = Modifier.size(46.dp)
                     )
                 }
             }
-            Spacer(Modifier.height(13.dp))
-            Text("Counter POS", fontSize = 30.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.4).sp)
+            Spacer(Modifier.height(12.dp))
+            Text("Counter POS", fontSize = 28.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.4).sp)
             Text(
-                "Fast selling for your team",
+                "Point of sale & counter inventory management",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 14.sp
+                fontSize = 13.sp,
+                textAlign = TextAlign.Center
             )
-            Spacer(Modifier.height(25.dp))
+            Spacer(Modifier.height(20.dp))
+
+            // Segmented Tab Selector between Sign In and Register Business
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Surface(
+                    onClick = { authTab = 0; onClearError() },
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (authTab == 0) MaterialTheme.colorScheme.surface else Color.Transparent,
+                    modifier = Modifier.weight(1f).testTag("auth_tab_signin")
+                ) {
+                    Box(
+                        modifier = Modifier.padding(vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "Sign In",
+                            fontSize = 14.sp,
+                            fontWeight = if (authTab == 0) FontWeight.Bold else FontWeight.Medium,
+                            color = if (authTab == 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Surface(
+                    onClick = { authTab = 1; onClearError() },
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (authTab == 1) MaterialTheme.colorScheme.primary else Color.Transparent,
+                    modifier = Modifier.weight(1.3f).testTag("auth_tab_register")
+                ) {
+                    Box(
+                        modifier = Modifier.padding(vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "Create Business",
+                            fontSize = 14.sp,
+                            fontWeight = if (authTab == 1) FontWeight.Bold else FontWeight.Medium,
+                            color = if (authTab == 1) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+
             if (!visibleAuthError.isNullOrBlank()) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -260,53 +334,129 @@ private fun AuthScreen(
                     notice,
                     modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
                     color = MaterialTheme.colorScheme.primary,
-                    fontSize = 13.sp
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center
                 )
             }
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = RoundedCornerShape(20.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-            ) {
-                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        if (creatingAccount) "Create an owner account" else "Sign in with email",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        if (creatingAccount) "Create your account, then set up your business profile."
-                        else "Use your business email and password, or sign in with a QR code or passkey below.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 13.sp,
-                        lineHeight = 19.sp
-                    )
-                    OutlinedTextField(
-                        value = email,
-                        onValueChange = { email = it; onClearError() },
-                        modifier = Modifier.fillMaxWidth().testTag("email_signin_field"),
-                        label = { Text("Email address") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                        singleLine = true,
-                        enabled = !isAuthenticating,
-                        isError = email.isNotBlank() && !emailValid
-                    )
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it; onClearError() },
-                        modifier = Modifier.fillMaxWidth().testTag("password_signin_field"),
-                        label = { Text("Password") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        singleLine = true,
-                        enabled = !isAuthenticating
-                    )
-                    if (creatingAccount) {
+
+            if (authTab == 0) {
+                // ==========================================
+                // TAB 0: SIGN IN
+                // ==========================================
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    shape = RoundedCornerShape(20.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            "Sign in to your business",
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "Enter your owner or staff email and password to access your counters.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 13.sp,
+                            lineHeight = 18.sp
+                        )
+                        OutlinedTextField(
+                            value = email,
+                            onValueChange = { email = it; onClearError() },
+                            modifier = Modifier.fillMaxWidth().testTag("email_signin_field"),
+                            label = { Text("Email address") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                            singleLine = true,
+                            enabled = !isAuthenticating,
+                            isError = email.isNotBlank() && !emailValid
+                        )
+                        OutlinedTextField(
+                            value = password,
+                            onValueChange = { password = it; onClearError() },
+                            modifier = Modifier.fillMaxWidth().testTag("password_signin_field"),
+                            label = { Text("Password") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            singleLine = true,
+                            enabled = !isAuthenticating
+                        )
+                        Button(
+                            onClick = { onEmailSignIn(email.trim(), password) },
+                            enabled = canSubmitSignIn,
+                            modifier = Modifier.fillMaxWidth().height(48.dp).testTag("email_auth_submit_button")
+                        ) {
+                            if (isAuthenticating) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(19.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Spacer(Modifier.width(10.dp))
+                            }
+                            Text(if (isAuthenticating) "Signing in…" else "Sign in")
+                        }
+                        TextButton(
+                            onClick = {
+                                authTab = 1
+                                onClearError()
+                            },
+                            enabled = !isAuthenticating,
+                            modifier = Modifier.align(Alignment.CenterHorizontally).testTag("switch_to_register_button")
+                        ) {
+                            Text("New here? Create account & business")
+                        }
+                    }
+                }
+            } else {
+                // ==========================================
+                // TAB 1: CREATE ACCOUNT & BUSINESS
+                // ==========================================
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    shape = RoundedCornerShape(20.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            "Create Account & Business",
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "Register your owner account and launch your business profile immediately.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 13.sp,
+                            lineHeight = 18.sp
+                        )
+
+                        // 1. Account Credentials
+                        Text("1. Account Credentials", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        OutlinedTextField(
+                            value = email,
+                            onValueChange = { email = it; onClearError() },
+                            modifier = Modifier.fillMaxWidth().testTag("register_email_field"),
+                            label = { Text("Email address") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                            singleLine = true,
+                            enabled = !isAuthenticating,
+                            isError = email.isNotBlank() && !emailValid
+                        )
+                        OutlinedTextField(
+                            value = password,
+                            onValueChange = { password = it; onClearError() },
+                            modifier = Modifier.fillMaxWidth().testTag("register_password_field"),
+                            label = { Text("Password (min 6 characters)") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            singleLine = true,
+                            enabled = !isAuthenticating
+                        )
                         OutlinedTextField(
                             value = passwordConfirmation,
                             onValueChange = { passwordConfirmation = it; onClearError() },
-                            modifier = Modifier.fillMaxWidth().testTag("password_confirmation_field"),
+                            modifier = Modifier.fillMaxWidth().testTag("register_password_confirm_field"),
                             label = { Text("Confirm password") },
                             visualTransformation = PasswordVisualTransformation(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
@@ -314,38 +464,164 @@ private fun AuthScreen(
                             enabled = !isAuthenticating,
                             isError = passwordConfirmation.isNotEmpty() && passwordConfirmation != password
                         )
-                    }
-                    Button(
-                        onClick = {
-                            if (creatingAccount) onCreateAccount(email.trim(), password)
-                            else onEmailSignIn(email.trim(), password)
-                        },
-                        enabled = canSubmitEmail,
-                        modifier = Modifier.fillMaxWidth().height(50.dp).testTag("email_auth_submit_button")
-                    ) {
-                        if (isAuthenticating) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(19.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                        // 2. Business Profile
+                        Text("2. Business Profile", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        OutlinedTextField(
+                            value = businessName,
+                            onValueChange = { businessName = it; onClearError() },
+                            modifier = Modifier.fillMaxWidth().testTag("register_business_name_field"),
+                            label = { Text("Business name (e.g. Mama Jane Pub)") },
+                            singleLine = true,
+                            enabled = !isAuthenticating
+                        )
+
+                        // Business Type
+                        Text("Business Type", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = businessType == "big_club",
+                                onClick = {
+                                    businessType = "big_club"
+                                    if (counterCount.toIntOrNull() == null || counterCount.toIntOrNull()!! < 1) counterCount = "1"
+                                },
+                                label = { Text("Bar & Club") },
+                                modifier = Modifier.weight(1f).testTag("register_type_club")
                             )
-                            Spacer(Modifier.width(10.dp))
+                            FilterChip(
+                                selected = businessType == "counter_seller",
+                                onClick = {
+                                    businessType = "counter_seller"
+                                    counterCount = "1"
+                                    inventoryMode = "shared"
+                                    businessSize = "medium"
+                                },
+                                label = { Text("Liquor Store") },
+                                modifier = Modifier.weight(1f).testTag("register_type_store")
+                            )
                         }
-                        Text(if (isAuthenticating) "Please wait…" else if (creatingAccount) "Create account" else "Sign in")
-                    }
-                    TextButton(
-                        onClick = {
-                            creatingAccount = !creatingAccount
-                            passwordConfirmation = ""
-                            onClearError()
-                        },
-                        enabled = !isAuthenticating,
-                        modifier = Modifier.align(Alignment.CenterHorizontally)
-                    ) {
-                        Text(if (creatingAccount) "Already have an account? Sign in" else "New here? Create an owner account")
+
+                        if (isClub) {
+                            Text("Scale & Tables", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                listOf("small" to "Small", "medium" to "Medium", "large" to "Large").forEach { (size, label) ->
+                                    FilterChip(
+                                        selected = businessSize == size,
+                                        onClick = { businessSize = size },
+                                        label = { Text(label, fontSize = 12.sp) },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+
+                            // Counters configuration
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Service Counters", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                    Text("Number of dispensing stations", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            val current = counterCount.toIntOrNull() ?: 1
+                                            if (current > 1) counterCount = (current - 1).toString()
+                                        },
+                                        modifier = Modifier.size(36.dp),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                                    ) {
+                                        Icon(Icons.Default.Remove, contentDescription = "Decrease counters", modifier = Modifier.size(16.dp))
+                                    }
+                                    Text(counterCount, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                    OutlinedButton(
+                                        onClick = {
+                                            val current = counterCount.toIntOrNull() ?: 1
+                                            if (current < 20) counterCount = (current + 1).toString()
+                                        },
+                                        modifier = Modifier.size(36.dp),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                                    ) {
+                                        Icon(Icons.Default.Add, contentDescription = "Increase counters", modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            }
+
+                            Text("Inventory Mode", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                FilterChip(
+                                    selected = inventoryMode == "shared",
+                                    onClick = { inventoryMode = "shared" },
+                                    label = { Text("Shared Stock") },
+                                    modifier = Modifier.weight(1f)
+                                )
+                                FilterChip(
+                                    selected = inventoryMode == "per_counter",
+                                    onClick = { inventoryMode = "per_counter" },
+                                    label = { Text("By Counter") },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+
+                        Button(
+                            onClick = {
+                                onRegisterBusiness(
+                                    email.trim(),
+                                    password,
+                                    businessName.trim(),
+                                    businessType,
+                                    businessSize,
+                                    inventoryMode,
+                                    parsedCounterCount
+                                )
+                            },
+                            enabled = canSubmitRegister,
+                            modifier = Modifier.fillMaxWidth().height(50.dp).testTag("register_business_submit_button")
+                        ) {
+                            if (isAuthenticating) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(19.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Spacer(Modifier.width(10.dp))
+                            }
+                            Text(if (isAuthenticating) "Setting up business…" else "Register Business & Start POS", fontWeight = FontWeight.Bold)
+                        }
+
+                        TextButton(
+                            onClick = {
+                                authTab = 0
+                                onClearError()
+                            },
+                            enabled = !isAuthenticating,
+                            modifier = Modifier.align(Alignment.CenterHorizontally)
+                        ) {
+                            Text("Already have an account? Sign in")
+                        }
                     }
                 }
             }
+
             Spacer(Modifier.height(18.dp))
             Text("OR SIGN IN WITH QR / PASSKEY", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(10.dp))

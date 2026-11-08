@@ -496,6 +496,97 @@ class CounterPosViewModel(
         successNotice = { it.message }
     )
 
+    fun registerOwnerAndBusiness(
+        email: String,
+        password: String,
+        businessName: String,
+        businessType: String = "big_club",
+        businessSize: String = "medium",
+        inventoryMode: String = "shared",
+        counterCount: Int = 1
+    ) = viewModelScope.launch {
+        if (_uiState.value.isAuthenticating || _uiState.value.isCreatingBusiness) return@launch
+        val cleanEmail = email.trim()
+        val cleanName = businessName.trim()
+        if (!android.util.Patterns.EMAIL_ADDRESS.matcher(cleanEmail).matches()) {
+            _uiState.update { it.copy(startupError = "Please enter a valid email address.") }
+            return@launch
+        }
+        if (password.length < 6) {
+            _uiState.update { it.copy(startupError = "Password must be at least 6 characters.") }
+            return@launch
+        }
+        if (cleanName.isBlank()) {
+            _uiState.update { it.copy(startupError = "Please enter your business name.") }
+            return@launch
+        }
+
+        _uiState.update {
+            it.copy(
+                isAuthenticating = true,
+                startupError = null,
+                notice = "Creating your account…"
+            )
+        }
+
+        try {
+            val sessionSnapshot = repository.signUp(cleanEmail, password)
+            var currentSession = repository.session.value
+            if (!currentSession.isAuthenticated) {
+                // If signUp did not automatically log in, try signIn in case email confirmation is disabled
+                runCatching { repository.signIn(cleanEmail, password) }
+                currentSession = repository.session.value
+            }
+
+            if (!currentSession.isAuthenticated) {
+                _uiState.update {
+                    it.copy(
+                        isAuthenticating = false,
+                        startupError = null,
+                        notice = sessionSnapshot.message ?: "Account created! Confirm your email, then sign in with your email and password to open $cleanName."
+                    )
+                }
+                return@launch
+            }
+
+            _uiState.update {
+                it.copy(
+                    isAuthenticating = false,
+                    isCreatingBusiness = true,
+                    notice = "Setting up $cleanName…"
+                )
+            }
+
+            repository.createBusiness(cleanName, businessType, businessSize, inventoryMode, counterCount)
+            _uiState.update {
+                it.copy(
+                    isCreatingBusiness = false,
+                    startupError = null,
+                    notice = "Business profile created. Welcome to $cleanName!"
+                )
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            val msg = error.message.orEmpty()
+            val friendly = when {
+                msg.contains("User already registered", ignoreCase = true) || msg.contains("already registered", ignoreCase = true) ->
+                    "An account with this email already exists. Please sign in with your password."
+                msg.contains("business_name_already_exists", ignoreCase = true) ->
+                    "A business named $cleanName already exists for this account."
+                else -> msg.ifBlank { "Could not complete registration." }
+            }
+            _uiState.update {
+                it.copy(
+                    isAuthenticating = false,
+                    isCreatingBusiness = false,
+                    startupError = friendly,
+                    notice = null
+                )
+            }
+        }
+    }
+
     fun createBusiness(
         name: String,
         businessType: String = "big_club",
@@ -734,7 +825,11 @@ class CounterPosViewModel(
                 )
             }
         } catch (error: Exception) {
-            _uiState.update { it.copy(actionError = error.message ?: "Could not create employee recovery code") }
+            val msg = error.message.orEmpty()
+            val friendly = if (msg.contains("function was not found", ignoreCase = true) || msg.contains("404", ignoreCase = true) || msg.contains("Requested function", ignoreCase = true)) {
+                "Staff QR re-enrollment requires the backend edge function. You can also re-add this staff member by their email address in the Enroll Waiter tab."
+            } else msg.ifBlank { "Could not create employee recovery code" }
+            _uiState.update { it.copy(actionError = friendly) }
         } finally {
             _uiState.update { it.copy(isIssuingEmployeeRecoveryPass = false) }
         }
@@ -1066,12 +1161,15 @@ class CounterPosViewModel(
         val currentSession = session.value
         val currentState = _uiState.value
         val isPlatformAdmin = currentSession.isPlatformAdmin
-        val shopId = if (isPlatformAdmin) currentState.adminSelectedBusinessId else currentSession.activeBusiness?.shopId
+        val autoSelectedShopId = if (isPlatformAdmin && currentState.adminSelectedBusinessId.isNullOrBlank() && _adminBusinesses.value.size == 1) {
+            _adminBusinesses.value.first().shopId
+        } else currentState.adminSelectedBusinessId
+        val shopId = if (isPlatformAdmin) autoSelectedShopId else currentSession.activeBusiness?.shopId
         val business = _adminBusinesses.value.firstOrNull { it.shopId == shopId }
         val businessRole = currentSession.activeBusiness?.role
         val role = if (isPlatformAdmin) currentState.adminQrRole else "cashier"
 
-        if (qr.startsWith("CPR1|")) {
+        if (qr.startsWith("CPR1|", ignoreCase = true)) {
             if (shopId.isNullOrBlank()) {
                 _uiState.update { it.copy(isScannerOpen = false, startupError = "Select a business before scanning the phone's sign-in QR.") }
             } else if (isPlatformAdmin && (business == null || business.status != "active")) {
@@ -1571,11 +1669,16 @@ class CounterPosViewModel(
 
     fun handleUnrecognizedBarcode(barcode: String) {
         val clean = barcode.trim()
-        if (clean.startsWith("CPR1|") ||
-            clean.startsWith("CPX1.", ignoreCase = true) ||
-            clean.startsWith("CPT1|", ignoreCase = true)
-        ) {
-            handleAdminQrCode(clean)
+        val cprIdx = clean.indexOf("CPR1|", ignoreCase = true)
+        val cpxIdx = clean.indexOf("CPX1.", ignoreCase = true)
+        val cptIdx = clean.indexOf("CPT1|", ignoreCase = true)
+        if (cprIdx >= 0 || cpxIdx >= 0 || cptIdx >= 0) {
+            val token = when {
+                cprIdx >= 0 -> clean.substring(cprIdx)
+                cpxIdx >= 0 -> clean.substring(cpxIdx)
+                else -> clean.substring(cptIdx)
+            }
+            handleAdminQrCode(token)
             return
         }
         _uiState.update {

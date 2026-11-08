@@ -398,14 +398,36 @@ class CounterPosRepository(
         val selectedCounterCount = if (isLiquorStore) 1 else counterCount
         require(selectedSize in setOf("small", "medium", "large")) { "Choose a valid business size." }
         require(selectedInventoryMode in setOf("shared", "per_counter")) { "Choose a valid inventory mode." }
-        require(selectedCounterCount in 1..50) { "Choose between 1 and 50 service counters." }
-        remote.createOwnerBusinessProfile(
-            name.trim(),
-            businessType,
-            selectedSize,
-            selectedInventoryMode,
-            selectedCounterCount
-        )
+        try {
+            remote.createOwnerBusinessProfile(
+                name.trim(),
+                businessType,
+                selectedSize,
+                selectedInventoryMode,
+                selectedCounterCount
+            )
+        } catch (e: Exception) {
+            val msg = e.message.orEmpty()
+            if (msg.contains("PGRST202", ignoreCase = true) ||
+                (msg.contains("create_owner_business_profile", ignoreCase = true) && msg.contains("not found", ignoreCase = true))
+            ) {
+                val created = remote.createShop(name.trim())
+                val shopId = created.optString("id").ifBlank { created.optString("shop_id") }
+                if (shopId.isNotBlank()) {
+                    runCatching {
+                        remote.patchShopProfile(
+                            shopId = shopId,
+                            businessType = businessType,
+                            businessSize = selectedSize,
+                            inventoryMode = selectedInventoryMode,
+                            counterCount = selectedCounterCount
+                        )
+                    }
+                }
+            } else {
+                throw e
+            }
+        }
         loadAccount(autoSelectSingleBusiness = true)
     }
 

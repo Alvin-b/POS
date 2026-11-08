@@ -707,11 +707,16 @@ private fun handleBarcodeResult(
     val clean = barcode.trim()
 
     // Detect QR enrollment challenges or passkeys immediately in ANY scanner mode
-    if (clean.startsWith("CPR1|") ||
-        clean.startsWith("CPX1.", ignoreCase = true) ||
-        clean.startsWith("CPT1|", ignoreCase = true)
-    ) {
-        onAdminQrCodeScanned(clean)
+    val cprIdx = clean.indexOf("CPR1|", ignoreCase = true)
+    val cpxIdx = clean.indexOf("CPX1.", ignoreCase = true)
+    val cptIdx = clean.indexOf("CPT1|", ignoreCase = true)
+    if (cprIdx >= 0 || cpxIdx >= 0 || cptIdx >= 0) {
+        val token = when {
+            cprIdx >= 0 -> clean.substring(cprIdx)
+            cpxIdx >= 0 -> clean.substring(cpxIdx)
+            else -> clean.substring(cptIdx)
+        }
+        onAdminQrCodeScanned(token)
         return
     }
 
