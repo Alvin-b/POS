@@ -3,6 +3,7 @@ package com.alvinb.counterpos.data.remote
 import android.content.Context
 import com.alvinb.counterpos.BuildConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -10,8 +11,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.nio.charset.StandardCharsets
+import java.net.ConnectException
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
+import java.net.UnknownHostException
 import java.util.UUID
 
 open class SupabaseHttpException(val statusCode: Int, message: String) : IOException(message)
@@ -191,16 +195,18 @@ class SupabaseRestClient(context: Context) {
     suspend fun createAccessPass(shopId: String, role: String): JSONObject =
         parseObject(request("/functions/v1/create-access-pass", "POST", JSONObject().put("shop_id", shopId).put("role", role).toString(), true))
 
-    suspend fun createAccessChallenge(): JSONObject =
-        parseObject(request(
+    suspend fun createAccessChallenge(): JSONObject = parseObject(withNetworkRetry {
+        request(
             "/functions/v1/create-access-challenge",
             "POST",
             JSONObject().put("device_id", installationId).toString(),
             false
-        ))
+        )
+    })
 
-    suspend fun pollAccessChallenge(token: String): JSONObject =
-        parseObject(request("/functions/v1/poll-access-challenge", "POST", JSONObject().put("token", token).toString(), false))
+    suspend fun pollAccessChallenge(token: String): JSONObject = parseObject(withNetworkRetry {
+        request("/functions/v1/poll-access-challenge", "POST", JSONObject().put("token", token).toString(), false)
+    })
 
     suspend fun approveAccessChallenge(token: String, shopId: String, role: String): JSONObject =
         parseObject(request("/functions/v1/approve-access-challenge", "POST", JSONObject().put("token", token).put("shop_id", shopId).put("role", role).toString(), true))
@@ -1132,6 +1138,20 @@ class SupabaseRestClient(context: Context) {
     private suspend fun request(path: String, method: String, body: String?, authenticated: Boolean): String {
         val response = requestRaw(path, method, body, authenticated)
         return response.body
+    }
+
+    private suspend fun <T> withNetworkRetry(block: suspend () -> T): T {
+        var lastError: IOException? = null
+        repeat(3) { attempt ->
+            try {
+                return block()
+            } catch (error: IOException) {
+                if (error !is UnknownHostException && error !is ConnectException && error !is SocketTimeoutException) throw error
+                lastError = error
+                if (attempt < 2) delay((attempt + 1) * 1_000L)
+            }
+        }
+        throw IOException("Unable to reach the sign-in service. Check the phone's internet or DNS connection, then try again.", lastError)
     }
 
     private suspend fun requestBinary(
