@@ -31,6 +31,8 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.TableRestaurant
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -62,6 +64,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -125,6 +128,8 @@ fun RegisterBusinessScreen(
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var passwordConfirmation by remember { mutableStateOf("") }
+    var passwordVisible by remember { mutableStateOf(false) }
+    var passwordConfirmationVisible by remember { mutableStateOf(false) }
     var businessName by remember { mutableStateOf("") }
     var businessType by remember { mutableStateOf("big_club") } // "big_club" vs "counter_seller"
     var businessSize by remember { mutableStateOf("medium") } // "small", "medium", "large"
@@ -311,11 +316,22 @@ fun RegisterBusinessScreen(
                                 .fillMaxWidth()
                                 .testTag("register_password_input"),
                             label = { Text("Password (min 6 characters)") },
-                            visualTransformation = PasswordVisualTransformation(),
+                            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             singleLine = true,
                             enabled = !isCreating,
                             isError = password.isNotEmpty() && !passwordValid,
+                            trailingIcon = {
+                                IconButton(
+                                    onClick = { passwordVisible = !passwordVisible },
+                                    modifier = Modifier.testTag("toggle_register_screen_password_visibility")
+                                ) {
+                                    Icon(
+                                        imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = if (passwordVisible) "Hide password" else "Show password"
+                                    )
+                                }
+                            },
                             supportingText = {
                                 if (password.isNotEmpty() && !passwordValid) {
                                     Text("Password must be at least 6 characters.")
@@ -330,11 +346,22 @@ fun RegisterBusinessScreen(
                                 .fillMaxWidth()
                                 .testTag("register_password_confirm_input"),
                             label = { Text("Confirm Password") },
-                            visualTransformation = PasswordVisualTransformation(),
+                            visualTransformation = if (passwordConfirmationVisible) VisualTransformation.None else PasswordVisualTransformation(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             singleLine = true,
                             enabled = !isCreating,
                             isError = passwordConfirmation.isNotEmpty() && !passwordsMatch,
+                            trailingIcon = {
+                                IconButton(
+                                    onClick = { passwordConfirmationVisible = !passwordConfirmationVisible },
+                                    modifier = Modifier.testTag("toggle_register_screen_password_confirm_visibility")
+                                ) {
+                                    Icon(
+                                        imageVector = if (passwordConfirmationVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = if (passwordConfirmationVisible) "Hide password" else "Show password"
+                                    )
+                                }
+                            },
                             supportingText = {
                                 if (passwordConfirmation.isNotEmpty() && !passwordsMatch) {
                                     Text("Passwords do not match.")

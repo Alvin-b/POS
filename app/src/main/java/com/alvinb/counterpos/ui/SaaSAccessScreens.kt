@@ -23,6 +23,8 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -52,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.res.painterResource
@@ -201,6 +204,9 @@ private fun AuthScreen(
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var passwordConfirmation by remember { mutableStateOf("") }
+    var passwordVisible by remember { mutableStateOf(false) }
+    var registerPasswordVisible by remember { mutableStateOf(false) }
+    var registerPasswordConfirmVisible by remember { mutableStateOf(false) }
 
     // Business Profile Fields
     var businessName by remember { mutableStateOf("") }
@@ -390,10 +396,21 @@ private fun AuthScreen(
                             onValueChange = { password = it; onClearError() },
                             modifier = Modifier.fillMaxWidth().testTag("password_signin_field"),
                             label = { Text("Password") },
-                            visualTransformation = PasswordVisualTransformation(),
+                            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             singleLine = true,
-                            enabled = !isAuthenticating
+                            enabled = !isAuthenticating,
+                            trailingIcon = {
+                                IconButton(
+                                    onClick = { passwordVisible = !passwordVisible },
+                                    modifier = Modifier.testTag("toggle_password_visibility_signin")
+                                ) {
+                                    Icon(
+                                        imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = if (passwordVisible) "Hide password" else "Show password"
+                                    )
+                                }
+                            }
                         )
                         Button(
                             onClick = { onEmailSignIn(email.trim(), password) },
@@ -462,21 +479,43 @@ private fun AuthScreen(
                             onValueChange = { password = it; onClearError() },
                             modifier = Modifier.fillMaxWidth().testTag("register_password_field"),
                             label = { Text("Password (min 6 characters)") },
-                            visualTransformation = PasswordVisualTransformation(),
+                            visualTransformation = if (registerPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             singleLine = true,
-                            enabled = !isAuthenticating
+                            enabled = !isAuthenticating,
+                            trailingIcon = {
+                                IconButton(
+                                    onClick = { registerPasswordVisible = !registerPasswordVisible },
+                                    modifier = Modifier.testTag("toggle_register_password_visibility")
+                                ) {
+                                    Icon(
+                                        imageVector = if (registerPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = if (registerPasswordVisible) "Hide password" else "Show password"
+                                    )
+                                }
+                            }
                         )
                         OutlinedTextField(
                             value = passwordConfirmation,
                             onValueChange = { passwordConfirmation = it; onClearError() },
                             modifier = Modifier.fillMaxWidth().testTag("register_password_confirm_field"),
                             label = { Text("Confirm password") },
-                            visualTransformation = PasswordVisualTransformation(),
+                            visualTransformation = if (registerPasswordConfirmVisible) VisualTransformation.None else PasswordVisualTransformation(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             singleLine = true,
                             enabled = !isAuthenticating,
-                            isError = passwordConfirmation.isNotEmpty() && passwordConfirmation != password
+                            isError = passwordConfirmation.isNotEmpty() && passwordConfirmation != password,
+                            trailingIcon = {
+                                IconButton(
+                                    onClick = { registerPasswordConfirmVisible = !registerPasswordConfirmVisible },
+                                    modifier = Modifier.testTag("toggle_register_password_confirm_visibility")
+                                ) {
+                                    Icon(
+                                        imageVector = if (registerPasswordConfirmVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = if (registerPasswordConfirmVisible) "Hide password" else "Show password"
+                                    )
+                                }
+                            }
                         )
 
                         HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
