@@ -211,6 +211,7 @@ fun CounterPosWorkspace(
     val rawBusinessType = session.activeBusiness?.businessType.orEmpty().trim().lowercase()
     val isClub = rawBusinessType in setOf("big_club", "club", "") || session.activeBusiness == null
     val supportsTables = "tables" in enabledFeatures
+    val supportsSalesAnalytics = "sales_analytics" in enabledFeatures
     val canManageTables = role in setOf("owner", "manager", "cashier")
     val canDeleteTables = role in setOf("owner", "manager")
     val canSettleTables = role in setOf("owner", "manager", "cashier")
@@ -224,8 +225,10 @@ fun CounterPosWorkspace(
     LaunchedEffect(session.activeBusiness?.shopId, role) {
         if (role in setOf("owner", "manager")) viewModel.loadEmployeeMembers()
     }
-    LaunchedEffect(supportsTables, state.tab) {
-        if (!supportsTables && state.tab == PosTab.TABLES) viewModel.selectTab(PosTab.SCAN)
+    LaunchedEffect(supportsTables, supportsSalesAnalytics, state.tab) {
+        if ((!supportsTables && state.tab == PosTab.TABLES) || (!supportsSalesAnalytics && state.tab == PosTab.REPORTS)) {
+            viewModel.selectTab(PosTab.SCAN)
+        }
     }
     val canManageStock = role in setOf("owner", "manager", "inventory_clerk")
     val canReceiveStock = role in setOf("owner", "manager", "inventory_clerk")
@@ -243,9 +246,9 @@ fun CounterPosWorkspace(
     LaunchedEffect(state.selectedCounterId, session.activeBusiness?.counterInventoryMode, session.activeBusiness?.shopId) {
         viewModel.refreshCounterStock()
     }
-    LaunchedEffect(state.tab) {
+    LaunchedEffect(state.tab, supportsSalesAnalytics) {
         viewModel.refreshBusinessData()
-        if (state.tab == PosTab.REPORTS) viewModel.loadCounterReport(todayStartIso(), nowIso())
+        if (supportsSalesAnalytics && state.tab == PosTab.REPORTS) viewModel.loadCounterReport(todayStartIso(), nowIso())
     }
 
     LaunchedEffect(state.notice) {
@@ -401,14 +404,16 @@ fun CounterPosWorkspace(
                         colors = posNavigationItemColors(),
                         modifier = Modifier.testTag("nav_sales")
                     )
-                    NavigationBarItem(
-                        selected = state.tab == PosTab.REPORTS,
-                        onClick = { viewModel.selectTab(PosTab.REPORTS) },
-                        icon = { Icon(Icons.Default.Assessment, contentDescription = "Reports", modifier = Modifier.size(20.dp)) },
-                        label = { Text("Reports", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.REPORTS) FontWeight.Bold else FontWeight.Normal) },
-                        colors = posNavigationItemColors(),
-                        modifier = Modifier.testTag("nav_reports")
-                    )
+                    if (supportsSalesAnalytics) {
+                        NavigationBarItem(
+                            selected = state.tab == PosTab.REPORTS,
+                            onClick = { viewModel.selectTab(PosTab.REPORTS) },
+                            icon = { Icon(Icons.Default.Assessment, contentDescription = "Reports", modifier = Modifier.size(20.dp)) },
+                            label = { Text("Reports", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.REPORTS) FontWeight.Bold else FontWeight.Normal) },
+                            colors = posNavigationItemColors(),
+                            modifier = Modifier.testTag("nav_reports")
+                        )
+                    }
                     if (supportsTables) {
                         NavigationBarItem(
                             selected = state.tab == PosTab.TABLES,

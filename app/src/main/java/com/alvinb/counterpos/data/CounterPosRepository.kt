@@ -745,7 +745,7 @@ class CounterPosRepository(
     private fun createAdminBusinessMembership(business: AdminBusiness): BusinessMembership {
         val liquor = business.businessType == "counter_seller" || business.businessType == "liquor_store"
         val featureFlags = if (liquor) {
-            setOf("employee_management", "working_hours", "fifo_inventory", "sales_analytics")
+            setOf("employee_management", "fifo_inventory")
         } else {
             business.featureFlags.ifEmpty { setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics") }
         }

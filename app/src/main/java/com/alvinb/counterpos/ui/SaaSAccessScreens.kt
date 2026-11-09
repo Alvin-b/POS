@@ -468,6 +468,12 @@ private fun AuthScreen(
 
                         // 1. Account Credentials
                         Text("1. Account Credentials", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Text(
+                            "These credentials create the Owner account for this business. Superadmin access is provisioned separately.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp
+                        )
                         OutlinedTextField(
                             value = email,
                             onValueChange = { email = it; onClearError() },

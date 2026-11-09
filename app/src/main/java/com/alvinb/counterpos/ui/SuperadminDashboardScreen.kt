@@ -59,6 +59,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -246,8 +248,8 @@ fun SuperadminDashboardScreen(
                         onToggleReasonField = { showStatusReasonField = !showStatusReasonField },
                         onLifecycleReasonChange = { lifecycleReason = it },
                         onSelectBusiness = { viewModel.selectAdminBusiness(it) },
-                        onScanOwnerQr = { shopId -> viewModel.openAdminEnrollmentScanner(shopId, "owner") },
-                        onCreateOwnerPasskey = { shopId -> viewModel.createAdminEnrollmentPass(shopId, "owner") },
+                        onScanOwnerQr = { shopId, role -> viewModel.openAdminEnrollmentScanner(shopId, role) },
+                        onCreateOwnerPasskey = { shopId, role -> viewModel.createAdminEnrollmentPass(shopId, role) },
                         onClearPasskey = viewModel::clearAdminEnrollmentCredential,
                         onStatusChange = { shopId, status, fallback ->
                             val reason = lifecycleReason.trim().ifBlank { fallback }
@@ -571,8 +573,8 @@ private fun PortfolioContent(
     onToggleReasonField: () -> Unit,
     onLifecycleReasonChange: (String) -> Unit,
     onSelectBusiness: (String) -> Unit,
-    onScanOwnerQr: (String) -> Unit,
-    onCreateOwnerPasskey: (String) -> Unit,
+    onScanOwnerQr: (String, String) -> Unit,
+    onCreateOwnerPasskey: (String, String) -> Unit,
     onClearPasskey: () -> Unit,
     onStatusChange: (String, String, String?) -> Unit,
     onNavigateToRegister: () -> Unit
@@ -694,8 +696,8 @@ private fun PortfolioContent(
                     isSelected = selectedBusinessId == business.shopId,
                     adminEnrollmentCredential = adminEnrollmentCredential,
                     onSelect = { onSelectBusiness(business.shopId) },
-                    onScanOwnerQr = { onScanOwnerQr(business.shopId) },
-                    onCreateOwnerPasskey = { onCreateOwnerPasskey(business.shopId) },
+                    onScanOwnerQr = { role -> onScanOwnerQr(business.shopId, role) },
+                    onCreateOwnerPasskey = { role -> onCreateOwnerPasskey(business.shopId, role) },
                     onClearPasskey = onClearPasskey,
                     onStatusChange = onStatusChange
                 )
@@ -710,12 +712,14 @@ private fun ModernBusinessCard(
     isSelected: Boolean,
     adminEnrollmentCredential: AdminEnrollmentCredential?,
     onSelect: () -> Unit,
-    onScanOwnerQr: () -> Unit,
-    onCreateOwnerPasskey: () -> Unit,
+    onScanOwnerQr: (String) -> Unit,
+    onCreateOwnerPasskey: (String) -> Unit,
     onClearPasskey: () -> Unit,
     onStatusChange: (String, String, String?) -> Unit
 ) {
     val clipboardManager = LocalClipboardManager.current
+    var enrollmentRole by remember(business.shopId) { mutableStateOf("owner") }
+    var roleMenuExpanded by remember(business.shopId) { mutableStateOf(false) }
     val isClub = business.businessType == "big_club" || business.businessType == "club"
     val isAwaitingOwner = business.ownerEmail == "Pending owner enrollment"
     val visibleCredential = adminEnrollmentCredential?.takeIf { it.businessId == business.shopId }
@@ -921,10 +925,26 @@ private fun ModernBusinessCard(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 4.dp),
+                    .padding(top = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // Method 1: Scan owner's QR directly
+                    Box {
+                        OutlinedButton(onClick = { roleMenuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Enroll as: ${enrollmentRole.replace('_', ' ').replaceFirstChar { it.uppercase() }}")
+                            Spacer(Modifier.width(6.dp))
+                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(18.dp))
+                        }
+                        DropdownMenu(expanded = roleMenuExpanded, onDismissRequest = { roleMenuExpanded = false }) {
+                            listOf("owner", "manager", "inventory_clerk", "cashier").forEach { role ->
+                                DropdownMenuItem(
+                                    text = { Text(role.replace('_', ' ').replaceFirstChar { it.uppercase() }) },
+                                    onClick = { enrollmentRole = role; roleMenuExpanded = false }
+                                )
+                            }
+                        }
+                    }
+
+                    // Scan the selected role's pending sign-in QR.
                     Surface(
                         shape = RoundedCornerShape(14.dp),
                         color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
@@ -969,12 +989,12 @@ private fun ModernBusinessCard(
                                 }
                             }
                             Text(
-                                text = "Have the owner open 'Scan QR' on their phone login screen, then scan their screen here to immediately grant Owner access.",
+                                text = "Have the ${enrollmentRole.replace('_', ' ')} open 'Sign in with QR' on their phone, then scan that screen here to grant this role.",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Button(
-                                onClick = onScanOwnerQr,
+                                onClick = { onScanOwnerQr(enrollmentRole) },
                                 enabled = business.status == "active",
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -986,12 +1006,12 @@ private fun ModernBusinessCard(
                                     modifier = Modifier.size(17.dp)
                                 )
                                 Spacer(Modifier.width(6.dp))
-                                Text("Scan Owner QR Now")
+                                Text("Scan ${enrollmentRole.replace('_', ' ').replaceFirstChar { it.uppercase() }} QR Now")
                             }
                         }
                     }
 
-                    // Method 2: Create Owner Passkey
+                    // Issue a role-specific, single-use passkey.
                     Surface(
                         shape = RoundedCornerShape(14.dp),
                         color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
@@ -1014,19 +1034,19 @@ private fun ModernBusinessCard(
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Text(
-                                    text = "Issue Single-Use Owner Passkey",
+                                    text = "Issue Single-Use ${enrollmentRole.replace('_', ' ').replaceFirstChar { it.uppercase() }} Passkey",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 13.sp,
                                     color = MaterialTheme.colorScheme.onSecondaryContainer
                                 )
                             }
                             Text(
-                                text = "Generates a 24-hour cryptographic passkey. The owner can paste it into the app login screen to take ownership.",
+                                text = "Generates a 24-hour cryptographic passkey. The selected user enters it in the app's single sign-in field.",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Button(
-                                onClick = onCreateOwnerPasskey,
+                                onClick = { onCreateOwnerPasskey(enrollmentRole) },
                                 enabled = business.status == "active",
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1038,7 +1058,7 @@ private fun ModernBusinessCard(
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(Modifier.width(6.dp))
-                                Text("Generate 24h Owner Passkey")
+                                Text("Generate 24h ${enrollmentRole.replace('_', ' ').replaceFirstChar { it.uppercase() }} Passkey")
                             }
 
                             // Passkey presentation
@@ -1056,7 +1076,7 @@ private fun ModernBusinessCard(
                                         verticalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
                                         Text(
-                                            text = "ACTIVE OWNER PASSKEY (SHARE SECURELY)",
+                                            text = "ACTIVE ${visibleCredential.role.replace('_', ' ').uppercase()} PASSKEY (SHARE SECURELY)",
                                             fontSize = 9.sp,
                                             fontWeight = FontWeight.ExtraBold,
                                             color = MaterialTheme.colorScheme.primary,

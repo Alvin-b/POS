@@ -367,7 +367,7 @@ class SupabaseRestClient(context: Context) {
                     val isLiquor = bType.equals("counter_seller", ignoreCase = true) || bType.equals("liquor_store", ignoreCase = true)
                     val counterCount = if (isLiquor) 1 else if (isClub) row.optInt("counter_count", 1).coerceAtLeast(1) else 1
                     val defaultFlags = if (isLiquor) {
-                        setOf("employee_management", "working_hours", "fifo_inventory", "sales_analytics")
+                        setOf("employee_management", "fifo_inventory")
                     } else {
                         setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics")
                     }

@@ -1104,8 +1104,8 @@ class CounterPosViewModel(
     }
 
     fun createAdminEnrollmentPass(shopId: String, role: String) = viewModelScope.launch {
-        if (!session.value.isPlatformAdmin || role != "owner") {
-            _uiState.update { it.copy(startupError = "Superadmin can issue an owner passkey only. The owner enrolls waiters later.") }
+        if (!session.value.isPlatformAdmin || role !in setOf("owner", "manager", "inventory_clerk", "cashier")) {
+            _uiState.update { it.copy(startupError = "Only a platform administrator can issue a passkey for a valid business role.") }
             return@launch
         }
         runCatching { repository.createAdminBusinessAccessPass(shopId, role) }
@@ -1169,8 +1169,8 @@ class CounterPosViewModel(
             _uiState.update { it.copy(startupError = "Select an active business before enrolling a phone.") }
             return
         }
-        if (role != "owner") {
-            _uiState.update { it.copy(startupError = "Superadmin QR enrollment is for the business owner only. The owner enrolls waiters later.") }
+        if (role !in setOf("owner", "manager", "inventory_clerk", "cashier")) {
+            _uiState.update { it.copy(startupError = "Choose a valid role before enrolling this phone.") }
             return
         }
         _uiState.update {
@@ -1180,7 +1180,7 @@ class CounterPosViewModel(
                 isScannerOpen = true,
                 scannerMode = ScannerMode.ADMIN_QR,
                 startupError = null,
-                notice = "Scan the business owner's pending sign-in QR to grant Owner access to this business."
+                notice = "Scan the pending sign-in QR to grant ${role.replace('_', ' ')} access to this business."
             )
         }
     }
