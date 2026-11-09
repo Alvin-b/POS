@@ -71,6 +71,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -480,7 +481,7 @@ fun CounterPosWorkspace(
                     todaySummary = summary,
                     onUndo = viewModel::undoLastSale,
                     onExportPdf = { start, end ->
-                        val filtered = sales.filter { it.createdAt in start..end }
+                        val filtered = sales.filter { it.createdAt in start..end && (state.reportPaymentFilter == "all" || it.paymentMethod.equals(state.reportPaymentFilter, true)) }
                         pendingSalesPdf = buildSalesPdf(filtered, start, end, "Sales report")
                         salesPdfPicker.launch("sales-${formatReportDate(start)}-${formatReportDate(end)}.pdf")
                     },
@@ -498,7 +499,9 @@ fun CounterPosWorkspace(
                     isLoading = state.isLoadingCounterReport,
                     reportFilter = state.reportFilter,
                     reportCounterFilter = state.reportCounterFilter,
+                    reportPaymentFilter = state.reportPaymentFilter,
                     onSetReportFilter = viewModel::setReportFilter,
+                    onSetReportPaymentFilter = viewModel::setReportPaymentFilter,
                     onSetReportCounterFilter = viewModel::setReportCounterFilter,
                     onRefresh = { viewModel.loadCounterReport(todayStartIso(), nowIso()) },
                     onOpenRecordDispensation = viewModel::openRecordDispensation,
@@ -509,13 +512,13 @@ fun CounterPosWorkspace(
                     onExportPdf = {
                         val start = if (state.reportFilter == "today") startOfReportDay(System.currentTimeMillis()) else sales.minOfOrNull { it.createdAt } ?: startOfReportDay(System.currentTimeMillis())
                         val end = if (state.reportFilter == "today") endOfReportDay(System.currentTimeMillis()) else System.currentTimeMillis()
-                        pendingSalesPdf = buildSalesPdf(sales.filter { it.createdAt in start..end }, start, end, "Performance report")
+                        pendingSalesPdf = buildSalesPdf(sales.filter { it.createdAt in start..end && (state.reportPaymentFilter == "all" || it.paymentMethod.equals(state.reportPaymentFilter, true)) }, start, end, "Performance report")
                         salesPdfPicker.launch("report-${formatReportDate(start)}.pdf")
                     },
                     onSharePdf = {
                         val start = if (state.reportFilter == "today") startOfReportDay(System.currentTimeMillis()) else sales.minOfOrNull { it.createdAt } ?: startOfReportDay(System.currentTimeMillis())
                         val end = if (state.reportFilter == "today") endOfReportDay(System.currentTimeMillis()) else System.currentTimeMillis()
-                        sharePdf(context, buildSalesPdf(sales.filter { it.createdAt in start..end }, start, end, "Performance report"), "report-${formatReportDate(start)}.pdf")
+                        sharePdf(context, buildSalesPdf(sales.filter { it.createdAt in start..end && (state.reportPaymentFilter == "all" || it.paymentMethod.equals(state.reportPaymentFilter, true)) }, start, end, "Performance report"), "report-${formatReportDate(start)}.pdf")
                     }
                 )
                 PosTab.TABLES -> Box(
@@ -1568,7 +1571,9 @@ private fun CounterReportScreen(
     isLoading: Boolean,
     reportFilter: String,
     reportCounterFilter: String,
+    reportPaymentFilter: String,
     onSetReportFilter: (String) -> Unit,
+    onSetReportPaymentFilter: (String) -> Unit,
     onSetReportCounterFilter: (String) -> Unit,
     onRefresh: () -> Unit,
     onOpenRecordDispensation: () -> Unit,
@@ -1582,11 +1587,15 @@ private fun CounterReportScreen(
 
     val effectiveCounters = counters
 
-    val counterReports = remember(effectiveCounters, registeredWaiterEmails, sales, remoteRows, reportFilter) {
-        val effectiveSales = if (reportFilter == "today") {
+    val counterReports = remember(effectiveCounters, registeredWaiterEmails, sales, remoteRows, reportFilter, reportPaymentFilter) {
+        val periodSales = if (reportFilter == "today") {
             sales.filter { !it.undone && it.createdAt >= todayStart }
         } else {
             sales.filter { !it.undone }
+        }
+        val effectiveSales = when (reportPaymentFilter) {
+            "cash", "mpesa" -> periodSales.filter { it.paymentMethod.equals(reportPaymentFilter, ignoreCase = true) }
+            else -> periodSales
         }
 
         effectiveCounters.map { counter ->
@@ -1658,6 +1667,11 @@ private fun CounterReportScreen(
     val totalClubUnits = counterReports.sumOf { it.totalItems }
     val totalClubRevenue = counterReports.sumOf { it.totalKsh }
     val totalSalesCount = counterReports.sumOf { it.salesCount }
+    val periodSalesForTotals = if (reportFilter == "today") {
+        sales.filter { !it.undone && it.createdAt >= todayStart }
+    } else sales.filter { !it.undone }
+    val cashTotal = periodSalesForTotals.filter { it.paymentMethod.equals("cash", true) }.sumOf { it.totalKsh.toLong() }
+    val mpesaTotal = periodSalesForTotals.filter { it.paymentMethod.equals("mpesa", true) }.sumOf { it.totalKsh.toLong() }
     val topProducts = remember(counterReports) {
         counterReports.flatMap { it.products }
             .groupBy { it.productName to it.unitName }
@@ -1680,6 +1694,8 @@ private fun CounterReportScreen(
         sb.appendLine("Period: $dateLabel")
         sb.appendLine("Total Drinks Dispensed: $totalClubUnits")
         sb.appendLine("Total Revenue: ${kshLong(totalClubRevenue)}")
+        sb.appendLine("Cash: ${kshLong(cashTotal)}")
+        sb.appendLine("M-Pesa: ${kshLong(mpesaTotal)}")
         sb.appendLine("Sales: $totalSalesCount | Counters: ${counterReports.size}")
         sb.appendLine("========================================")
         counterReports.forEach { c ->
@@ -1737,12 +1753,32 @@ private fun CounterReportScreen(
                 }
             }
         }
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf("all" to "All payments", "cash" to "Cash", "mpesa" to "M-Pesa").forEach { (value, label) ->
+                    FilterChip(
+                        selected = reportPaymentFilter == value,
+                        onClick = { onSetReportPaymentFilter(value) },
+                        label = { Text(label, fontSize = 12.sp) }
+                    )
+                }
+            }
+        }
 
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ReportMetricCard("Revenue", kshLong(totalClubRevenue), MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer, Modifier.weight(1.2f))
                 ReportMetricCard("Drinks", totalClubUnits.toString(), MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant, Modifier.weight(0.8f))
                 ReportMetricCard("Sales", totalSalesCount.toString(), MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer, Modifier.weight(0.8f))
+            }
+        }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ReportMetricCard("Cash", kshLong(cashTotal), MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant, Modifier.weight(1f))
+                ReportMetricCard("M-Pesa", kshLong(mpesaTotal), MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer, Modifier.weight(1f))
             }
         }
 
@@ -2015,7 +2051,11 @@ private fun buildSalesPdf(sales: List<SaleEntity>, start: Long, end: Long, title
     y += 8f
     divider()
     line("SUMMARY", 10f, accent, true)
+    val cashTotal = sales.filter { it.paymentMethod.equals("cash", true) }.sumOf { it.totalKsh.toLong() }
+    val mpesaTotal = sales.filter { it.paymentMethod.equals("mpesa", true) }.sumOf { it.totalKsh.toLong() }
     line("Revenue        KSh ${NumberFormat.getIntegerInstance(Locale.US).format(sales.sumOf { it.totalKsh })}", 12f, navy, true)
+    line("Cash           KSh ${NumberFormat.getIntegerInstance(Locale.US).format(cashTotal)}", 10f, muted)
+    line("M-Pesa         KSh ${NumberFormat.getIntegerInstance(Locale.US).format(mpesaTotal)}", 10f, muted)
     line("Units sold     ${sales.sumOf { it.quantity }}        Transactions     ${sales.size}", 10f, muted)
     y += 8f
     divider()
@@ -2825,7 +2865,7 @@ private fun AddBottlesDialog(
     onDismiss: () -> Unit,
     onConfirm: (Int, Int) -> Unit
 ) {
-    var bottlesText by remember { mutableStateOf("") }
+    var bottlesText by remember { mutableStateOf(if (parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh).any { it.stockUnitsPerSale == 0 }) "1" else "") }
     var unitCostText by remember(product.catalogCode) { mutableStateOf(product.averageCostKsh.toString()) }
     val focusRequester = remember { FocusRequester() }
 
@@ -2852,8 +2892,8 @@ private fun AddBottlesDialog(
                 OutlinedTextField(
                     value = bottlesText,
                     onValueChange = { bottlesText = it.filter(Char::isDigit) },
-                    label = { Text("Number of bottles to add") },
-                    placeholder = { Text("e.g. 6, 12, 24, 48...") },
+                    label = { Text(if (parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh).any { it.stockUnitsPerSale == 0 }) "Containers to add" else "Number of bottles to add") },
+                    placeholder = { Text(if (parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh).any { it.stockUnitsPerSale == 0 }) "e.g. 1 drum, 2 barrels" else "e.g. 6, 12, 24, 48...") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier
@@ -2969,9 +3009,9 @@ private fun EditProductDialog(
         mutableStateListOf<SaleUnit>().apply { addAll(initialUnits) }
     }
 
+    var bulkStock by remember(product.catalogCode) { mutableStateOf(initialUnits.any { it.stockUnitsPerSale == 0 }) }
     var newUnitName by remember { mutableStateOf("") }
     var newUnitPriceText by remember { mutableStateOf("") }
-    var newUnitStockUnitsText by remember { mutableStateOf("1") }
 
     val quickUnits = listOf("Cup", "Glass", "Bottle", "Barrel", "Jug", "Tot", "Jerrican")
 
@@ -3112,7 +3152,7 @@ private fun EditProductDialog(
                     fontSize = 13.sp
                 )
                 Text(
-                    "How you sell this drink (e.g. Cup, Glass, Jug, Bottle, Barrel). For bulk liquor, set how many stock units each sale consumes.",
+                    "Add the units customers can buy and their prices. For drums or barrels, sale units do not require a cup count.",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -3174,19 +3214,23 @@ private fun EditProductDialog(
                             selected = newUnitName.equals(unitLabel, ignoreCase = true),
                             onClick = {
                                 newUnitName = unitLabel
-                                if (unitLabel.equals("Barrel", ignoreCase = true)) {
-                                    newUnitStockUnitsText = "100"
-                                } else if (unitLabel.equals("Jug", ignoreCase = true)) {
-                                    newUnitStockUnitsText = "5"
-                                } else {
-                                    newUnitStockUnitsText = "1"
-                                }
+                                // Sale units are priced independently. Bulk/container stock is selected below.
                             },
                             label = { Text(unitLabel, fontSize = 11.sp) }
                         )
                     }
                 }
 
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(checked = bulkStock, onCheckedChange = { bulkStock = it })
+                    Column {
+                        Text("Bulk / container stock", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Sales do not consume a container count; adjust stock when the container is empty.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
                 // Add another unit
                 Row(
                     modifier = Modifier
@@ -3210,23 +3254,13 @@ private fun EditProductDialog(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(0.9f)
                     )
-                    OutlinedTextField(
-                        value = newUnitStockUnitsText,
-                        onValueChange = { newUnitStockUnitsText = it.filter(Char::isDigit) },
-                        placeholder = { Text("Units", fontSize = 11.sp) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.weight(0.7f)
-                    )
                     IconButton(
                         onClick = {
                             val p = newUnitPriceText.toIntOrNull() ?: 0
-                            val stockUnits = newUnitStockUnitsText.toIntOrNull()?.coerceAtLeast(1) ?: 1
                             if (newUnitName.isNotBlank() && p > 0) {
-                                unitsList.add(SaleUnit(newUnitName.trim(), p, stockUnits))
+                                unitsList.add(SaleUnit(newUnitName.trim(), p, if (bulkStock) 0 else 1))
                                 newUnitName = ""
                                 newUnitPriceText = ""
-                                newUnitStockUnitsText = "1"
                             }
                         },
                         enabled = newUnitName.isNotBlank() && (newUnitPriceText.toIntOrNull() ?: 0) > 0
@@ -3246,7 +3280,7 @@ private fun EditProductDialog(
                     val s = stockText.toIntOrNull() ?: 0
                     val p = priceText.toIntOrNull() ?: 0
                     if (unitsList.isEmpty()) {
-                        unitsList.add(SaleUnit("Bottle", p))
+                        unitsList.add(SaleUnit("Bottle", p, if (bulkStock) 0 else 1))
                     }
                     onConfirm(name.trim(), s, p, unitsList.toList(), barcodeText.trim().ifBlank { null }, selectedPhotoUri)
                 },
@@ -3307,9 +3341,9 @@ private fun AddNewProductDialog(
     // Empty initial units of sale - user defines their own prices and units
     val unitsList = remember { mutableStateListOf<SaleUnit>() }
 
+    var bulkStock by remember { mutableStateOf(false) }
     var extraUnitName by remember { mutableStateOf("") }
     var extraUnitPriceText by remember { mutableStateOf("") }
-    var extraStockUnitsText by remember { mutableStateOf("1") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -3512,7 +3546,7 @@ private fun AddNewProductDialog(
                     fontSize = 13.sp
                 )
                 Text(
-                    "Set your selling units (e.g. Cup, Glass, Jug, Bottle, Barrel). Set how many stock units each sale consumes:",
+                    "Add the units customers can buy and their prices. Bulk/container stock does not require a cup count.",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -3530,13 +3564,7 @@ private fun AddNewProductDialog(
                             selected = extraUnitName.equals(unitLabel, ignoreCase = true),
                             onClick = {
                                 extraUnitName = unitLabel
-                                if (unitLabel.equals("Barrel", ignoreCase = true)) {
-                                    extraStockUnitsText = "100"
-                                } else if (unitLabel.equals("Jug", ignoreCase = true)) {
-                                    extraStockUnitsText = "5"
-                                } else {
-                                    extraStockUnitsText = "1"
-                                }
+                                // Sale units are priced independently. Bulk/container stock is selected below.
                             },
                             label = { Text(unitLabel, fontSize = 11.sp) }
                         )
@@ -3575,6 +3603,16 @@ private fun AddNewProductDialog(
                     }
                 }
 
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(checked = bulkStock, onCheckedChange = { bulkStock = it })
+                    Column {
+                        Text("Bulk / container stock", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Sales do not consume a container count; adjust stock when the container is empty.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
                 // Add additional unit
                 Row(
                     modifier = Modifier
@@ -3598,23 +3636,13 @@ private fun AddNewProductDialog(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(0.9f)
                     )
-                    OutlinedTextField(
-                        value = extraStockUnitsText,
-                        onValueChange = { extraStockUnitsText = it.filter(Char::isDigit) },
-                        placeholder = { Text("Units", fontSize = 11.sp) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.weight(0.7f)
-                    )
                     IconButton(
                         onClick = {
                             val p = extraUnitPriceText.toIntOrNull() ?: 0
-                            val stockUnits = extraStockUnitsText.toIntOrNull()?.coerceAtLeast(1) ?: 1
                             if (extraUnitName.isNotBlank() && p > 0) {
-                                unitsList.add(SaleUnit(extraUnitName.trim(), p, stockUnits))
+                                unitsList.add(SaleUnit(extraUnitName.trim(), p, if (bulkStock) 0 else 1))
                                 extraUnitName = ""
                                 extraUnitPriceText = ""
-                                extraStockUnitsText = "1"
                             }
                         },
                         enabled = extraUnitName.isNotBlank() && (extraUnitPriceText.toIntOrNull() ?: 0) > 0
@@ -3636,7 +3664,7 @@ private fun AddNewProductDialog(
                     val cost = unitCostText.toIntOrNull() ?: 0
                     val finalUnits = if (unitsList.isEmpty()) {
                         val defaultUnitName = if (selectedCategory == "Local Liquor") "Cup" else "Bottle"
-                        listOf(SaleUnit(defaultUnitName, p, 1))
+                        listOf(SaleUnit(defaultUnitName, p, if (bulkStock) 0 else 1))
                     } else {
                         unitsList.toList()
                     }

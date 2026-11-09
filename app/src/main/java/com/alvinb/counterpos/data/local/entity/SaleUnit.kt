@@ -6,7 +6,7 @@ import org.json.JSONObject
 data class SaleUnit(
     val name: String,
     val priceKsh: Int,
-    /** Whole stock units consumed per sold unit. Defaults to one for legacy catalog rows. */
+    /** Whole stock units consumed per sold unit. Zero means bulk/container stock with manual stock adjustment. */
     val stockUnitsPerSale: Int = 1
 )
 
@@ -21,7 +21,7 @@ fun parseSaleUnits(json: String?, fallbackPrice: Int = 0): List<SaleUnit> {
             val obj = array.getJSONObject(i)
             val name = obj.optString("name", "Bottle").ifBlank { "Bottle" }
             val price = obj.optInt("priceKsh", fallbackPrice)
-            val stockUnits = obj.optInt("stockUnitsPerSale", 1).coerceAtLeast(1)
+            val stockUnits = obj.optInt("stockUnitsPerSale", 1).coerceAtLeast(0)
             list.add(SaleUnit(name = name, priceKsh = price, stockUnitsPerSale = stockUnits))
         }
         if (list.isEmpty()) listOf(SaleUnit(name = "Bottle", priceKsh = fallbackPrice)) else list
@@ -37,7 +37,7 @@ fun serializeSaleUnits(units: List<SaleUnit>): String {
             val obj = JSONObject()
             obj.put("name", unit.name.trim())
             obj.put("priceKsh", unit.priceKsh.coerceAtLeast(0))
-            obj.put("stockUnitsPerSale", unit.stockUnitsPerSale.coerceAtLeast(1))
+            obj.put("stockUnitsPerSale", unit.stockUnitsPerSale.coerceAtLeast(0))
             array.put(obj)
         }
     }

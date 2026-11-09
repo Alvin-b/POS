@@ -108,6 +108,7 @@ data class CounterPosUiState(
     val availableWaiters: List<String> = emptyList(),
     val reportFilter: String = "today",
     val reportCounterFilter: String = "all",
+    val reportPaymentFilter: String = "all",
     val isRecordDispensationOpen: Boolean = false,
     val counterReport: List<CounterReportRow> = emptyList(),
     val isLoadingCounterReport: Boolean = false,
@@ -1768,6 +1769,10 @@ class CounterPosViewModel(
 
     fun setReportFilter(filter: String) = _uiState.update {
         it.copy(reportFilter = filter)
+    }
+
+    fun setReportPaymentFilter(filter: String) = _uiState.update {
+        it.copy(reportPaymentFilter = filter)
     }
 
     fun setReportCounterFilter(filter: String) = _uiState.update {

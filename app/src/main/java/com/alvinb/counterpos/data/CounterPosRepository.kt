@@ -1035,7 +1035,8 @@ class CounterPosRepository(
                     val code = row.optString("code").ifBlank { row.optString("catalog_code") }
                     val remoteId = row.optString("id").takeIf(String::isNotBlank)
                     val bundled = metadataFor(row)
-                    val fallback = bundled?.imageAssetName ?: dao.getProductByCode(code)?.imageAssetName ?: "product_stock_001"
+                    val existingLocal = dao.getProductByCode(code)
+                    val fallback = bundled?.imageAssetName ?: existingLocal?.imageAssetName ?: "product_stock_001"
                     val imageUrl = row.optNullableString("photo_url") ?: bundled?.imageSourceUrl
                     val rawStock = row.optInt("stock", row.optInt("quantity", row.optInt("stock_quantity", row.optInt("current_stock", 0))))
                     val hasCounterBalance = remoteId != null && counterStockSnapshots.values.any { it.containsKey(remoteId) }
@@ -1070,7 +1071,8 @@ class CounterPosRepository(
                             productSourceUrl = row.optNullableString("product_source_url") ?: bundled?.productSourceUrl,
                             imageSourceUrl = imageUrl,
                             verificationNote = "Business inventory",
-                            salesUnitsJson = serializeSaleUnits(listOf(SaleUnit("Bottle", price))),
+                            salesUnitsJson = existingLocal?.salesUnitsJson?.takeIf(String::isNotBlank)
+                                ?: serializeSaleUnits(listOf(SaleUnit("Bottle", price))),
                             remoteId = remoteId,
                             averageCostKsh = cost
                         )
