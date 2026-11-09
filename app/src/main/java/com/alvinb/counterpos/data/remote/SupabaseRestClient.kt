@@ -515,7 +515,7 @@ class SupabaseRestClient(context: Context) {
 
 
     suspend fun sales(shopId: String): JSONArray = query(
-        "sales?select=*&shop_id=eq.$shopId&order=created_at.desc&limit=200"
+        "sales?select=*&shop_id=eq.$shopId&order=created_at.desc&limit=1000"
     )
 
     suspend fun serviceCounters(shopId: String): List<ServiceCounter> = buildList {
@@ -687,21 +687,23 @@ class SupabaseRestClient(context: Context) {
         quantity: Int,
         unitCost: Int,
         brand: String,
-        size: String
+        size: String,
+        saleUnits: JSONArray = JSONArray()
     ): JSONObject = rpcObject(
-        "register_product_with_cost",
+        "register_product_with_units",
         JSONObject()
             .put("_shop", shopId)
             .put("_code", code)
             .put("_name", name)
             .put("_price", price)
-            .put("_qty", quantity.coerceAtLeast(1))
+            .put("_qty", quantity.coerceAtLeast(0))
             .put("_photo_path", JSONObject.NULL)
             .put("_unit_cost", unitCost)
             .putNullable("_size", size.ifBlank { null })
             .put("_type", "beer")
             .putNullable("_brand", brand.ifBlank { null })
             .putNullable("_category", category.ifBlank { null })
+            .put("_sale_units", saleUnits)
     )
 
     suspend fun adjustStock(productId: String, newStock: Int, reason: String?): JSONObject =
@@ -719,8 +721,26 @@ class SupabaseRestClient(context: Context) {
     suspend fun addFromCatalogAtCounter(shopId: String, catalogId: String, counterId: String, quantity: Int, price: Int, unitCost: Int): JSONObject =
         rpcObject("add_from_catalog_at_counter", JSONObject().put("_shop", shopId).put("_catalog", catalogId).put("_counter", counterId).put("_qty", quantity).put("_price", price).put("_unit_cost", unitCost))
 
-    suspend fun registerProductAtCounter(shopId: String, code: String, name: String, category: String, price: Int, quantity: Int, unitCost: Int, brand: String, size: String, counterId: String): JSONObject =
-        rpcObject("register_product_at_counter", JSONObject().put("_shop", shopId).put("_code", code).put("_name", name).put("_price", price).put("_qty", quantity.coerceAtLeast(1)).put("_counter", counterId).put("_photo_path", JSONObject.NULL).put("_unit_cost", unitCost).putNullable("_size", size.ifBlank { null }).put("_type", "beer").putNullable("_brand", brand.ifBlank { null }).putNullable("_category", category.ifBlank { null }))
+    suspend fun registerProductAtCounter(
+        shopId: String,
+        code: String,
+        name: String,
+        category: String,
+        price: Int,
+        quantity: Int,
+        unitCost: Int,
+        brand: String,
+        size: String,
+        counterId: String,
+        saleUnits: JSONArray = JSONArray()
+    ): JSONObject = rpcObject(
+        "register_product_at_counter_with_units",
+        JSONObject().put("_shop", shopId).put("_code", code).put("_name", name).put("_price", price)
+            .put("_qty", quantity.coerceAtLeast(0)).put("_counter", counterId).put("_photo_path", JSONObject.NULL)
+            .put("_unit_cost", unitCost).putNullable("_size", size.ifBlank { null }).put("_type", "beer")
+            .putNullable("_brand", brand.ifBlank { null }).putNullable("_category", category.ifBlank { null })
+            .put("_sale_units", saleUnits)
+    )
 
     suspend fun adjustCounterStock(counterId: String, productId: String, newStock: Int, reason: String?): JSONObject =
         rpcObject("adjust_counter_stock", JSONObject().put("_counter", counterId).put("_product", productId).put("_new_stock", newStock).putNullable("_reason", reason))
@@ -846,24 +866,34 @@ class SupabaseRestClient(context: Context) {
                 if (resolvedCode.isNotBlank() && finalName.isNotBlank()) {
                     if (counterId != null) {
                         try {
-                            return@withContext registerProductAtCounter(shopId, resolvedCode, finalName, category, price, qty, unitCost, brand, size, counterId)
+                            return@withContext registerProductAtCounter(
+                                shopId, resolvedCode, finalName, category, price, qty, unitCost, brand, size,
+                                counterId, payload.optJSONArray("sale_units") ?: JSONArray()
+                            )
                         } catch (e: Exception) {
                             lastErr = e
-                            try {
-                                return@withContext rpcObject("register_product_at_counter", JSONObject().put("_shop", shopId).put("_code", resolvedCode).put("_name", finalName).put("_price", price).put("_qty", qty.coerceAtLeast(1)).put("_counter", counterId))
-                            } catch (e2: Exception) {
-                                lastErr = e2
+                            if (qty > 0) {
+                                try {
+                                    return@withContext rpcObject("register_product_at_counter", JSONObject().put("_shop", shopId).put("_code", resolvedCode).put("_name", finalName).put("_price", price).put("_qty", qty).put("_counter", counterId))
+                                } catch (e2: Exception) {
+                                    lastErr = e2
+                                }
                             }
                         }
                     } else {
                         try {
-                            return@withContext registerProduct(shopId, resolvedCode, finalName, category, price, qty, unitCost, brand, size)
+                            return@withContext registerProduct(
+                                shopId, resolvedCode, finalName, category, price, qty, unitCost, brand, size,
+                                payload.optJSONArray("sale_units") ?: JSONArray()
+                            )
                         } catch (e: Exception) {
                             lastErr = e
-                            try {
-                                return@withContext rpcObject("register_product", JSONObject().put("_shop", shopId).put("_code", resolvedCode).put("_name", finalName).put("_price", price).put("_qty", qty.coerceAtLeast(1)))
-                            } catch (e2: Exception) {
-                                lastErr = e2
+                            if (qty > 0) {
+                                try {
+                                    return@withContext rpcObject("register_product", JSONObject().put("_shop", shopId).put("_code", resolvedCode).put("_name", finalName).put("_price", price).put("_qty", qty))
+                                } catch (e2: Exception) {
+                                    lastErr = e2
+                                }
                             }
                         }
                     }
@@ -896,10 +926,11 @@ class SupabaseRestClient(context: Context) {
                 val unitCost = payload.optInt("unit_cost")
                 val brand = payload.optString("brand")
                 val size = payload.optString("size")
+                val saleUnits = payload.optJSONArray("sale_units") ?: JSONArray()
                 if (counterId != null) {
-                    registerProductAtCounter(shopId, code, name, category, price, qty, unitCost, brand, size, counterId)
+                    registerProductAtCounter(shopId, code, name, category, price, qty, unitCost, brand, size, counterId, saleUnits)
                 } else {
-                    registerProduct(shopId, code, name, category, price, qty, unitCost, brand, size)
+                    registerProduct(shopId, code, name, category, price, qty, unitCost, brand, size, saleUnits)
                 }
             }
             "receive_stock" -> {

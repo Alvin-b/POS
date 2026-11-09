@@ -1533,11 +1533,12 @@ class CounterPosViewModel(
     }
 
     fun openTableSale(tableId: String, product: ProductEntity) {
-        if (!product.inMyStock || product.stockQuantity <= 0) {
+        val units = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+        val bulkOnly = units.isNotEmpty() && units.all { it.stockUnitsPerSale == 0 }
+        if (!product.inMyStock || (product.stockQuantity <= 0 && !bulkOnly)) {
             _uiState.update { it.copy(actionError = "${product.name} is out of stock.") }
             return
         }
-        val units = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
         val defaultUnit = units.firstOrNull() ?: SaleUnit("Bottle", product.sellingPriceKsh)
         val defaultCounterId = _uiState.value.selectedServingCounterId
             ?: _uiState.value.selectedCounterId
@@ -1632,7 +1633,9 @@ class CounterPosViewModel(
     }
 
     fun handleScannedSale(product: ProductEntity) {
-        if (!product.inMyStock || product.stockQuantity < 1) {
+        val units = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+        val bulkOnly = units.isNotEmpty() && units.all { it.stockUnitsPerSale == 0 }
+        if (!product.inMyStock || (product.stockQuantity < 1 && !bulkOnly)) {
             _uiState.update {
                 it.copy(
                     isScannerOpen = false,
@@ -1651,7 +1654,9 @@ class CounterPosViewModel(
             _uiState.update { it.copy(isScannerOpen = false, notice = "Open a table before scanning a product.") }
             return
         }
-        if (!product.inMyStock || product.stockQuantity < 1) {
+        val units = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+        val bulkOnly = units.isNotEmpty() && units.all { it.stockUnitsPerSale == 0 }
+        if (!product.inMyStock || (product.stockQuantity < 1 && !bulkOnly)) {
             _uiState.update {
                 it.copy(
                     isScannerOpen = false,
@@ -1888,11 +1893,7 @@ class CounterPosViewModel(
                             saleQuantity = 1,
                             actionError = null,
                             notice = if (tableId != null) {
-                                if (counters.size > 1) {
-                                    "Added ${state.saleQuantity} × ${product?.name.orEmpty()} to table from $counterName · KSh $total"
-                                } else {
-                                    "Added ${state.saleQuantity} × ${product?.name.orEmpty()} to table · KSh $total"
-                                }
+                                null
                             } else {
                                 if (counters.size > 1) {
                                     "Sold ${state.saleQuantity} × ${product?.name.orEmpty()} from $counterName · KSh $total"

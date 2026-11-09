@@ -1053,6 +1053,7 @@ class CounterPosRepository(
                     }
                     val price = row.optInt("price", row.optInt("selling_price", 0))
                     val cost = row.optInt("average_cost", row.optInt("unit_cost", 0))
+                    val remoteSaleUnits = row.optJSONArray("sale_units")?.takeIf { it.length() > 0 }?.toString()
                     add(
                         ProductEntity(
                             catalogCode = code,
@@ -1071,7 +1072,8 @@ class CounterPosRepository(
                             productSourceUrl = row.optNullableString("product_source_url") ?: bundled?.productSourceUrl,
                             imageSourceUrl = imageUrl,
                             verificationNote = "Business inventory",
-                            salesUnitsJson = existingLocal?.salesUnitsJson?.takeIf(String::isNotBlank)
+                            salesUnitsJson = remoteSaleUnits
+                                ?: existingLocal?.salesUnitsJson?.takeIf(String::isNotBlank)
                                 ?: serializeSaleUnits(listOf(SaleUnit("Bottle", price))),
                             remoteId = remoteId,
                             averageCostKsh = cost
@@ -1395,7 +1397,7 @@ class CounterPosRepository(
             activeBusiness!!.counterInventoryMode == "per_counter"
         ) ?: throw IllegalStateException("Not enough cached counter stock to complete this sale offline.")
         check(queued > 0L)
-        scheduleAndAttemptSync()
+        OfflineOutboxWorker.enqueue(context)
         true
     }
 
@@ -1586,6 +1588,7 @@ class CounterPosRepository(
                 .put("brand", product.brand)
                 .put("size", product.size)
                 .put("category", product.category)
+                .put("sale_units", JSONArray(serializeSaleUnits(parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh))))
             if (!product.verifiedBarcode.isNullOrBlank()) fields.put("barcode", product.verifiedBarcode)
             val operations = mutableListOf(newOutbox("update_product", fields))
             if (stockChanged) {
@@ -1721,8 +1724,19 @@ class CounterPosRepository(
         photoOverrideUri: String? = null
     ): Boolean = withActiveBusiness {
         require(activeBusiness!!.role in setOf("owner", "manager", "inventory_clerk")) { "Only business owners and managers can register products." }
-        require(name.trim().isNotBlank() && priceKsh > 0 && initialStock > 0 && unitCostKsh >= 0) {
-            "Enter a product name, price, and positive opening stock."
+        val bulkContainerProduct = salesUnits.isNotEmpty() && salesUnits.all { it.stockUnitsPerSale == 0 }
+        require(name.trim().isNotBlank() && priceKsh > 0 && initialStock >= 0 && unitCostKsh >= 0) {
+            "Enter a product name, price, and valid stock and cost values."
+        }
+        require(salesUnits.isNotEmpty() && salesUnits.all { it.name.isNotBlank() && it.priceKsh > 0 }) {
+            "Add at least one sale unit with a valid name and price."
+        }
+        if (bulkContainerProduct) {
+            require(initialStock == 0 && unitCostKsh > 0) {
+                "Bulk products start with no opening stock; enter the drum or barrel buying price."
+            }
+        } else {
+            require(initialStock > 0) { "Enter a positive opening stock for this product." }
         }
         val code = barcode.trim().ifBlank { "PROD_" + UUID.randomUUID().toString().take(8) }
         require(dao.getProductByCode(code) == null) { "A product with this barcode already exists." }
@@ -1760,6 +1774,7 @@ class CounterPosRepository(
             .put("unit_cost", unitCostKsh)
             .put("brand", brand)
             .put("size", size)
+            .put("sale_units", JSONArray(serializeSaleUnits(salesUnits)))
             .put("counter_id", counterId)
         val balance = if (perCounter) makeCounterBalance(product, counterId, initialStock) else null
         dao.queueProductChange(product, newOutbox("register_product", payload), balance)
@@ -1962,6 +1977,7 @@ class CounterPosRepository(
                 .put("type", "beer")
                 .put("brand", local.optString("brand"))
                 .put("category", local.optString("category"))
+                .put("sale_units", local.optJSONArray("sale_units") ?: JSONArray())
             "adjust_stock" -> JSONObject()
                 .put("counter_id", local.optString("counter_id"))
                 .put("product_id", productId())
@@ -1976,7 +1992,7 @@ class CounterPosRepository(
                 .put("reason", local.optString("reason"))
             "update_product" -> {
                 val fields = JSONObject()
-                listOf("name", "brand", "size", "category", "price", "barcode").forEach { key ->
+                listOf("name", "brand", "size", "category", "price", "barcode", "sale_units").forEach { key ->
                     if (local.has(key)) fields.put(key, local.opt(key))
                 }
                 val patch = local.optJSONObject("patch") ?: fields

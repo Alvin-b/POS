@@ -481,12 +481,12 @@ fun CounterPosWorkspace(
                     todaySummary = summary,
                     onUndo = viewModel::undoLastSale,
                     onExportPdf = { start, end ->
-                        val filtered = sales.filter { it.createdAt in start..end && (state.reportPaymentFilter == "all" || it.paymentMethod.equals(state.reportPaymentFilter, true)) }
+                        val filtered = sales.filter { !it.undone && it.createdAt in start..end }
                         pendingSalesPdf = buildSalesPdf(filtered, start, end, "Sales report")
                         salesPdfPicker.launch("sales-${formatReportDate(start)}-${formatReportDate(end)}.pdf")
                     },
                     onSharePdf = { start, end ->
-                        val filtered = sales.filter { it.createdAt in start..end }
+                        val filtered = sales.filter { !it.undone && it.createdAt in start..end }
                         sharePdf(context, buildSalesPdf(filtered, start, end, "Sales report"), "sales-${formatReportDate(start)}.pdf")
                     }
                 )
@@ -510,15 +510,17 @@ fun CounterPosWorkspace(
                         viewModel.openRecordDispensation()
                     },
                     onExportPdf = {
-                        val start = if (state.reportFilter == "today") startOfReportDay(System.currentTimeMillis()) else sales.minOfOrNull { it.createdAt } ?: startOfReportDay(System.currentTimeMillis())
+                        val activeSales = sales.filterNot { it.undone }
+                        val start = if (state.reportFilter == "today") startOfReportDay(System.currentTimeMillis()) else activeSales.minOfOrNull { it.createdAt } ?: startOfReportDay(System.currentTimeMillis())
                         val end = if (state.reportFilter == "today") endOfReportDay(System.currentTimeMillis()) else System.currentTimeMillis()
-                        pendingSalesPdf = buildSalesPdf(sales.filter { it.createdAt in start..end && (state.reportPaymentFilter == "all" || it.paymentMethod.equals(state.reportPaymentFilter, true)) }, start, end, "Performance report")
+                        pendingSalesPdf = buildSalesPdf(activeSales.filter { it.createdAt in start..end }, start, end, "Performance report")
                         salesPdfPicker.launch("report-${formatReportDate(start)}.pdf")
                     },
                     onSharePdf = {
-                        val start = if (state.reportFilter == "today") startOfReportDay(System.currentTimeMillis()) else sales.minOfOrNull { it.createdAt } ?: startOfReportDay(System.currentTimeMillis())
+                        val activeSales = sales.filterNot { it.undone }
+                        val start = if (state.reportFilter == "today") startOfReportDay(System.currentTimeMillis()) else activeSales.minOfOrNull { it.createdAt } ?: startOfReportDay(System.currentTimeMillis())
                         val end = if (state.reportFilter == "today") endOfReportDay(System.currentTimeMillis()) else System.currentTimeMillis()
-                        sharePdf(context, buildSalesPdf(sales.filter { it.createdAt in start..end && (state.reportPaymentFilter == "all" || it.paymentMethod.equals(state.reportPaymentFilter, true)) }, start, end, "Performance report"), "report-${formatReportDate(start)}.pdf")
+                        sharePdf(context, buildSalesPdf(activeSales.filter { it.createdAt in start..end }, start, end, "Performance report"), "report-${formatReportDate(start)}.pdf")
                     }
                 )
                 PosTab.TABLES -> Box(
@@ -1865,6 +1867,18 @@ private fun FullscreenSalesScreen(
 ) {
     var showDateRange by remember { mutableStateOf(false) }
     var shareAfterDateSelection by remember { mutableStateOf(false) }
+    var dateFilter by remember { mutableStateOf("today") }
+    var paymentFilter by remember { mutableStateOf("all") }
+    var newestFirst by remember { mutableStateOf(true) }
+    val todayStart = remember { startOfReportDay(System.currentTimeMillis()) }
+    val filteredSales = remember(sales, dateFilter, paymentFilter, newestFirst) {
+        sales.asSequence()
+            .filter { dateFilter != "today" || it.createdAt >= todayStart }
+            .filter { paymentFilter == "all" || it.paymentMethod.equals(paymentFilter, ignoreCase = true) }
+            .sortedWith(if (newestFirst) compareByDescending<SaleEntity> { it.createdAt }.thenByDescending { it.id }
+                else compareBy<SaleEntity> { it.createdAt }.thenBy { it.id })
+            .toList()
+    }
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
@@ -1928,17 +1942,56 @@ private fun FullscreenSalesScreen(
             }
         }
         item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Recent receipts", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                    Text("${sales.size}", modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                listOf("today" to "Today", "all" to "All dates").forEach { (value, label) ->
+                    FilterChip(
+                        selected = dateFilter == value,
+                        onClick = { dateFilter = value },
+                        label = { Text(label, fontSize = 12.sp) }
+                    )
+                }
+                FilterChip(
+                    selected = newestFirst,
+                    onClick = { newestFirst = !newestFirst },
+                    label = { Text(if (newestFirst) "Newest first" else "Oldest first", fontSize = 12.sp) }
+                )
+            }
+        }
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf("all" to "All payments", "cash" to "Cash", "mpesa" to "M-Pesa").forEach { (value, label) ->
+                    FilterChip(
+                        selected = paymentFilter == value,
+                        onClick = { paymentFilter = value },
+                        label = { Text(label, fontSize = 12.sp) }
+                    )
                 }
             }
         }
-        if (sales.isEmpty()) {
-            item { EmptyStateMessage("No sales made today yet. Go to POS tab to sell products.") }
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Recent receipts", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                    Text("${filteredSales.size}", modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        if (filteredSales.isEmpty()) {
+            item {
+                EmptyStateMessage(
+                    if (sales.isEmpty()) "No sales made yet. Go to POS tab to sell products."
+                    else "No receipts match these date and payment filters."
+                )
+            }
         } else {
-            items(sales, key = { it.id }) { sale -> SaleReceiptRow(sale = sale) }
+            items(filteredSales, key = { it.id }) { sale -> SaleReceiptRow(sale = sale) }
         }
     }
     if (showDateRange) {
@@ -2029,54 +2082,155 @@ private fun buildSalesPdf(sales: List<SaleEntity>, start: Long, end: Long, title
     val navy = android.graphics.Color.rgb(25, 32, 48)
     val accent = android.graphics.Color.rgb(38, 125, 105)
     val muted = android.graphics.Color.rgb(100, 108, 120)
+    val rule = android.graphics.Color.rgb(225, 228, 233)
+    val soft = android.graphics.Color.rgb(244, 247, 248)
+    val activeSales = sales.filterNot { it.undone }.sortedWith(compareBy<SaleEntity> { it.createdAt }.thenBy { it.id })
+    val cashTotal = activeSales.filter { it.paymentMethod.equals("cash", true) }.sumOf { it.totalKsh.toLong() }
+    val mpesaTotal = activeSales.filter { it.paymentMethod.equals("mpesa", true) }.sumOf { it.totalKsh.toLong() }
+    val grandTotal = activeSales.sumOf { it.totalKsh.toLong() }
+    val otherTotal = grandTotal - cashTotal - mpesaTotal
+    val integerFormat = NumberFormat.getIntegerInstance(Locale.US)
+    val dateTimeFormat = SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault())
     var pageNumber = 1
     var page = document.startPage(PdfDocument.PageInfo.Builder(595, 842, pageNumber).create())
-    var y = 48f
-    fun line(text: String, size: Float = 10f, color: Int = navy, bold: Boolean = false) {
+    var y = 0f
+    fun drawText(
+        text: String,
+        x: Float,
+        baseline: Float,
+        size: Float = 9f,
+        color: Int = navy,
+        bold: Boolean = false,
+        align: Paint.Align = Paint.Align.LEFT
+    ) {
         paint.textSize = size
         paint.color = color
         paint.typeface = if (bold) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
-        page.canvas.drawText(text, 32f, y, paint)
-        y += size + 9f
+        paint.textAlign = align
+        page.canvas.drawText(text, x, baseline, paint)
     }
-    fun divider() {
-        paint.color = android.graphics.Color.rgb(225, 228, 233)
+    fun drawRule(atY: Float) {
+        paint.color = rule
         paint.strokeWidth = 1f
-        page.canvas.drawLine(32f, y, 563f, y, paint)
-        y += 16f
+        page.canvas.drawLine(36f, atY, 559f, atY, paint)
     }
-    line("COUNTER POS", 11f, accent, true)
-    line(title, 22f, navy, true)
-    line("${formatReportDate(start)}  —  ${formatReportDate(end)}", 10f, muted)
-    y += 8f
-    divider()
-    line("SUMMARY", 10f, accent, true)
-    val cashTotal = sales.filter { it.paymentMethod.equals("cash", true) }.sumOf { it.totalKsh.toLong() }
-    val mpesaTotal = sales.filter { it.paymentMethod.equals("mpesa", true) }.sumOf { it.totalKsh.toLong() }
-    line("Revenue        KSh ${NumberFormat.getIntegerInstance(Locale.US).format(sales.sumOf { it.totalKsh })}", 12f, navy, true)
-    line("Cash           KSh ${NumberFormat.getIntegerInstance(Locale.US).format(cashTotal)}", 10f, muted)
-    line("M-Pesa         KSh ${NumberFormat.getIntegerInstance(Locale.US).format(mpesaTotal)}", 10f, muted)
-    line("Units sold     ${sales.sumOf { it.quantity }}        Transactions     ${sales.size}", 10f, muted)
-    y += 8f
-    divider()
-    line("SALES DETAIL", 10f, accent, true)
-    line("Date                         Item                                      Total", 9f, muted, true)
-    sales.forEach { sale ->
-        if (y > 790f) {
-            document.finishPage(page)
-            pageNumber++
-            page = document.startPage(PdfDocument.PageInfo.Builder(595, 842, pageNumber).create())
-            y = 48f
-            line("COUNTER POS  ·  $title", 10f, accent, true)
-            divider()
+    fun fillRect(left: Float, top: Float, right: Float, bottom: Float, color: Int) {
+        paint.color = color
+        page.canvas.drawRect(left, top, right, bottom, paint)
+    }
+    fun money(value: Long): String = "KSh ${integerFormat.format(value)}"
+    fun paymentLabel(method: String): String = when (method.lowercase(Locale.ROOT)) {
+        "mpesa" -> "M-Pesa"
+        "cash" -> "Cash"
+        else -> method.replaceFirstChar { it.uppercase(Locale.getDefault()) }.ifBlank { "Other" }
+    }
+    fun fittingText(value: String, maxWidth: Float, size: Float): String {
+        paint.textSize = size
+        paint.typeface = android.graphics.Typeface.DEFAULT
+        var result = value
+        while (result.isNotEmpty() && paint.measureText(result) > maxWidth) {
+            result = result.dropLast(1)
         }
-        val product = sale.productName.take(27)
-        line("${formatReportDate(sale.createdAt)}   ${product.padEnd(29)}  KSh ${sale.totalKsh}", 9f)
-        line("                         ${sale.quantity} × ${sale.unitName}", 8f, muted)
+        return if (result.length < value.length && result.isNotEmpty()) result.dropLast(1) + "…" else result
     }
-    y += 8f
-    divider()
-    line("Generated by Counter POS", 8f, muted)
+    fun drawTableHeader() {
+        fillRect(36f, y, 559f, y + 25f, navy)
+        drawText("DATE / TIME", 44f, y + 16f, 7.5f, android.graphics.Color.WHITE, true)
+        drawText("PRODUCT / UNIT", 132f, y + 16f, 7.5f, android.graphics.Color.WHITE, true)
+        drawText("PAYMENT", 350f, y + 16f, 7.5f, android.graphics.Color.WHITE, true)
+        drawText("QTY", 432f, y + 16f, 7.5f, android.graphics.Color.WHITE, true, Paint.Align.RIGHT)
+        drawText("AMOUNT", 551f, y + 16f, 7.5f, android.graphics.Color.WHITE, true, Paint.Align.RIGHT)
+        y += 25f
+    }
+    fun drawFooter() {
+        drawRule(808f)
+        drawText("Generated by Counter POS · ${SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault()).format(Date())}", 36f, 824f, 7.5f, muted)
+        drawText("Page $pageNumber", 559f, 824f, 7.5f, muted, align = Paint.Align.RIGHT)
+    }
+    fun startDetailPage(continued: Boolean) {
+        pageNumber += 1
+        page = document.startPage(PdfDocument.PageInfo.Builder(595, 842, pageNumber).create())
+        y = 42f
+        drawText("COUNTER POS", 36f, y, 8f, accent, true)
+        drawText(if (continued) "$title · continued" else "TRANSACTION DETAIL", 36f, y + 23f, 15f, navy, true)
+        drawText("${formatReportDate(start)} — ${formatReportDate(end)}", 559f, y + 21f, 8f, muted, align = Paint.Align.RIGHT)
+        y += 38f
+        drawTableHeader()
+    }
+
+    y = 42f
+    drawText("COUNTER POS", 36f, y, 9f, accent, true)
+    drawText(title, 36f, y + 30f, 23f, navy, true)
+    drawText("Sales report · ${formatReportDate(start)} — ${formatReportDate(end)}", 36f, y + 49f, 9f, muted)
+    y += 70f
+    drawRule(y)
+    y += 21f
+    drawText("PAYMENT SUMMARY", 36f, y, 8f, accent, true)
+    y += 10f
+    val cardTop = y
+    val cardBottom = cardTop + 56f
+    val cardWidth = 166f
+    val cardGap = 9.5f
+    val summaryCards = listOf(
+        Triple("CASH SUBTOTAL", cashTotal, android.graphics.Color.rgb(237, 243, 241)),
+        Triple("M-PESA SUBTOTAL", mpesaTotal, android.graphics.Color.rgb(235, 241, 248)),
+        Triple("GRAND TOTAL", grandTotal, android.graphics.Color.rgb(225, 239, 234))
+    )
+    summaryCards.forEachIndexed { index, (label, total, background) ->
+        val left = 36f + index * (cardWidth + cardGap)
+        fillRect(left, cardTop, left + cardWidth, cardBottom, background)
+        drawText(label, left + 10f, cardTop + 18f, 7.5f, muted, true)
+        drawText(money(total), left + 10f, cardTop + 41f, 12f, navy, true)
+    }
+    y = cardBottom + 18f
+    drawText("Transactions: ${activeSales.size}", 36f, y, 8.5f, muted)
+    drawText("Units sold: ${activeSales.sumOf { it.quantity }}", 180f, y, 8.5f, muted)
+    if (otherTotal != 0L) drawText("Other payments: ${money(otherTotal)}", 335f, y, 8.5f, muted)
+    y += 18f
+    drawText("All active transactions are included so payment subtotals reconcile to the grand total.", 36f, y, 7.5f, muted)
+    y += 22f
+    drawTableHeader()
+
+    activeSales.forEachIndexed { index, sale ->
+        if (y + 39f > 795f) {
+            drawFooter()
+            document.finishPage(page)
+            startDetailPage(continued = true)
+        }
+        if (index % 2 == 1) fillRect(36f, y, 559f, y + 39f, soft)
+        drawText(dateTimeFormat.format(Date(sale.createdAt)), 44f, y + 16f, 7.5f, navy)
+        drawText(fittingText(sale.productName, 207f, 8.5f), 132f, y + 15f, 8.5f, navy, true)
+        val unitDetail = "${sale.quantity} × ${sale.unitName} @ ${money(sale.unitPriceKsh.toLong())}"
+        drawText(fittingText(unitDetail, 207f, 7.2f), 132f, y + 29f, 7.2f, muted)
+        drawText(fittingText(paymentLabel(sale.paymentMethod), 62f, 7.5f), 350f, y + 17f, 7.5f, navy)
+        drawText(sale.quantity.toString(), 432f, y + 17f, 8f, navy, align = Paint.Align.RIGHT)
+        drawText(money(sale.totalKsh.toLong()), 551f, y + 17f, 8f, navy, true, Paint.Align.RIGHT)
+        drawRule(y + 39f)
+        y += 39f
+    }
+
+    if (y + 58f > 795f) {
+        drawFooter()
+        document.finishPage(page)
+        startDetailPage(continued = true)
+    }
+    y += 15f
+    drawText("Cash subtotal", 395f, y, 8.5f, muted)
+    drawText(money(cashTotal), 551f, y, 8.5f, navy, true, Paint.Align.RIGHT)
+    y += 17f
+    drawText("M-Pesa subtotal", 395f, y, 8.5f, muted)
+    drawText(money(mpesaTotal), 551f, y, 8.5f, navy, true, Paint.Align.RIGHT)
+    if (otherTotal != 0L) {
+        y += 17f
+        drawText("Other payments", 395f, y, 8.5f, muted)
+        drawText(money(otherTotal), 551f, y, 8.5f, navy, true, Paint.Align.RIGHT)
+    }
+    y += 20f
+    drawRule(y)
+    y += 17f
+    drawText("GRAND TOTAL", 395f, y, 10f, accent, true)
+    drawText(money(grandTotal), 551f, y, 10f, accent, true, Paint.Align.RIGHT)
+    drawFooter()
     document.finishPage(page)
     val output = ByteArrayOutputStream()
     document.writeTo(output)
@@ -2124,14 +2278,28 @@ private fun ProductSellCard(
                     .background(MaterialTheme.colorScheme.surfaceVariant)
             ) {
                 ProductThumbnail(product, Modifier.fillMaxSize().padding(5.dp))
-                StockIndicatorPill(
-                    quantity = product.stockQuantity,
-                    threshold = product.lowStockThreshold,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(7.dp),
-                    showInStockText = true
-                )
+                if (units.isNotEmpty() && units.all { it.stockUnitsPerSale == 0 }) {
+                    Surface(
+                        modifier = Modifier.align(Alignment.TopEnd).padding(7.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer
+                    ) {
+                        Text(
+                            "Bulk stock",
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
+                } else {
+                    StockIndicatorPill(
+                        quantity = product.stockQuantity,
+                        threshold = product.lowStockThreshold,
+                        modifier = Modifier.align(Alignment.TopEnd).padding(7.dp),
+                        showInStockText = true
+                    )
+                }
             }
 
             Text(
@@ -2431,7 +2599,11 @@ private fun SaleWithUnitsSheet(
             Column(Modifier.weight(1f)) {
                 Text(product.name, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Text(
-                    "${product.category} · Shelf Stock: ${product.stockQuantity} bottles",
+                    if (units.isNotEmpty() && units.all { it.stockUnitsPerSale == 0 }) {
+                        "${product.category} · Bulk container stock"
+                    } else {
+                        "${product.category} · Shelf stock: ${product.stockQuantity} units"
+                    },
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -3341,7 +3513,7 @@ private fun AddNewProductDialog(
     // Empty initial units of sale - user defines their own prices and units
     val unitsList = remember { mutableStateListOf<SaleUnit>() }
 
-    var bulkStock by remember { mutableStateOf(false) }
+    var bulkStock by remember { mutableStateOf(true) }
     var extraUnitName by remember { mutableStateOf("") }
     var extraUnitPriceText by remember { mutableStateOf("") }
 
@@ -3467,77 +3639,90 @@ private fun AddNewProductDialog(
                     categories.forEach { cat ->
                         FilterChip(
                             selected = selectedCategory == cat,
-                            onClick = { selectedCategory = cat },
+                            onClick = {
+                                selectedCategory = cat
+                                bulkStock = cat == "Local Liquor"
+                                unitsList.indices.forEach { index ->
+                                    unitsList[index] = unitsList[index].copy(stockUnitsPerSale = if (bulkStock) 0 else 1)
+                                }
+                            },
                             label = { Text(cat, fontSize = 11.sp) }
                         )
                     }
                 }
 
-                // Helpful tip for bulk drinks / barrels
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp, bottom = 4.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.padding(8.dp)) {
+                    Checkbox(
+                        checked = bulkStock,
+                        onCheckedChange = { enabled ->
+                            bulkStock = enabled
+                            unitsList.indices.forEach { index ->
+                                unitsList[index] = unitsList[index].copy(stockUnitsPerSale = if (enabled) 0 else 1)
+                            }
+                        }
+                    )
+                    Column {
+                        Text("Received in a drum / barrel", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         Text(
-                            "Bulk Liquor / Barrel Tip:",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            "For drinks received in barrels or drums, enter your opening stock in your primary dispensing count (e.g. 100 cups). You can then sell single cups (1 stock unit), jugs (e.g. 5 stock units), or full barrels.",
-                            fontSize = 11.sp,
+                            if (bulkStock) "No opening stock count. Enter purchase cost, then set sale units and prices."
+                            else "Enter the opening stock and a standard selling price.",
+                            fontSize = 10.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                if (bulkStock) {
                     OutlinedTextField(
-                        value = stockText,
-                        onValueChange = { stockText = it.filter(Char::isDigit) },
-                        label = { Text("Opening Stock") },
-                        placeholder = { Text("e.g. 50 cups") },
+                        value = unitCostText,
+                        onValueChange = { unitCostText = it.filter(Char::isDigit) },
+                        label = { Text("Buying price per drum / barrel (KSh)") },
+                        placeholder = { Text("e.g. 4,500") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                     )
-
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = stockText,
+                            onValueChange = { stockText = it.filter(Char::isDigit) },
+                            label = { Text("Opening Stock") },
+                            placeholder = { Text("e.g. 50 bottles") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = basePriceText,
+                            onValueChange = {
+                                basePriceText = it.filter(Char::isDigit)
+                                val price = it.toIntOrNull() ?: 0
+                                if (unitsList.isNotEmpty()) unitsList[0] = unitsList[0].copy(priceKsh = price)
+                            },
+                            label = { Text("Base Price (KSh)") },
+                            placeholder = { Text("e.g. 50") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                     OutlinedTextField(
-                        value = basePriceText,
-                        onValueChange = {
-                            basePriceText = it.filter(Char::isDigit)
-                            val p = it.toIntOrNull() ?: 0
-                            if (unitsList.isNotEmpty()) {
-                                unitsList[0] = unitsList[0].copy(priceKsh = p)
-                            }
-                        },
-                        label = { Text("Base Price (KSh)") },
-                        placeholder = { Text("e.g. 50") },
+                        value = unitCostText,
+                        onValueChange = { unitCostText = it.filter(Char::isDigit) },
+                        label = { Text("Buying cost (KSh)") },
+                        placeholder = { Text("0 if unknown") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                     )
                 }
-
-                OutlinedTextField(
-                    value = unitCostText,
-                    onValueChange = { unitCostText = it.filter(Char::isDigit) },
-                    label = { Text("Unit cost (KSh)") },
-                    placeholder = { Text("0 if unknown") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                )
 
                 Spacer(Modifier.height(12.dp))
                 Text(
@@ -3546,7 +3731,7 @@ private fun AddNewProductDialog(
                     fontSize = 13.sp
                 )
                 Text(
-                    "Add the units customers can buy and their prices. Bulk/container stock does not require a cup count.",
+                    "Add each unit name and its selling price. These options will appear when you sell the product.",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -3603,16 +3788,6 @@ private fun AddNewProductDialog(
                     }
                 }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Checkbox(checked = bulkStock, onCheckedChange = { bulkStock = it })
-                    Column {
-                        Text("Bulk / container stock", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        Text("Sales do not consume a container count; adjust stock when the container is empty.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
                 // Add additional unit
                 Row(
                     modifier = Modifier
@@ -3659,21 +3834,26 @@ private fun AddNewProductDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val p = basePriceText.toIntOrNull() ?: 0
-                    val s = stockText.toIntOrNull() ?: 0
-                    val cost = unitCostText.toIntOrNull() ?: 0
-                    val finalUnits = if (unitsList.isEmpty()) {
+                    val typedBasePrice = basePriceText.toIntOrNull() ?: 0
+                    val finalUnits = if (unitsList.isEmpty() && !bulkStock) {
                         val defaultUnitName = if (selectedCategory == "Local Liquor") "Cup" else "Bottle"
-                        listOf(SaleUnit(defaultUnitName, p, if (bulkStock) 0 else 1))
+                        listOf(SaleUnit(defaultUnitName, typedBasePrice, 1))
                     } else {
                         unitsList.toList()
                     }
+                    val p = if (bulkStock) finalUnits.firstOrNull()?.priceKsh ?: 0 else typedBasePrice
+                    val s = if (bulkStock) 0 else stockText.toIntOrNull() ?: 0
+                    val cost = unitCostText.toIntOrNull() ?: 0
                     onConfirm(name.trim(), barcode.trim(), selectedCategory, p, s, cost, finalUnits, selectedPhotoUri)
                 },
-                enabled = name.isNotBlank() && (basePriceText.toIntOrNull() ?: 0) > 0,
+                enabled = name.isNotBlank() && if (bulkStock) {
+                    (unitCostText.toIntOrNull() ?: 0) > 0 && unitsList.isNotEmpty() && unitsList.all { it.priceKsh > 0 }
+                } else {
+                    (basePriceText.toIntOrNull() ?: 0) > 0 && (stockText.toIntOrNull() ?: 0) > 0
+                },
                 modifier = Modifier.testTag("confirm_create_product_button")
             ) {
-                Text("Save & Add to Stock")
+                Text(if (bulkStock) "Save Product" else "Save & Add to Stock")
             }
         },
         dismissButton = {
@@ -3855,6 +4035,16 @@ private fun SaleReceiptRow(sale: SaleEntity) {
                     "${sale.quantity} × ${sale.unitName} @ ${ksh(sale.unitPriceKsh)} · ${formatSaleTime(sale.createdAt)}",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    when (sale.paymentMethod.lowercase(Locale.ROOT)) {
+                        "mpesa" -> "M-Pesa"
+                        "cash" -> "Cash"
+                        else -> sale.paymentMethod.replaceFirstChar { it.uppercase(Locale.getDefault()) }
+                    },
+                    color = if (sale.paymentMethod.equals("mpesa", ignoreCase = true)) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
                 )
                 if (sale.undone) {
                     Text("REFUNDED / UNDONE", color = MaterialTheme.colorScheme.error, fontSize = 10.sp, fontWeight = FontWeight.Bold)

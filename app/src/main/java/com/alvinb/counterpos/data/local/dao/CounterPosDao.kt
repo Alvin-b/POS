@@ -11,6 +11,7 @@ import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.ServiceCounterEntity
 import com.alvinb.counterpos.data.local.entity.TableOrderEntity
+import com.alvinb.counterpos.data.local.entity.parseSaleUnits
 import kotlinx.coroutines.flow.Flow
 import com.alvinb.counterpos.data.local.entity.OfflineSessionEntity
 import com.alvinb.counterpos.data.local.entity.OutboxEntity
@@ -141,7 +142,7 @@ interface CounterPosDao {
     @Query("SELECT * FROM products ORDER BY name COLLATE NOCASE ASC")
     fun observeProducts(): Flow<List<ProductEntity>>
 
-    @Query("SELECT * FROM sales ORDER BY createdAt DESC, id DESC LIMIT 200")
+    @Query("SELECT * FROM sales ORDER BY createdAt DESC, id DESC")
     fun observeSales(): Flow<List<SaleEntity>>
 
     @Query("SELECT * FROM sales WHERE undone = 0 AND remoteId IS NULL ORDER BY createdAt ASC, id ASC")
@@ -406,7 +407,13 @@ interface CounterPosDao {
     @Transaction
     suspend fun cancelUnsentSale(sale: SaleEntity, perCounter: Boolean): Boolean {
         if (sale.undone || outboxForSale(sale.id) == null) return false
-        val restore = if (sale.unitName.equals("Bottle", true) || sale.unitName.equals("Can", true)) sale.quantity else 1
+        val product = getProductByCode(sale.catalogCode)
+        val unitsPerSale = product?.let { current ->
+            parseSaleUnits(current.salesUnitsJson, current.sellingPriceKsh)
+                .firstOrNull { it.name.equals(sale.unitName, ignoreCase = true) }
+                ?.stockUnitsPerSale
+        } ?: 1
+        val restore = sale.quantity * unitsPerSale
         val restored = if (perCounter) {
             val counterId = sale.sourceCounterId ?: return false
             incrementCounterStock(counterId, sale.catalogCode, restore) == 1
@@ -420,7 +427,13 @@ interface CounterPosDao {
     @Transaction
     suspend fun queueUndoSale(sale: SaleEntity, outbox: OutboxEntity, perCounter: Boolean): Boolean {
         if (sale.undone || sale.remoteId.isNullOrBlank()) return false
-        val restore = if (sale.unitName.equals("Bottle", true) || sale.unitName.equals("Can", true)) sale.quantity else 1
+        val product = getProductByCode(sale.catalogCode)
+        val unitsPerSale = product?.let { current ->
+            parseSaleUnits(current.salesUnitsJson, current.sellingPriceKsh)
+                .firstOrNull { it.name.equals(sale.unitName, ignoreCase = true) }
+                ?.stockUnitsPerSale
+        } ?: 1
+        val restore = sale.quantity * unitsPerSale
         val restored = if (perCounter) {
             val counterId = sale.sourceCounterId ?: return false
             incrementCounterStock(counterId, sale.catalogCode, restore) == 1
