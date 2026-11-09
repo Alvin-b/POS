@@ -528,19 +528,51 @@ class CounterPosViewModel(
         }
 
         try {
-            val sessionSnapshot = repository.signUp(cleanEmail, password)
+            var signupMessage: String? = null
+            var signupFailure: Exception? = null
+            try {
+                signupMessage = repository.signUp(cleanEmail, password).message
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                // A previous signup may have created the Auth user before the
+                // app lost its response. Authenticate that account and resume
+                // the idempotent owner-profile operation instead of dead-ending.
+                signupFailure = error
+            }
+            val signupError = signupFailure?.message.orEmpty()
+            val existingAccount = signupError.contains("already registered", ignoreCase = true) ||
+                signupError.contains("user_already_exists", ignoreCase = true)
             var currentSession = repository.session.value
+            var signInFailure: Exception? = null
             if (!currentSession.isAuthenticated) {
-                // If signUp did not automatically log in, try signIn in case email confirmation is disabled
-                runCatching { repository.signIn(cleanEmail, password) }
+                try {
+                    repository.signIn(cleanEmail, password)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    signInFailure = error
+                }
                 currentSession = repository.session.value
             }
 
             if (!currentSession.isAuthenticated) {
+                val signInError = signInFailure?.message.orEmpty()
+                val friendlyMessage = when {
+                    signInError.contains("email not confirmed", ignoreCase = true) ||
+                        signInError.contains("email_not_confirmed", ignoreCase = true) ->
+                        "This account’s email is not confirmed yet. Confirm the message sent to $cleanEmail, then sign in to finish setting up $cleanName."
+                    existingAccount ->
+                        "An account with this email already exists, but these credentials could not sign in. Check the password for $cleanEmail or recover that account; $cleanName has not been set up yet."
+                    signupFailure != null -> signupFailure?.message?.takeIf(String::isNotBlank)
+                        ?: "Could not create or sign in to the account. Try again."
+                    else -> signupMessage
+                        ?: "Your account was created, but no session was returned. Confirm $cleanEmail if prompted, then sign in to finish setting up $cleanName."
+                }
                 _uiState.update {
                     it.copy(
                         isAuthenticating = false,
-                        startupError = "Your account was created, but the business cannot launch until email confirmation is complete. Check $cleanEmail, confirm the account, then sign in to finish setting up $cleanName.",
+                        startupError = friendlyMessage,
                         notice = null
                     )
                 }

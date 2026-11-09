@@ -1351,7 +1351,9 @@ class SupabaseRestClient(context: Context) {
         when (raw) {
             "passkey_not_found" -> "Passkey not recognized or already redeemed. Ask the business owner for a new passkey."
             "passkey_expired" -> "This passkey has expired. Ask the business owner to generate a new passkey."
-            "Invalid login credentials" -> "Invalid email or password."
+            "Email not confirmed", "email_not_confirmed" ->
+                "Email not confirmed. Check your inbox (including spam) for the confirmation message before signing in."
+            "Invalid login credentials" -> "Invalid email or password. Check both and try again."
             else -> raw
         }
     }.getOrDefault(body.ifBlank { "Request failed ($status)" })

@@ -133,6 +133,10 @@ fun CounterPosApp(
                 qrPayload = state.loginQrPayload,
                 onClearError = viewModel::clearStartupError
             )
+            // If an account has both roles, open its active owner POS by default;
+            // the POS top bar still provides the Superadmin Portal switch.
+            session.activeBusiness?.role.equals("owner", ignoreCase = true) ->
+                CounterPosWorkspace(viewModel, themeMode, onThemeModeChange)
             session.isPlatformAdmin -> SuperadminDashboardScreen(
                 viewModel = viewModel,
                 email = session.email,
