@@ -9,6 +9,9 @@ ksp {
   arg("room.schemaLocation", "$projectDir/schemas")
 }
 
+val appVersionCode = providers.gradleProperty("versionCode").orElse("1").get().toInt()
+val appVersionName = providers.gradleProperty("versionName").orElse("1.0").get()
+
 android {
   namespace = "com.alvinb.counterpos"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -17,8 +20,8 @@ android {
     applicationId = "com.alvinb.counterpos"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = appVersionCode
+    versionName = appVersionName
 
     val supabaseUrl = providers.gradleProperty("SUPABASE_URL")
       .orElse(providers.environmentVariable("SUPABASE_URL"))
