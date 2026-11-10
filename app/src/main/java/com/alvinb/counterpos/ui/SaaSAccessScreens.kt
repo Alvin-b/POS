@@ -123,8 +123,8 @@ fun CounterPosApp(
                 isLoadingQr = state.loginQrPayload == null && state.isQrPolling,
                 onEmailSignIn = viewModel::signIn,
                 onCreateAccount = viewModel::signUp,
-                onRegisterBusiness = { email, password, name, type, size, mode, count ->
-                    viewModel.registerOwnerAndBusiness(email, password, name, type, size, mode, count)
+                onRegisterBusiness = { email, password, name, type, size, mode, count, phone ->
+                    viewModel.registerOwnerAndBusiness(email, password, name, type, size, mode, count, phone)
                 },
                 onNavigateToRegister = { showRegisterScreen = true },
                 onCredentialSignIn = viewModel::signInWithCredential,
@@ -135,7 +135,7 @@ fun CounterPosApp(
             )
             // Subscription gate: If subscription is expired and user is not superadmin, lock to payment screen
             session.activeBusiness != null && !session.isPlatformAdmin &&
-                !com.alvinb.counterpos.data.SubscriptionManager.evaluate(session.activeBusiness!!, isOnline = state.isOnline).isEntitled ->
+                !state.isSubscriptionEntitled ->
                 SubscriptionPaymentScreen(
                     viewModel = viewModel,
                     onContinueToPos = { viewModel.synchronizeData(showNotice = true) },
@@ -184,8 +184,8 @@ fun CounterPosApp(
                 notice = state.notice,
                 isCreating = state.isCreatingBusiness,
                 onClearError = viewModel::clearStartupError,
-                onCreateBusiness = { name, type, size, mode, count ->
-                    viewModel.createBusiness(name, type, size, mode, count)
+                onCreateBusiness = { name, type, size, mode, count, phone ->
+                    viewModel.createBusiness(name, type, size, mode, count, phone)
                 },
                 onSignOut = viewModel::signOut
             )
@@ -210,7 +210,7 @@ private fun AuthScreen(
     isLoadingQr: Boolean = false,
     onEmailSignIn: (String, String) -> Unit,
     onCreateAccount: (String, String) -> Unit,
-    onRegisterBusiness: (String, String, String, String, String, String, Int) -> Unit,
+    onRegisterBusiness: (String, String, String, String, String, String, Int, String) -> Unit,
     onNavigateToRegister: () -> Unit = {},
     onCredentialSignIn: (String) -> Unit,
     onOpenScanner: () -> Unit,
@@ -230,6 +230,7 @@ private fun AuthScreen(
 
     // Business Profile Fields
     var businessName by remember { mutableStateOf("") }
+    var ownerPhone by remember { mutableStateOf("") }
     var businessType by remember { mutableStateOf("big_club") } // "big_club" vs "counter_seller"
     var businessSize by remember { mutableStateOf("medium") } // "small", "medium", "large"
     var inventoryMode by remember { mutableStateOf("shared") } // "shared" vs "per_counter"
@@ -241,10 +242,11 @@ private fun AuthScreen(
     val context = LocalContext.current
     val emailValid = android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()
     val passwordsMatch = password.isNotBlank() && password == passwordConfirmation
+    val ownerPhoneValid = com.alvinb.counterpos.data.SubscriptionManager.normalizeKenyanPhone(ownerPhone) != null
 
     val canSubmitSignIn = emailValid && password.isNotBlank() && !isAuthenticating
     val canSubmitRegister = emailValid && password.length >= 6 && passwordsMatch &&
-        businessName.trim().isNotBlank() && businessName.length <= 120 &&
+        businessName.trim().isNotBlank() && businessName.length <= 120 && ownerPhoneValid &&
         (!isClub || parsedCounterCount in 1..50) && !isAuthenticating
 
     val visibleAuthError = error?.takeUnless { it.contains("QR", ignoreCase = true) }
@@ -501,6 +503,21 @@ private fun AuthScreen(
                             isError = email.isNotBlank() && !emailValid
                         )
                         OutlinedTextField(
+                            value = ownerPhone,
+                            onValueChange = { ownerPhone = it; onClearError() },
+                            modifier = Modifier.fillMaxWidth().testTag("register_owner_phone_field"),
+                            label = { Text("Owner mobile number") },
+                            placeholder = { Text("0712 345 678") },
+                            supportingText = {
+                                if (ownerPhone.isNotBlank() && !ownerPhoneValid) Text("Enter a valid Kenyan mobile number.")
+                                else Text("Used for M-Pesa subscription payments.")
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                            singleLine = true,
+                            enabled = !isAuthenticating,
+                            isError = ownerPhone.isNotBlank() && !ownerPhoneValid
+                        )
+                        OutlinedTextField(
                             value = password,
                             onValueChange = { password = it; onClearError() },
                             modifier = Modifier.fillMaxWidth().testTag("register_password_field"),
@@ -670,7 +687,8 @@ private fun AuthScreen(
                                     businessType,
                                     businessSize,
                                     inventoryMode,
-                                    parsedCounterCount
+                                    parsedCounterCount,
+                                    ownerPhone
                                 )
                             },
                             enabled = canSubmitRegister,
@@ -943,17 +961,19 @@ private fun BusinessSetupScreen(
     notice: String?,
     isCreating: Boolean,
     onClearError: () -> Unit,
-    onCreateBusiness: (String, String, String, String, Int) -> Unit,
+    onCreateBusiness: (String, String, String, String, Int, String) -> Unit,
     onSignOut: () -> Unit
 ) {
     var businessName by remember { mutableStateOf("") }
+    var ownerPhone by remember { mutableStateOf("") }
     var businessType by remember { mutableStateOf("big_club") }
     var businessSize by remember { mutableStateOf("medium") }
     var inventoryMode by remember { mutableStateOf("shared") }
     var counterCount by remember { mutableStateOf("1") }
     val isClub = businessType == "big_club"
     val parsedCounterCount = counterCount.toIntOrNull()
-    val canCreate = businessName.trim().isNotEmpty() && businessName.length <= 120 &&
+    val ownerPhoneValid = com.alvinb.counterpos.data.SubscriptionManager.normalizeKenyanPhone(ownerPhone) != null
+    val canCreate = businessName.trim().isNotEmpty() && businessName.length <= 120 && ownerPhoneValid &&
         (!isClub || (parsedCounterCount ?: 0) in 1..50) && !isCreating
 
     Box(
@@ -973,6 +993,21 @@ private fun BusinessSetupScreen(
                 "Signed in as $email. Create the business profile for this owner account.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 14.sp
+            )
+            OutlinedTextField(
+                value = ownerPhone,
+                onValueChange = { ownerPhone = it; onClearError() },
+                modifier = Modifier.fillMaxWidth().testTag("create_owner_phone_field"),
+                label = { Text("Owner mobile number") },
+                placeholder = { Text("0712 345 678") },
+                supportingText = {
+                    if (ownerPhone.isNotBlank() && !ownerPhoneValid) Text("Enter a valid Kenyan mobile number.")
+                    else Text("Used for M-Pesa subscription payments.")
+                },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                singleLine = true,
+                enabled = !isCreating,
+                isError = ownerPhone.isNotBlank() && !ownerPhoneValid
             )
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -1107,7 +1142,8 @@ private fun BusinessSetupScreen(
                         businessType,
                         businessSize,
                         inventoryMode,
-                        if (isClub) parsedCounterCount ?: 1 else 1
+                        if (isClub) parsedCounterCount ?: 1 else 1,
+                        ownerPhone
                     )
                 },
                 enabled = canCreate,

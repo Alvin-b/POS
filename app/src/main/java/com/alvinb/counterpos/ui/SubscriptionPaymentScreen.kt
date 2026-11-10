@@ -83,8 +83,8 @@ fun SubscriptionPaymentScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val activeShop = session.activeBusiness
 
-    val entitlement = remember(activeShop, state.isOnline) {
-        if (activeShop != null) {
+    val entitlement = remember(activeShop, state.isOnline, state.subscriptionEntitlement) {
+        state.subscriptionEntitlement ?: if (activeShop != null) {
             SubscriptionManager.evaluate(activeShop, isOnline = state.isOnline)
         } else {
             SubscriptionEntitlement(
@@ -103,8 +103,8 @@ fun SubscriptionPaymentScreen(
         }
     }
 
-    var phoneNumber by remember(activeShop?.lastPaymentPhone) {
-        mutableStateOf(activeShop?.lastPaymentPhone ?: "")
+    var phoneNumber by remember(activeShop?.lastPaymentPhone, activeShop?.ownerPhone) {
+        mutableStateOf(activeShop?.lastPaymentPhone ?: activeShop?.ownerPhone ?: "")
     }
 
     val focusManager = LocalFocusManager.current
@@ -175,7 +175,7 @@ fun SubscriptionPaymentScreen(
             // Title & Subtitle
             Text(
                 text = if (state.isSubscriptionPaymentSuccess) "Subscription Activated!"
-                else if (entitlement.status == SubscriptionStatus.TRIAL) "Test Period Ended"
+                else if (entitlement.status == SubscriptionStatus.TRIAL) "Free Trial Ended"
                 else "Subscription Renewal Required",
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
@@ -515,7 +515,7 @@ fun SubscriptionPaymentScreen(
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Text(
-                                    text = "Pay KSh $formattedAmount via M-Pesa",
+                                text = "Pay Now • KSh $formattedAmount",
                                     fontSize = 15.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color.White

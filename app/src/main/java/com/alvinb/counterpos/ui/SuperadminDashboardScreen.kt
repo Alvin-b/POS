@@ -136,6 +136,7 @@ fun SuperadminDashboardScreen(
     // Register Form state
     var regBusinessName by remember { mutableStateOf("") }
     var regOwnerEmail by remember { mutableStateOf("") }
+    var regOwnerPhone by remember { mutableStateOf("") }
     var regBusinessType by remember { mutableStateOf("big_club") }
     var regBusinessSize by remember { mutableStateOf("medium") }
     var regInventoryMode by remember { mutableStateOf("shared") }
@@ -269,6 +270,7 @@ fun SuperadminDashboardScreen(
                     RegisterTenantContent(
                         businessName = regBusinessName,
                         ownerEmail = regOwnerEmail,
+                        ownerPhone = regOwnerPhone,
                         businessType = regBusinessType,
                         businessSize = regBusinessSize,
                         inventoryMode = regInventoryMode,
@@ -276,6 +278,7 @@ fun SuperadminDashboardScreen(
                         isCreating = state.isCreatingAdminBusiness,
                         onBusinessNameChange = { regBusinessName = it; onClearError() },
                         onOwnerEmailChange = { regOwnerEmail = it; onClearError() },
+                        onOwnerPhoneChange = { regOwnerPhone = it; onClearError() },
                         onBusinessTypeChange = { type ->
                             regBusinessType = type
                             if (type == "counter_seller") {
@@ -291,6 +294,7 @@ fun SuperadminDashboardScreen(
                             viewModel.createBusinessForOwner(
                                 name = regBusinessName,
                                 ownerEmail = regOwnerEmail,
+                                ownerPhone = regOwnerPhone,
                                 businessType = regBusinessType,
                                 businessSize = regBusinessSize,
                                 inventoryMode = regInventoryMode,
@@ -298,6 +302,7 @@ fun SuperadminDashboardScreen(
                                 onCreated = {
                                     regBusinessName = ""
                                     regOwnerEmail = ""
+                                    regOwnerPhone = ""
                                     regCounterCount = "1"
                                     selectedTab = SuperadminTab.PORTFOLIO
                                 }
@@ -1427,6 +1432,7 @@ private fun StatusBadge(status: String) {
 private fun RegisterTenantContent(
     businessName: String,
     ownerEmail: String,
+    ownerPhone: String,
     businessType: String,
     businessSize: String,
     inventoryMode: String,
@@ -1434,6 +1440,7 @@ private fun RegisterTenantContent(
     isCreating: Boolean,
     onBusinessNameChange: (String) -> Unit,
     onOwnerEmailChange: (String) -> Unit,
+    onOwnerPhoneChange: (String) -> Unit,
     onBusinessTypeChange: (String) -> Unit,
     onBusinessSizeChange: (String) -> Unit,
     onInventoryModeChange: (String) -> Unit,
@@ -1443,8 +1450,9 @@ private fun RegisterTenantContent(
     val isClub = businessType == "big_club" || businessType == "club"
     val isLiquorStore = businessType == "counter_seller" || businessType == "liquor_store"
     val ownerEmailValid = ownerEmail.isBlank() || (ownerEmail.trim().contains("@") && ownerEmail.none(Char::isWhitespace))
+    val ownerPhoneValid = com.alvinb.counterpos.data.SubscriptionManager.normalizeKenyanPhone(ownerPhone) != null
     val counterCountValid = !isClub || (counterCount.toIntOrNull()?.let { it in 1..50 } == true)
-    val canSubmit = businessName.trim().length in 2..120 && ownerEmailValid && counterCountValid && !isCreating
+    val canSubmit = businessName.trim().length in 2..120 && ownerEmailValid && ownerPhoneValid && counterCountValid && !isCreating
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1542,6 +1550,22 @@ private fun RegisterTenantContent(
                         },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                         singleLine = true,
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                    OutlinedTextField(
+                        value = ownerPhone,
+                        onValueChange = onOwnerPhoneChange,
+                        modifier = Modifier.fillMaxWidth().testTag("input_register_owner_phone"),
+                        label = { Text("Owner Mobile Number") },
+                        placeholder = { Text("0712 345 678") },
+                        isError = ownerPhone.isNotBlank() && !ownerPhoneValid,
+                        supportingText = {
+                            if (ownerPhone.isNotBlank() && !ownerPhoneValid) Text("Enter a valid Kenyan mobile number.")
+                            else Text("Used to prefill M-Pesa subscription payments.")
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                        singleLine = true,
+                        enabled = !isCreating,
                         shape = RoundedCornerShape(14.dp)
                     )
                 }
@@ -2410,4 +2434,3 @@ private fun AdminSubscriptionDialog(
         }
     }
 }
-

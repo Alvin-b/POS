@@ -1,5 +1,7 @@
 package com.alvinb.counterpos.data
 
+import android.content.Context
+import android.content.SharedPreferences
 import com.alvinb.counterpos.data.remote.BusinessMembership
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -27,7 +29,52 @@ data class SubscriptionEntitlement(
     val message: String
 )
 
-object SubscriptionManager {
+class SubscriptionManager(context: Context) {
+    private val preferences: SharedPreferences =
+        context.applicationContext.getSharedPreferences("counterpos_subscription_entitlement", Context.MODE_PRIVATE)
+
+    /** Persist the time the app last received an authoritative entitlement response for this shop. */
+    fun recordServerVerifiedEntitlement(shopId: String, verifiedAtMillis: Long) {
+        if (shopId.isBlank() || verifiedAtMillis <= 0L) return
+        val key = entitlementKey(shopId)
+        val previous = preferences.getLong(key, 0L)
+        if (verifiedAtMillis > previous) {
+            preferences.edit().putLong(key, verifiedAtMillis).apply()
+        }
+    }
+
+    fun lastServerVerifiedEntitlement(shopId: String): Long =
+        if (shopId.isBlank()) 0L else preferences.getLong(entitlementKey(shopId), 0L)
+
+    /** Returns true when no verification is available or the 72-hour offline window has elapsed. */
+    fun hasOfflineGracePeriodElapsed(shopId: String, nowMillis: Long = System.currentTimeMillis()): Boolean =
+        hasOfflineGracePeriodElapsed(lastServerVerifiedEntitlement(shopId), nowMillis)
+
+    fun evaluateMembership(
+        membership: BusinessMembership,
+        isOnline: Boolean,
+        currentTimeMillis: Long = System.currentTimeMillis()
+    ): SubscriptionEntitlement {
+        val persistedVerifiedAt = lastServerVerifiedEntitlement(membership.shopId)
+        val verifiedAt = maxOf(persistedVerifiedAt, membership.lastVerifiedEntitlementAt)
+        if (isOnline && membership.lastVerifiedEntitlementAt > persistedVerifiedAt) {
+            recordServerVerifiedEntitlement(membership.shopId, membership.lastVerifiedEntitlementAt)
+        }
+        if (!isOnline && verifiedAt <= 0L) {
+            return evaluate(membership, currentTimeMillis = currentTimeMillis, isOnline = true)
+        }
+        return evaluate(
+            membership.copy(lastVerifiedEntitlementAt = verifiedAt),
+            currentTimeMillis = currentTimeMillis,
+            isOnline = isOnline
+        )
+    }
+
+    private fun entitlementKey(shopId: String) = "${KEY_LAST_SERVER_VERIFIED_ENTITLEMENT}_$shopId"
+
+    companion object {
+
+    const val KEY_LAST_SERVER_VERIFIED_ENTITLEMENT = "last_server_verified_entitlement"
 
     /** Maximum offline tolerance after server-verified entitlement expires (72 hours). */
     const val OFFLINE_GRACE_PERIOD_MILLIS = 72 * 60 * 60 * 1000L // 72 hours
@@ -186,5 +233,10 @@ object SubscriptionManager {
             statusLabel = "Subscription Expired",
             message = "Your business subscription ended on $expiryDateStr. Pay KSh $amountDue to resume service."
         )
+    }
+
+    fun hasOfflineGracePeriodElapsed(lastServerVerifiedAtMillis: Long, nowMillis: Long): Boolean =
+        lastServerVerifiedAtMillis <= 0L ||
+            nowMillis - lastServerVerifiedAtMillis >= OFFLINE_GRACE_PERIOD_MILLIS
     }
 }

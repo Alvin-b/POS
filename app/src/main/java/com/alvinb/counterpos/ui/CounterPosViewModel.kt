@@ -7,6 +7,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.alvinb.counterpos.data.CounterPosRepository
+import com.alvinb.counterpos.data.SubscriptionEntitlement
+import com.alvinb.counterpos.data.SubscriptionManager
 import com.alvinb.counterpos.data.TableSettlementResult
 import com.alvinb.counterpos.data.remote.AdminBusiness
 import com.alvinb.counterpos.data.remote.AdminAuditEvent
@@ -194,13 +196,16 @@ data class CounterPosUiState(
     val stkCustomerMessage: String? = null,
     val subscriptionPaymentError: String? = null,
     val isSubscriptionPaymentSuccess: Boolean = false,
+    val isSubscriptionEntitled: Boolean = true,
+    val subscriptionEntitlement: SubscriptionEntitlement? = null,
     val adminSelectedSubscriptionBusiness: AdminBusiness? = null,
     val isUpdatingSubscription: Boolean = false
 )
 
 class CounterPosViewModel(
     private val repository: CounterPosRepository,
-    private val connectivityManager: ConnectivityManager
+    private val connectivityManager: ConnectivityManager,
+    private val subscriptionManager: SubscriptionManager
 ) : ViewModel() {
     val session = repository.session.stateIn(viewModelScope, SharingStarted.Eagerly, SessionSnapshot())
     private val _adminBusinesses = MutableStateFlow<List<AdminBusiness>>(repository.getCachedAdminBusinesses())
@@ -221,6 +226,7 @@ class CounterPosViewModel(
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             _uiState.update { it.copy(isOnline = true) }
+            refreshSubscriptionEntitlement()
             reconnectSyncJob?.cancel()
             reconnectSyncJob = viewModelScope.launch {
                 delay(150)
@@ -242,6 +248,7 @@ class CounterPosViewModel(
                     notice = "Offline mode. Sales and tables are stored locally."
                 )
             }
+            refreshSubscriptionEntitlement()
         }
     }
 
@@ -255,6 +262,7 @@ class CounterPosViewModel(
         runCatching { connectivityManager.registerDefaultNetworkCallback(networkCallback) }
         viewModelScope.launch {
             repository.session.collect { sess ->
+                refreshSubscriptionEntitlement(sess)
                 tableSettlementOutboxJob?.cancel()
                 if (sess.isPlatformAdmin) {
                     loadAdminBusinesses()
@@ -326,6 +334,7 @@ class CounterPosViewModel(
                 // Realtime invalidation is the primary refresh path. This remains
                 // a conservative fallback for background disconnects and missed events.
                 delay(30_000)
+                refreshSubscriptionEntitlement()
                 if (repository.session.value.isAuthenticated) {
                     val now = System.currentTimeMillis()
                     if (repository.session.value.activeBusiness != null) {
@@ -339,6 +348,24 @@ class CounterPosViewModel(
                     }
                 }
             }
+        }
+    }
+
+    private fun refreshSubscriptionEntitlement(
+        snapshot: SessionSnapshot = repository.session.value,
+        online: Boolean = _uiState.value.isOnline
+    ) {
+        val business = snapshot.activeBusiness
+        if (business == null || snapshot.isPlatformAdmin) {
+            _uiState.update { it.copy(isSubscriptionEntitled = true, subscriptionEntitlement = null) }
+            return
+        }
+        val entitlement = subscriptionManager.evaluateMembership(business, isOnline = online)
+        _uiState.update {
+            it.copy(
+                isSubscriptionEntitled = entitlement.isEntitled,
+                subscriptionEntitlement = entitlement
+            )
         }
     }
 
@@ -513,7 +540,8 @@ class CounterPosViewModel(
         businessType: String = "big_club",
         businessSize: String = "medium",
         inventoryMode: String = "shared",
-        counterCount: Int = 1
+        counterCount: Int = 1,
+        ownerPhone: String = ""
     ) = viewModelScope.launch {
         if (_uiState.value.isAuthenticating || _uiState.value.isCreatingBusiness) return@launch
         val cleanEmail = email.trim()
@@ -528,6 +556,11 @@ class CounterPosViewModel(
         }
         if (cleanName.isBlank()) {
             _uiState.update { it.copy(startupError = "Please enter your business name.") }
+            return@launch
+        }
+        val normalizedOwnerPhone = SubscriptionManager.normalizeKenyanPhone(ownerPhone)
+        if (normalizedOwnerPhone == null) {
+            _uiState.update { it.copy(startupError = "Enter a valid Kenyan owner mobile number.") }
             return@launch
         }
 
@@ -599,7 +632,7 @@ class CounterPosViewModel(
                 )
             }
 
-            repository.createBusiness(cleanName, businessType, businessSize, inventoryMode, counterCount)
+            repository.createBusiness(cleanName, businessType, businessSize, inventoryMode, counterCount, normalizedOwnerPhone)
             _uiState.update {
                 it.copy(
                     isCreatingBusiness = false,
@@ -634,12 +667,15 @@ class CounterPosViewModel(
         businessType: String = "big_club",
         businessSize: String = "medium",
         inventoryMode: String = "shared",
-        counterCount: Int = 1
+        counterCount: Int = 1,
+        ownerPhone: String = ""
     ) = viewModelScope.launch {
         if (_uiState.value.isCreatingBusiness) return@launch
         _uiState.update { it.copy(isCreatingBusiness = true, startupError = null, notice = "Creating your business…") }
         try {
-            repository.createBusiness(name, businessType, businessSize, inventoryMode, counterCount)
+            val normalizedOwnerPhone = SubscriptionManager.normalizeKenyanPhone(ownerPhone)
+                ?: throw IllegalArgumentException("Enter a valid Kenyan owner mobile number.")
+            repository.createBusiness(name, businessType, businessSize, inventoryMode, counterCount, normalizedOwnerPhone)
             _uiState.update { it.copy(startupError = null, notice = "Business created. Opening your workspace…") }
         } catch (error: CancellationException) {
             throw error
@@ -1088,6 +1124,7 @@ class CounterPosViewModel(
     fun createBusinessForOwner(
         name: String,
         ownerEmail: String,
+        ownerPhone: String,
         businessType: String = "big_club",
         businessSize: String = "medium",
         inventoryMode: String = "shared",
@@ -1095,8 +1132,13 @@ class CounterPosViewModel(
         onCreated: (() -> Unit)? = null
     ) = viewModelScope.launch {
         if (_uiState.value.isCreatingAdminBusiness) return@launch
+        val normalizedOwnerPhone = SubscriptionManager.normalizeKenyanPhone(ownerPhone)
+        if (normalizedOwnerPhone == null) {
+            _uiState.update { it.copy(startupError = "Enter a valid Kenyan owner mobile number.") }
+            return@launch
+        }
         _uiState.update { it.copy(isCreatingAdminBusiness = true, startupError = null) }
-        runCatching { repository.adminCreateBusiness(name, ownerEmail, businessType, businessSize, inventoryMode, counterCount) }
+        runCatching { repository.adminCreateBusiness(name, ownerEmail, businessType, businessSize, inventoryMode, counterCount, normalizedOwnerPhone) }
             .onSuccess { result ->
                 val businesses = result.businesses
                 _adminBusinesses.value = businesses
@@ -1525,7 +1567,12 @@ class CounterPosViewModel(
                         _uiState.update { it.copy(isScannerOpen = false, startupError = "Business QR must contain a name and registered owner email.") }
                     } else {
                         _uiState.update { it.copy(isScannerOpen = false, startupError = null, notice = "Registering $name…") }
-                        createBusinessForOwner(name, ownerEmail)
+                        _uiState.update {
+                            it.copy(
+                                isScannerOpen = false,
+                                startupError = "This older business QR does not include the owner's mobile number. Use Register Tenant and enter the owner's phone."
+                            )
+                        }
                     }
                     return
                 }
@@ -2399,13 +2446,14 @@ class CounterPosViewModel(
 
 class CounterPosViewModelFactory(
     private val repository: CounterPosRepository,
-    private val connectivityManager: ConnectivityManager
+    private val connectivityManager: ConnectivityManager,
+    private val subscriptionManager: SubscriptionManager
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (!modelClass.isAssignableFrom(CounterPosViewModel::class.java)) {
             throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
         }
-        return CounterPosViewModel(repository, connectivityManager) as T
+        return CounterPosViewModel(repository, connectivityManager, subscriptionManager) as T
     }
 }

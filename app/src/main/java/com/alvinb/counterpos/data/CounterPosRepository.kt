@@ -388,9 +388,12 @@ class CounterPosRepository(
         businessType: String = "big_club",
         businessSize: String = "medium",
         inventoryMode: String = "shared",
-        counterCount: Int = 1
+        counterCount: Int = 1,
+        ownerPhone: String = ""
     ): SessionSnapshot = withContext(Dispatchers.IO) {
         require(name.trim().length in 1..120) { "Enter a business name (up to 120 characters)." }
+        val normalizedOwnerPhone = SubscriptionManager.normalizeKenyanPhone(ownerPhone)
+            ?: throw IllegalArgumentException("Enter a valid Kenyan owner mobile number.")
         require(businessType in setOf("big_club", "counter_seller")) { "Choose a valid business type." }
         val isLiquorStore = businessType == "counter_seller"
         val selectedSize = if (isLiquorStore) "medium" else businessSize
@@ -428,6 +431,10 @@ class CounterPosRepository(
                 throw e
             }
         }
+        val createdSession = loadAccount(autoSelectSingleBusiness = true)
+        val shopId = createdSession.activeBusiness?.shopId
+            ?: throw IllegalStateException("Business was created, but its owner profile could not be loaded.")
+        remote.setOwnerBusinessPhone(shopId, normalizedOwnerPhone)
         loadAccount(autoSelectSingleBusiness = true)
     }
 
@@ -730,10 +737,15 @@ class CounterPosRepository(
         businessType: String,
         businessSize: String,
         inventoryMode: String,
-        counterCount: Int
+        counterCount: Int,
+        ownerPhone: String
     ): AdminBusinessCreationResult {
+        val normalizedOwnerPhone = SubscriptionManager.normalizeKenyanPhone(ownerPhone)
+            ?: throw IllegalArgumentException("Enter a valid Kenyan owner mobile number.")
         val createdRow = remote.adminCreateBusiness(name, ownerEmail.takeIf { it.isNotBlank() }, businessType, businessSize, inventoryMode, counterCount)
         val createdShopId = createdRow.optString("id").takeIf(String::isNotBlank)
+            ?: throw IllegalStateException("Business was created but no business ID was returned.")
+        remote.setOwnerBusinessPhone(createdShopId, normalizedOwnerPhone)
         return AdminBusinessCreationResult(createdShopId, remote.adminBusinesses())
     }
 
@@ -994,6 +1006,7 @@ class CounterPosRepository(
                     .put("last_payment_receipt", membership.lastPaymentReceipt ?: "")
                     .put("last_payment_phone", membership.lastPaymentPhone ?: "")
                     .put("last_verified_entitlement_at", membership.lastVerifiedEntitlementAt)
+                    .put("owner_phone", membership.ownerPhone ?: "")
             )
         }
         val json = JSONObject()
@@ -1031,7 +1044,8 @@ class CounterPosRepository(
                         lastPaymentAt = row.optString("last_payment_at").takeIf(String::isNotBlank),
                         lastPaymentReceipt = row.optString("last_payment_receipt").takeIf(String::isNotBlank),
                         lastPaymentPhone = row.optString("last_payment_phone").takeIf(String::isNotBlank),
-                        lastVerifiedEntitlementAt = row.optLong("last_verified_entitlement_at", 0L)
+                        lastVerifiedEntitlementAt = row.optLong("last_verified_entitlement_at", 0L),
+                        ownerPhone = row.optString("owner_phone").takeIf(String::isNotBlank)
                     )
                 )
             }

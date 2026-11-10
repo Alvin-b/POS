@@ -89,7 +89,7 @@ fun RegisterBusinessScreen(
         error = state.startupError,
         notice = state.notice,
         isCreating = state.isAuthenticating || state.isCreatingBusiness,
-        onRegister = { email, password, name, type, size, mode, count ->
+        onRegister = { email, password, name, type, size, mode, count, phone ->
             viewModel.registerOwnerAndBusiness(
                 email = email,
                 password = password,
@@ -97,7 +97,8 @@ fun RegisterBusinessScreen(
                 businessType = type,
                 businessSize = size,
                 inventoryMode = mode,
-                counterCount = count
+                counterCount = count,
+                ownerPhone = phone
             )
         },
         onNavigateToSignIn = onNavigateToSignIn,
@@ -118,7 +119,8 @@ fun RegisterBusinessScreen(
         businessType: String,
         businessSize: String,
         inventoryMode: String,
-        counterCount: Int
+        counterCount: Int,
+        ownerPhone: String
     ) -> Unit,
     onNavigateToSignIn: () -> Unit,
     onClearError: () -> Unit = {}
@@ -131,6 +133,7 @@ fun RegisterBusinessScreen(
     var passwordVisible by remember { mutableStateOf(false) }
     var passwordConfirmationVisible by remember { mutableStateOf(false) }
     var businessName by remember { mutableStateOf("") }
+    var ownerPhone by remember { mutableStateOf("") }
     var businessType by remember { mutableStateOf("big_club") } // "big_club" vs "counter_seller"
     var businessSize by remember { mutableStateOf("medium") } // "small", "medium", "large"
     var inventoryMode by remember { mutableStateOf("shared") } // "shared" vs "per_counter"
@@ -143,10 +146,11 @@ fun RegisterBusinessScreen(
     val passwordValid = password.length >= 6
     val passwordsMatch = password.isNotBlank() && password == passwordConfirmation
     val businessNameValid = businessName.trim().length in 2..120
+    val ownerPhoneValid = com.alvinb.counterpos.data.SubscriptionManager.normalizeKenyanPhone(ownerPhone) != null
     val counterCountValid = !isClub || (counterCount.toIntOrNull()?.let { it in 1..50 } == true)
 
     val canSubmit = emailValid && passwordValid && passwordsMatch &&
-        businessNameValid && counterCountValid && !isCreating
+        businessNameValid && ownerPhoneValid && counterCountValid && !isCreating
 
     Scaffold(
         modifier = Modifier
@@ -307,6 +311,22 @@ fun RegisterBusinessScreen(
                                     Text("This email will be your business administrator login.")
                                 }
                             },
+                            shape = RoundedCornerShape(14.dp)
+                        )
+                        OutlinedTextField(
+                            value = ownerPhone,
+                            onValueChange = { ownerPhone = it; onClearError() },
+                            modifier = Modifier.fillMaxWidth().testTag("register_owner_phone_input"),
+                            label = { Text("Owner Mobile Number") },
+                            placeholder = { Text("0712 345 678") },
+                            supportingText = {
+                                if (ownerPhone.isNotBlank() && !ownerPhoneValid) Text("Enter a valid Kenyan mobile number.")
+                                else Text("Used for M-Pesa subscription payments.")
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                            singleLine = true,
+                            enabled = !isCreating,
+                            isError = ownerPhone.isNotBlank() && !ownerPhoneValid,
                             shape = RoundedCornerShape(14.dp)
                         )
                         OutlinedTextField(
@@ -710,7 +730,8 @@ fun RegisterBusinessScreen(
                                 businessType,
                                 businessSize,
                                 inventoryMode,
-                                parsedCount
+                                parsedCount,
+                                ownerPhone
                             )
                         },
                         enabled = canSubmit,

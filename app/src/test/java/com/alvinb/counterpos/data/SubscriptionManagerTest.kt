@@ -154,4 +154,19 @@ class SubscriptionManagerTest {
         assertFalse(entitlement.isEntitled)
         assertEquals(SubscriptionStatus.EXPIRED, entitlement.status)
     }
+
+    @Test
+    fun offlineGraceExpiresAt72HoursAndMissingVerificationFailsClosed() {
+        val now = 1_800_000_000_000L
+        val lastVerified = now - TimeUnit.HOURS.toMillis(72)
+
+        assertTrue(SubscriptionManager.hasOfflineGracePeriodElapsed(lastVerified, now))
+        assertTrue(SubscriptionManager.hasOfflineGracePeriodElapsed(0L, now))
+        assertFalse(
+            SubscriptionManager.hasOfflineGracePeriodElapsed(
+                now - TimeUnit.HOURS.toMillis(71),
+                now
+            )
+        )
+    }
 }

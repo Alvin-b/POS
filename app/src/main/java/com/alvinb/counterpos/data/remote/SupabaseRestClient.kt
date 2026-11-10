@@ -52,7 +52,8 @@ data class BusinessMembership(
     val lastPaymentAt: String? = null,
     val lastPaymentReceipt: String? = null,
     val lastPaymentPhone: String? = null,
-    val lastVerifiedEntitlementAt: Long = 0L
+    val lastVerifiedEntitlementAt: Long = 0L,
+    val ownerPhone: String? = null
 )
 
 data class AccountSnapshot(
@@ -439,7 +440,8 @@ class SupabaseRestClient(context: Context) {
                             lastPaymentAt = row.optString("last_payment_at").takeIf(String::isNotBlank),
                             lastPaymentReceipt = row.optString("last_payment_receipt").takeIf(String::isNotBlank),
                             lastPaymentPhone = row.optString("last_payment_phone").takeIf(String::isNotBlank),
-                            lastVerifiedEntitlementAt = System.currentTimeMillis()
+                            lastVerifiedEntitlementAt = System.currentTimeMillis(),
+                            ownerPhone = row.optString("owner_phone").takeIf(String::isNotBlank)
                         )
                     )
                 }
@@ -470,6 +472,11 @@ class SupabaseRestClient(context: Context) {
             .put("_business_size", businessSize)
             .put("_counter_inventory_mode", inventoryMode)
             .put("_counter_count", counterCount)
+    )
+
+    suspend fun setOwnerBusinessPhone(shopId: String, phone: String): JSONObject = rpcObject(
+        "set_owner_business_phone",
+        JSONObject().put("_shop_id", shopId).put("_phone", phone)
     )
 
     suspend fun patchShopProfile(
