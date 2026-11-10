@@ -53,7 +53,11 @@ data class BusinessMembership(
     val lastPaymentReceipt: String? = null,
     val lastPaymentPhone: String? = null,
     val lastVerifiedEntitlementAt: Long = 0L,
-    val ownerPhone: String? = null
+    val ownerPhone: String? = null,
+    val paymentLockActive: Boolean = false,
+    val paymentLockAmountKsh: Int = 0,
+    val paymentLockReason: String? = null,
+    val paymentLockStartedAt: String? = null
 )
 
 data class AccountSnapshot(
@@ -88,7 +92,11 @@ data class AdminBusiness(
     val lastPaymentAt: String? = null,
     val lastPaymentReceipt: String? = null,
     val lastPaymentPhone: String? = null,
-    val customBillingNote: String? = null
+    val customBillingNote: String? = null,
+    val paymentLockActive: Boolean = false,
+    val paymentLockAmountKsh: Int = 0,
+    val paymentLockReason: String? = null,
+    val paymentLockStartedAt: String? = null
 )
 
 data class DarajaStkResponse(
@@ -450,7 +458,11 @@ class SupabaseRestClient(context: Context) {
                             lastPaymentReceipt = row.optString("last_payment_receipt").takeIf(String::isNotBlank),
                             lastPaymentPhone = row.optString("last_payment_phone").takeIf(String::isNotBlank),
                             lastVerifiedEntitlementAt = System.currentTimeMillis(),
-                            ownerPhone = row.optString("owner_phone").takeIf(String::isNotBlank)
+                            ownerPhone = row.optString("owner_phone").takeIf(String::isNotBlank),
+                            paymentLockActive = row.optBoolean("payment_lock_active", false),
+                            paymentLockAmountKsh = row.optInt("payment_lock_amount_ksh", 0),
+                            paymentLockReason = row.optString("payment_lock_reason").takeIf(String::isNotBlank),
+                            paymentLockStartedAt = row.optString("payment_lock_started_at").takeIf(String::isNotBlank)
                         )
                     )
                 }
@@ -1103,7 +1115,11 @@ class SupabaseRestClient(context: Context) {
                             lastPaymentAt = row.optString("last_payment_at").takeIf(String::isNotBlank),
                             lastPaymentReceipt = row.optString("last_payment_receipt").takeIf(String::isNotBlank),
                             lastPaymentPhone = row.optString("last_payment_phone").takeIf(String::isNotBlank),
-                            customBillingNote = row.optString("custom_billing_note").takeIf(String::isNotBlank)
+                            customBillingNote = row.optString("custom_billing_note").takeIf(String::isNotBlank),
+                            paymentLockActive = row.optBoolean("payment_lock_active", false),
+                            paymentLockAmountKsh = row.optInt("payment_lock_amount_ksh", 0),
+                            paymentLockReason = row.optString("payment_lock_reason").takeIf(String::isNotBlank),
+                            paymentLockStartedAt = row.optString("payment_lock_started_at").takeIf(String::isNotBlank)
                         )
                     )
                 }
@@ -1255,6 +1271,20 @@ class SupabaseRestClient(context: Context) {
         if (trialEndsAtIso != null) payload.put("p_trial_ends_at", trialEndsAtIso)
         if (note != null) payload.put("p_note", note)
         return rpcObject("admin_update_shop_subscription", payload)
+    }
+
+    suspend fun adminSetShopPaymentLock(
+        shopId: String,
+        locked: Boolean,
+        amountKsh: Int? = null,
+        reason: String? = null
+    ): JSONObject {
+        val payload = JSONObject()
+            .put("p_shop_id", shopId)
+            .put("p_locked", locked)
+        if (amountKsh != null) payload.put("p_amount_ksh", amountKsh)
+        if (reason != null) payload.put("p_reason", reason)
+        return rpcObject("admin_set_shop_payment_lock", payload)
     }
 
     private suspend fun authenticate(grantType: String, email: String, password: String): AuthSession =

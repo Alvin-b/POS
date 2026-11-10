@@ -109,6 +109,7 @@ fun SubscriptionPaymentScreen(
 
     val focusManager = LocalFocusManager.current
     val formattedAmount = NumberFormat.getNumberInstance(Locale.US).format(entitlement.amountDueKsh)
+    val isOwner = activeShop?.role.equals("owner", ignoreCase = true)
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -175,6 +176,7 @@ fun SubscriptionPaymentScreen(
             // Title & Subtitle
             Text(
                 text = if (state.isSubscriptionPaymentSuccess) "Subscription Activated!"
+                else if (entitlement.isPaymentLocked) "Business Payment Lock"
                 else if (entitlement.status == SubscriptionStatus.TRIAL) "Free Trial Ended"
                 else "Subscription Renewal Required",
                 fontSize = 24.sp,
@@ -192,6 +194,25 @@ fun SubscriptionPaymentScreen(
                 color = MaterialTheme.colorScheme.primary,
                 textAlign = TextAlign.Center
             )
+
+            if (entitlement.isPaymentLocked) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = entitlement.message,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center
+                )
+                if (!session.activeBusiness?.role.equals("owner", ignoreCase = true)) {
+                    Text(
+                        text = "Ask the business owner to complete this payment. Employee access will return automatically after confirmation.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
+            }
 
             Spacer(Modifier.height(20.dp))
 
@@ -466,7 +487,7 @@ fun SubscriptionPaymentScreen(
                                 focusManager.clearFocus()
                                 viewModel.initiateSubscriptionPayment(phoneNumber)
                             },
-                            enabled = !state.isInitiatingStkPush && phoneNumber.isNotBlank(),
+                            enabled = isOwner && !state.isInitiatingStkPush && phoneNumber.isNotBlank(),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(52.dp)

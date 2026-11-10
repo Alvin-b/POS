@@ -12,7 +12,8 @@ enum class SubscriptionStatus {
     TRIAL,
     ACTIVE,
     OFFLINE_GRACE,
-    EXPIRED
+    EXPIRED,
+    PAYMENT_LOCKED
 }
 
 data class SubscriptionEntitlement(
@@ -26,7 +27,8 @@ data class SubscriptionEntitlement(
     val planDays: Int,
     val isGracePeriod: Boolean,
     val statusLabel: String,
-    val message: String
+    val message: String,
+    val isPaymentLocked: Boolean = false
 )
 
 class SubscriptionManager(context: Context) {
@@ -150,6 +152,25 @@ class SubscriptionManager(context: Context) {
     ): SubscriptionEntitlement {
         val amountDue = if (membership.subscriptionPriceKsh > 0) membership.subscriptionPriceKsh else DEFAULT_MONTHLY_PRICE_KSH
         val planDays = if (membership.subscriptionPlanDays > 0) membership.subscriptionPlanDays else DEFAULT_PLAN_DAYS
+
+        if (membership.paymentLockActive) {
+            val lockedAmount = membership.paymentLockAmountKsh.takeIf { it > 0 } ?: amountDue
+            return SubscriptionEntitlement(
+                status = SubscriptionStatus.PAYMENT_LOCKED,
+                isEntitled = false,
+                daysRemaining = 0,
+                hoursGraceRemaining = 0,
+                expiryTimestamp = currentTimeMillis,
+                expiryFormatted = "Payment required",
+                amountDueKsh = lockedAmount,
+                planDays = planDays,
+                isGracePeriod = false,
+                statusLabel = "Payment Lock",
+                message = membership.paymentLockReason?.let { "Business locked by platform administrator: $it" }
+                    ?: "This business is locked by the platform administrator. Pay KSh $lockedAmount to restore access.",
+                isPaymentLocked = true
+            )
+        }
 
         val subscriptionEnd = parseTimestamp(membership.subscriptionEndsAt)
         val trialEnd = parseTimestamp(membership.trialEndsAt)

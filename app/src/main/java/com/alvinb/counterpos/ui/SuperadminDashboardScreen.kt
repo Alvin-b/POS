@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
@@ -186,6 +187,11 @@ fun SuperadminDashboardScreen(
                 business.businessType.contains(query, ignoreCase = true)
             matchesFilter && matchesQuery
         }
+            .sortedWith(
+                compareBy<AdminBusiness> { it.ownerEmail == "Pending owner enrollment" }
+                    .thenBy { it.ownerEmail.lowercase() }
+                    .thenBy { it.shopName.lowercase() }
+            )
     }
 
     Scaffold(
@@ -340,7 +346,10 @@ fun SuperadminDashboardScreen(
                 )
             },
             onExtendTrial = { viewModel.adminExtendTrial(selectedSubBusiness.shopId, 14) },
-            onActivatePaid = { days -> viewModel.adminActivatePaidTerm(selectedSubBusiness.shopId, days) }
+            onActivatePaid = { days -> viewModel.adminActivatePaidTerm(selectedSubBusiness.shopId, days) },
+            onSetPaymentLock = { locked, amount, reason ->
+                viewModel.adminSetPaymentLock(selectedSubBusiness.shopId, locked, amount, reason)
+            }
         )
     }
 }
@@ -620,6 +629,47 @@ private fun PortfolioContent(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        item {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.18f))
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary) {
+                        Icon(
+                            imageVector = Icons.Default.Person,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.padding(10.dp).size(24.dp)
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Owner directory", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Manage each business owner, enrollment status, billing, and access from one place.",
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            businesses.count { it.ownerEmail != "Pending owner enrollment" }.toString(),
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text("owners", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
         // Search & Filter header
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -840,65 +890,60 @@ private fun ModernBusinessCard(
                 }
             }
 
-            // Owner banner / status indicator
-            if (isAwaitingOwner) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.3f))
+            // Owner directory block: identity, enrollment state, and account age are kept together.
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = if (isAwaitingOwner) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.55f)
+                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                border = BorderStroke(
+                    1.dp,
+                    if (isAwaitingOwner) MaterialTheme.colorScheme.error.copy(alpha = 0.28f)
+                    else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+                )
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 10.dp, vertical = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    Surface(
+                        shape = CircleShape,
+                        color = if (isAwaitingOwner) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primaryContainer
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Key,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(16.dp)
-                        )
                         Text(
-                            text = "Owner enrollment pending — scan owner QR or generate passkey below",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                            modifier = Modifier.weight(1f)
+                            text = if (isAwaitingOwner) "!" else business.ownerEmail.trim().firstOrNull()?.toString()?.uppercase() ?: "O",
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (isAwaitingOwner) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimaryContainer
                         )
                     }
-                }
-            } else {
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Business owner", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(
-                            text = "Owner:",
-                            fontSize = 11.sp,
+                            text = if (isAwaitingOwner) "Owner enrollment pending" else business.ownerEmail.ifBlank { "Not configured" },
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = business.ownerEmail.ifBlank { "Not configured" },
-                            fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.weight(1f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "Created ${business.createdAt.take(10)}",
+                            text = if (isAwaitingOwner) "Scan QR or issue a passkey to activate access"
+                            else "Tenant since ${business.createdAt.take(10)}",
                             fontSize = 10.sp,
-                            color = MaterialTheme.colorScheme.outline
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isAwaitingOwner) MaterialTheme.colorScheme.error.copy(alpha = 0.14f) else Color(0xFF00A349).copy(alpha = 0.12f)
+                    ) {
+                        Text(
+                            text = if (isAwaitingOwner) "ACTION NEEDED" else "CONNECTED",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (isAwaitingOwner) MaterialTheme.colorScheme.error else Color(0xFF007A34)
                         )
                     }
                 }
@@ -2178,7 +2223,8 @@ private fun AdminSubscriptionDialog(
     onDismiss: () -> Unit,
     onSave: (price: Int?, endsAt: String?, status: String?, planDays: Int?, trialEndsAt: String?, note: String?) -> Unit,
     onExtendTrial: () -> Unit,
-    onActivatePaid: (days: Int) -> Unit
+    onActivatePaid: (days: Int) -> Unit,
+    onSetPaymentLock: (locked: Boolean, amountKsh: Int?, reason: String?) -> Unit
 ) {
     var priceText by remember(business.subscriptionPriceKsh) {
         mutableStateOf(business.subscriptionPriceKsh.toString())
@@ -2195,6 +2241,10 @@ private fun AdminSubscriptionDialog(
     var customEndsAt by remember(business.subscriptionEndsAt) {
         mutableStateOf(business.subscriptionEndsAt.orEmpty())
     }
+    var lockAmountText by remember(business.paymentLockAmountKsh, business.subscriptionPriceKsh) {
+        mutableStateOf((if (business.paymentLockAmountKsh > 0) business.paymentLockAmountKsh else business.subscriptionPriceKsh).toString())
+    }
+    var lockReasonText by remember(business.paymentLockReason) { mutableStateOf(business.paymentLockReason.orEmpty()) }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -2277,6 +2327,53 @@ private fun AdminSubscriptionDialog(
                     ) {
                         Text("+90d Paid", fontSize = 11.sp)
                     }
+                }
+
+                HorizontalDivider()
+
+                Text(
+                    text = "Platform Payment Lock",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = if (business.paymentLockActive) "This business is currently locked on every owner and employee device."
+                    else "Lock all POS functions and require the owner to pay a specific amount.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (!business.paymentLockActive) {
+                    OutlinedTextField(
+                        value = lockAmountText,
+                        onValueChange = { lockAmountText = it.filter(Char::isDigit) },
+                        label = { Text("Amount due (KES)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = lockReasonText,
+                        onValueChange = { lockReasonText = it.take(240) },
+                        label = { Text("Reason / instruction (optional)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2
+                    )
+                    Button(
+                        onClick = {
+                            onSetPaymentLock(true, lockAmountText.toIntOrNull(), lockReasonText.trim().ifBlank { null })
+                        },
+                        enabled = !isUpdating && (lockAmountText.toIntOrNull() ?: 0) > 0,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) { Text("Start Payment Lock") }
+                } else {
+                    Button(
+                        onClick = { onSetPaymentLock(false, null, null) },
+                        enabled = !isUpdating,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00A349))
+                    ) { Text("Clear Payment Lock") }
                 }
 
                 HorizontalDivider()

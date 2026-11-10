@@ -1480,6 +1480,27 @@ class CounterPosViewModel(
         adminUpdateShopSubscription(shopId = shopId, endsAtIso = iso, status = "active", planDays = daysToAdd, priceKsh = priceKsh)
     }
 
+    fun adminSetPaymentLock(shopId: String, locked: Boolean, amountKsh: Int? = null, reason: String? = null) {
+        if (_uiState.value.isUpdatingSubscription) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isUpdatingSubscription = true, startupError = null) }
+            runCatching { repository.adminSetShopPaymentLock(shopId, locked, amountKsh, reason) }
+                .onSuccess { updated ->
+                    _adminBusinesses.value = updated
+                    _uiState.update {
+                        it.copy(
+                            isUpdatingSubscription = false,
+                            adminSelectedSubscriptionBusiness = updated.firstOrNull { b -> b.shopId == shopId },
+                            notice = if (locked) "Payment lock started for the business" else "Payment lock cleared"
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update { it.copy(isUpdatingSubscription = false, startupError = error.message ?: "Could not update payment lock") }
+                }
+        }
+    }
+
     fun openAdminEnrollmentScanner(shopId: String, role: String) {
         val business = _adminBusinesses.value.firstOrNull { it.shopId == shopId }
         if (!session.value.isPlatformAdmin) {
