@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.alvinb.counterpos.data.SubscriptionManager
 import com.alvinb.counterpos.ui.CounterPosApp
 import com.alvinb.counterpos.ui.CounterPosTheme
 import com.alvinb.counterpos.ui.CounterPosViewModel
@@ -50,7 +51,11 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 val appViewModel: CounterPosViewModel = viewModel(
-                    factory = CounterPosViewModelFactory(repository, connectivityManager)
+                    factory = CounterPosViewModelFactory(
+                        repository,
+                        connectivityManager,
+                        SubscriptionManager(applicationContext)
+                    )
                 )
                 CounterPosApp(
                     viewModel = appViewModel,

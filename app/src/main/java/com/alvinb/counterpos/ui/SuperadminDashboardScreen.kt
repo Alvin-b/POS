@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -36,6 +37,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.ui.window.Dialog
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Inventory2
@@ -133,6 +136,7 @@ fun SuperadminDashboardScreen(
     // Register Form state
     var regBusinessName by remember { mutableStateOf("") }
     var regOwnerEmail by remember { mutableStateOf("") }
+    var regOwnerPhone by remember { mutableStateOf("") }
     var regBusinessType by remember { mutableStateOf("big_club") }
     var regBusinessSize by remember { mutableStateOf("medium") }
     var regInventoryMode by remember { mutableStateOf("shared") }
@@ -255,6 +259,9 @@ fun SuperadminDashboardScreen(
                             val reason = lifecycleReason.trim().ifBlank { fallback }
                             viewModel.setBusinessStatus(shopId, status, reason)
                         },
+                        onOpenSubscription = { business -> viewModel.adminOpenSubscriptionDialog(business) },
+                        onExtendTrial = { shopId -> viewModel.adminExtendTrial(shopId, 14) },
+                        onActivatePaid = { shopId, days -> viewModel.adminActivatePaidTerm(shopId, days) },
                         onNavigateToRegister = { selectedTab = SuperadminTab.REGISTER }
                     )
                 }
@@ -263,6 +270,7 @@ fun SuperadminDashboardScreen(
                     RegisterTenantContent(
                         businessName = regBusinessName,
                         ownerEmail = regOwnerEmail,
+                        ownerPhone = regOwnerPhone,
                         businessType = regBusinessType,
                         businessSize = regBusinessSize,
                         inventoryMode = regInventoryMode,
@@ -270,6 +278,7 @@ fun SuperadminDashboardScreen(
                         isCreating = state.isCreatingAdminBusiness,
                         onBusinessNameChange = { regBusinessName = it; onClearError() },
                         onOwnerEmailChange = { regOwnerEmail = it; onClearError() },
+                        onOwnerPhoneChange = { regOwnerPhone = it; onClearError() },
                         onBusinessTypeChange = { type ->
                             regBusinessType = type
                             if (type == "counter_seller") {
@@ -285,6 +294,7 @@ fun SuperadminDashboardScreen(
                             viewModel.createBusinessForOwner(
                                 name = regBusinessName,
                                 ownerEmail = regOwnerEmail,
+                                ownerPhone = regOwnerPhone,
                                 businessType = regBusinessType,
                                 businessSize = regBusinessSize,
                                 inventoryMode = regInventoryMode,
@@ -292,6 +302,7 @@ fun SuperadminDashboardScreen(
                                 onCreated = {
                                     regBusinessName = ""
                                     regOwnerEmail = ""
+                                    regOwnerPhone = ""
                                     regCounterCount = "1"
                                     selectedTab = SuperadminTab.PORTFOLIO
                                 }
@@ -309,6 +320,28 @@ fun SuperadminDashboardScreen(
                 }
             }
         }
+    }
+
+    val selectedSubBusiness = state.adminSelectedSubscriptionBusiness
+    if (selectedSubBusiness != null) {
+        AdminSubscriptionDialog(
+            business = selectedSubBusiness,
+            isUpdating = state.isUpdatingSubscription,
+            onDismiss = viewModel::adminCloseSubscriptionDialog,
+            onSave = { price, endsAt, status, planDays, trialEndsAt, note ->
+                viewModel.adminUpdateShopSubscription(
+                    shopId = selectedSubBusiness.shopId,
+                    priceKsh = price,
+                    endsAtIso = endsAt,
+                    status = status,
+                    planDays = planDays,
+                    trialEndsAtIso = trialEndsAt,
+                    note = note
+                )
+            },
+            onExtendTrial = { viewModel.adminExtendTrial(selectedSubBusiness.shopId, 14) },
+            onActivatePaid = { days -> viewModel.adminActivatePaidTerm(selectedSubBusiness.shopId, days) }
+        )
     }
 }
 
@@ -577,6 +610,9 @@ private fun PortfolioContent(
     onCreateOwnerPasskey: (String, String) -> Unit,
     onClearPasskey: () -> Unit,
     onStatusChange: (String, String, String?) -> Unit,
+    onOpenSubscription: (AdminBusiness) -> Unit,
+    onExtendTrial: (String) -> Unit,
+    onActivatePaid: (String, Int) -> Unit,
     onNavigateToRegister: () -> Unit
 ) {
     LazyColumn(
@@ -699,7 +735,10 @@ private fun PortfolioContent(
                     onScanOwnerQr = { role -> onScanOwnerQr(business.shopId, role) },
                     onCreateOwnerPasskey = { role -> onCreateOwnerPasskey(business.shopId, role) },
                     onClearPasskey = onClearPasskey,
-                    onStatusChange = onStatusChange
+                    onStatusChange = onStatusChange,
+                    onOpenSubscription = onOpenSubscription,
+                    onExtendTrial = onExtendTrial,
+                    onActivatePaid = onActivatePaid
                 )
             }
         }
@@ -715,7 +754,10 @@ private fun ModernBusinessCard(
     onScanOwnerQr: (String) -> Unit,
     onCreateOwnerPasskey: (String) -> Unit,
     onClearPasskey: () -> Unit,
-    onStatusChange: (String, String, String?) -> Unit
+    onStatusChange: (String, String, String?) -> Unit,
+    onOpenSubscription: (AdminBusiness) -> Unit,
+    onExtendTrial: (String) -> Unit,
+    onActivatePaid: (String, Int) -> Unit
 ) {
     val clipboardManager = LocalClipboardManager.current
     var enrollmentRole by remember(business.shopId) { mutableStateOf("owner") }
@@ -792,7 +834,10 @@ private fun ModernBusinessCard(
                     }
                 }
 
-                StatusBadge(status = business.status)
+                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    StatusBadge(status = business.status)
+                    SubscriptionStatusBadge(business = business)
+                }
             }
 
             // Owner banner / status indicator
@@ -1125,6 +1170,97 @@ private fun ModernBusinessCard(
                         }
                     }
 
+                    // SaaS Subscription & Daraja Billing Management
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CreditCard,
+                                        contentDescription = null,
+                                        tint = Color(0xFF00A349),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Text(
+                                        text = "SaaS Subscription & Daraja",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                                Text(
+                                    text = "KSh ${business.subscriptionPriceKsh}",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF00A349)
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Status: ${business.subscriptionStatus.uppercase()}",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = if (!business.subscriptionEndsAt.isNullOrBlank()) "Paid until: ${business.subscriptionEndsAt.take(10)}"
+                                    else if (!business.trialEndsAt.isNullOrBlank()) "Trial until: ${business.trialEndsAt.take(10)}"
+                                    else "Expired",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            if (!business.customBillingNote.isNullOrBlank()) {
+                                Text(
+                                    text = "Billing note: ${business.customBillingNote}",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = { onExtendTrial(business.shopId) },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("+14d Trial", fontSize = 11.sp)
+                                }
+                                Button(
+                                    onClick = { onOpenSubscription(business) },
+                                    modifier = Modifier.weight(1.3f),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00A349)),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Manage Billing", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+
                     // Status Lifecycle controls
                     Surface(
                         shape = RoundedCornerShape(14.dp),
@@ -1296,6 +1432,7 @@ private fun StatusBadge(status: String) {
 private fun RegisterTenantContent(
     businessName: String,
     ownerEmail: String,
+    ownerPhone: String,
     businessType: String,
     businessSize: String,
     inventoryMode: String,
@@ -1303,6 +1440,7 @@ private fun RegisterTenantContent(
     isCreating: Boolean,
     onBusinessNameChange: (String) -> Unit,
     onOwnerEmailChange: (String) -> Unit,
+    onOwnerPhoneChange: (String) -> Unit,
     onBusinessTypeChange: (String) -> Unit,
     onBusinessSizeChange: (String) -> Unit,
     onInventoryModeChange: (String) -> Unit,
@@ -1312,8 +1450,9 @@ private fun RegisterTenantContent(
     val isClub = businessType == "big_club" || businessType == "club"
     val isLiquorStore = businessType == "counter_seller" || businessType == "liquor_store"
     val ownerEmailValid = ownerEmail.isBlank() || (ownerEmail.trim().contains("@") && ownerEmail.none(Char::isWhitespace))
+    val ownerPhoneValid = com.alvinb.counterpos.data.SubscriptionManager.normalizeKenyanPhone(ownerPhone) != null
     val counterCountValid = !isClub || (counterCount.toIntOrNull()?.let { it in 1..50 } == true)
-    val canSubmit = businessName.trim().length in 2..120 && ownerEmailValid && counterCountValid && !isCreating
+    val canSubmit = businessName.trim().length in 2..120 && ownerEmailValid && ownerPhoneValid && counterCountValid && !isCreating
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1411,6 +1550,22 @@ private fun RegisterTenantContent(
                         },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                         singleLine = true,
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                    OutlinedTextField(
+                        value = ownerPhone,
+                        onValueChange = onOwnerPhoneChange,
+                        modifier = Modifier.fillMaxWidth().testTag("input_register_owner_phone"),
+                        label = { Text("Owner Mobile Number") },
+                        placeholder = { Text("0712 345 678") },
+                        isError = ownerPhone.isNotBlank() && !ownerPhoneValid,
+                        supportingText = {
+                            if (ownerPhone.isNotBlank() && !ownerPhoneValid) Text("Enter a valid Kenyan mobile number.")
+                            else Text("Used to prefill M-Pesa subscription payments.")
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                        singleLine = true,
+                        enabled = !isCreating,
                         shape = RoundedCornerShape(14.dp)
                     )
                 }
@@ -1987,6 +2142,293 @@ private fun ModernEmptyPortfolioState(
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Register First Business")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubscriptionStatusBadge(business: AdminBusiness) {
+    val subStatus = business.subscriptionStatus.lowercase()
+    val subColor = when (subStatus) {
+        "active" -> Color(0xFF00A349)
+        "trial" -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.error
+    }
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = subColor.copy(alpha = 0.12f),
+        border = BorderStroke(1.dp, subColor.copy(alpha = 0.35f))
+    ) {
+        Text(
+            text = "SaaS: ${subStatus.uppercase()}",
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            color = subColor
+        )
+    }
+}
+
+@Composable
+private fun AdminSubscriptionDialog(
+    business: AdminBusiness,
+    isUpdating: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (price: Int?, endsAt: String?, status: String?, planDays: Int?, trialEndsAt: String?, note: String?) -> Unit,
+    onExtendTrial: () -> Unit,
+    onActivatePaid: (days: Int) -> Unit
+) {
+    var priceText by remember(business.subscriptionPriceKsh) {
+        mutableStateOf(business.subscriptionPriceKsh.toString())
+    }
+    var planDaysText by remember(business.subscriptionPlanDays) {
+        mutableStateOf(business.subscriptionPlanDays.toString())
+    }
+    var selectedStatus by remember(business.subscriptionStatus) {
+        mutableStateOf(business.subscriptionStatus)
+    }
+    var noteText by remember(business.customBillingNote) {
+        mutableStateOf(business.customBillingNote.orEmpty())
+    }
+    var customEndsAt by remember(business.subscriptionEndsAt) {
+        mutableStateOf(business.subscriptionEndsAt.orEmpty())
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Manage Subscription",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = business.shopName,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
+                }
+
+                HorizontalDivider()
+
+                // Quick Action Buttons
+                Text(
+                    text = "Quick Entitlement Extensions:",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onExtendTrial,
+                        enabled = !isUpdating,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("+14d Trial", fontSize = 11.sp)
+                    }
+
+                    OutlinedButton(
+                        onClick = { onActivatePaid(30) },
+                        enabled = !isUpdating,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("+30d Paid", fontSize = 11.sp)
+                    }
+
+                    OutlinedButton(
+                        onClick = { onActivatePaid(90) },
+                        enabled = !isUpdating,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("+90d Paid", fontSize = 11.sp)
+                    }
+                }
+
+                HorizontalDivider()
+
+                // Custom Price (KSh)
+                OutlinedTextField(
+                    value = priceText,
+                    onValueChange = { priceText = it.filter(Char::isDigit) },
+                    label = { Text("Renewal Price (KES)") },
+                    placeholder = { Text("2500") },
+                    leadingIcon = {
+                        Text("KSh", fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(start = 12.dp))
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+
+                // Plan Duration (Days)
+                OutlinedTextField(
+                    value = planDaysText,
+                    onValueChange = { planDaysText = it.filter(Char::isDigit) },
+                    label = { Text("Plan Duration (Days)") },
+                    placeholder = { Text("30") },
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+
+                // Status Selector (trial, active, expired)
+                Column {
+                    Text(
+                        text = "Subscription Status:",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("trial", "active", "expired").forEach { st ->
+                            FilterChip(
+                                selected = selectedStatus == st,
+                                onClick = { selectedStatus = st },
+                                label = { Text(st.replaceFirstChar { it.uppercase() }) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+
+                // Custom End Date (ISO string or timestamp)
+                OutlinedTextField(
+                    value = customEndsAt,
+                    onValueChange = { customEndsAt = it },
+                    label = { Text("Subscription Expiry (ISO UTC or Blank)") },
+                    placeholder = { Text("2026-12-31T23:59:59Z") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+
+                // Custom Billing Note
+                OutlinedTextField(
+                    value = noteText,
+                    onValueChange = { noteText = it },
+                    label = { Text("Billing Notes / Arrangement") },
+                    placeholder = { Text("e.g. Special merchant partner rate") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+
+                // Last Payment History Info if present
+                if (!business.lastPaymentReceipt.isNullOrBlank() || !business.lastPaymentAt.isNullOrBlank()) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "Last Recorded Payment:",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "Receipt: ${business.lastPaymentReceipt ?: "N/A"}",
+                                fontSize = 11.sp
+                            )
+                            Text(
+                                text = "Phone: ${business.lastPaymentPhone ?: "N/A"}",
+                                fontSize = 11.sp
+                            )
+                            if (!business.lastPaymentAt.isNullOrBlank()) {
+                                Text(
+                                    text = "Date: ${business.lastPaymentAt.take(19).replace('T', ' ')}",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.outline
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(4.dp))
+
+                // Action Buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Cancel")
+                    }
+
+                    Button(
+                        onClick = {
+                            val priceInt = priceText.toIntOrNull()
+                            val daysInt = planDaysText.toIntOrNull()
+                            val endsIso = customEndsAt.trim().takeIf(String::isNotBlank)
+                            val note = noteText.trim().takeIf(String::isNotBlank)
+                            onSave(priceInt, endsIso, selectedStatus, daysInt, null, note)
+                        },
+                        enabled = !isUpdating,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        if (isUpdating) {
+                            CircularProgressIndicator(
+                                color = Color.White,
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text("Save", fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
         }
