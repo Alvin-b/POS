@@ -99,6 +99,15 @@ data class DarajaStkResponse(
     val error: String? = null
 )
 
+data class DarajaPaymentStatusResponse(
+    val success: Boolean,
+    val paymentStatus: String,
+    val checkoutRequestId: String?,
+    val resultCode: Int?,
+    val message: String?,
+    val error: String? = null
+)
+
 data class SubscriptionStatusResult(
     val shopId: String,
     val shopName: String,
@@ -1156,54 +1165,33 @@ class SupabaseRestClient(context: Context) {
 
     suspend fun initiateDarajaStkPush(
         shopId: String,
-        phoneNumber: String,
-        amountKsh: Int,
-        planDays: Int = 30
+        phoneNumber: String
     ): DarajaStkResponse = withContext(Dispatchers.IO) {
         val payload = JSONObject()
             .put("shop_id", shopId)
             .put("phone_number", phoneNumber)
-            .put("amount", amountKsh)
-            .put("plan_days", planDays)
 
         try {
             val response = request("/functions/v1/daraja-stk-push", "POST", payload.toString(), true)
             val json = parseObject(response)
+            val checkoutRequestId = json.optString("checkout_request_id").takeIf(String::isNotBlank)
+            val accepted = json.optBoolean("success", false) && checkoutRequestId != null
             DarajaStkResponse(
-                success = json.optBoolean("success", true),
-                checkoutRequestId = json.optString("checkout_request_id").takeIf(String::isNotBlank),
+                success = accepted,
+                checkoutRequestId = checkoutRequestId,
                 merchantRequestId = json.optString("merchant_request_id").takeIf(String::isNotBlank),
                 customerMessage = json.optString("customer_message").takeIf(String::isNotBlank),
                 error = json.optString("error").takeIf(String::isNotBlank)
+                    ?: if (accepted) null else "The payment service did not return a valid M-Pesa checkout reference."
             )
         } catch (error: Exception) {
-            val fallbackCheckoutId = "ws_CO_${System.currentTimeMillis()}"
-            try {
-                rpcObject(
-                    "initiate_subscription_payment_record",
-                    JSONObject()
-                        .put("p_shop_id", shopId)
-                        .put("p_phone", phoneNumber)
-                        .put("p_amount_ksh", amountKsh)
-                        .put("p_checkout_request_id", fallbackCheckoutId)
-                        .put("p_plan_days", planDays)
-                )
-                DarajaStkResponse(
-                    success = true,
-                    checkoutRequestId = fallbackCheckoutId,
-                    merchantRequestId = "MOCK_${System.currentTimeMillis()}",
-                    customerMessage = "Success. Please check your phone for the M-Pesa PIN prompt.",
-                    error = null
-                )
-            } catch (_: Exception) {
-                DarajaStkResponse(
-                    success = false,
-                    checkoutRequestId = null,
-                    merchantRequestId = null,
-                    customerMessage = null,
-                    error = error.message ?: "Failed to initiate M-Pesa STK push"
-                )
-            }
+            DarajaStkResponse(
+                success = false,
+                checkoutRequestId = null,
+                merchantRequestId = null,
+                customerMessage = null,
+                error = error.message ?: "Could not start the M-Pesa payment. Check payment status before retrying."
+            )
         }
     }
 
@@ -1229,21 +1217,26 @@ class SupabaseRestClient(context: Context) {
         )
     }
 
-    suspend fun confirmSubscriptionPayment(
-        checkoutRequestId: String,
-        receipt: String,
-        status: String = "completed",
-        resultCode: Int = 0,
-        resultDesc: String = "The service request is processed successfully."
-    ): JSONObject = rpcObject(
-        "confirm_subscription_payment",
-        JSONObject()
-            .put("p_checkout_request_id", checkoutRequestId)
-            .put("p_mpesa_receipt", receipt)
-            .put("p_status", status)
-            .put("p_result_code", resultCode)
-            .put("p_result_desc", resultDesc)
-    )
+    suspend fun verifyDarajaPaymentStatus(
+        shopId: String,
+        checkoutRequestId: String? = null
+    ): DarajaPaymentStatusResponse = withContext(Dispatchers.IO) {
+        val payload = JSONObject().put("shop_id", shopId)
+        checkoutRequestId?.takeIf(String::isNotBlank)?.let {
+            payload.put("checkout_request_id", it)
+        }
+        val json = parseObject(
+            request("/functions/v1/daraja-stk-status", "POST", payload.toString(), true)
+        )
+        DarajaPaymentStatusResponse(
+            success = json.optBoolean("success", false),
+            paymentStatus = json.optString("payment_status", "unknown"),
+            checkoutRequestId = json.optString("checkout_request_id").takeIf(String::isNotBlank),
+            resultCode = if (json.has("result_code") && !json.isNull("result_code")) json.optInt("result_code") else null,
+            message = json.optString("message").takeIf(String::isNotBlank),
+            error = json.optString("error").takeIf(String::isNotBlank)
+        )
+    }
 
     suspend fun adminUpdateShopSubscription(
         shopId: String,
@@ -1410,7 +1403,7 @@ class SupabaseRestClient(context: Context) {
         val connection = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 15_000
-            readTimeout = 20_000
+            readTimeout = if (path.startsWith("/functions/v1/daraja-stk-")) 45_000 else 20_000
             doInput = true
             setRequestProperty("apikey", publishableKey)
             setRequestProperty("Accept", "application/json")

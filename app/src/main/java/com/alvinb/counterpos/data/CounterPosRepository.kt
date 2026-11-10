@@ -796,22 +796,25 @@ class CounterPosRepository(
     }
 
     suspend fun initiateSubscriptionStkPush(
-        phoneNumber: String,
-        amountKsh: Int,
-        planDays: Int = 30
+        phoneNumber: String
     ): com.alvinb.counterpos.data.remote.DarajaStkResponse = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: throw IllegalStateException("Select an active business first.")
         remote.initiateDarajaStkPush(
             shopId = shop.shopId,
-            phoneNumber = phoneNumber,
-            amountKsh = amountKsh,
-            planDays = planDays
+            phoneNumber = phoneNumber
         )
     }
 
     suspend fun checkSubscriptionStatus(shopId: String? = null): com.alvinb.counterpos.data.remote.SubscriptionStatusResult = withContext(Dispatchers.IO) {
         val targetShopId = shopId ?: activeBusiness?.shopId ?: throw IllegalStateException("Select an active business first.")
         remote.checkDarajaStkStatus(targetShopId)
+    }
+
+    suspend fun verifySubscriptionPaymentStatus(
+        checkoutRequestId: String? = null
+    ): com.alvinb.counterpos.data.remote.DarajaPaymentStatusResponse = withContext(Dispatchers.IO) {
+        val shop = activeBusiness ?: throw IllegalStateException("Select an active business first.")
+        remote.verifyDarajaPaymentStatus(shop.shopId, checkoutRequestId)
     }
 
     suspend fun refreshActiveBusinessSubscription(): SessionSnapshot = withContext(Dispatchers.IO) {
@@ -837,11 +840,6 @@ class CounterPosRepository(
         } catch (_: Exception) {
             session.value
         }
-    }
-
-    suspend fun simulateConfirmSubscriptionPayment(checkoutRequestId: String, receipt: String): SessionSnapshot = withContext(Dispatchers.IO) {
-        remote.confirmSubscriptionPayment(checkoutRequestId, receipt)
-        refreshActiveBusinessSubscription()
     }
 
     private fun createAdminBusinessMembership(business: AdminBusiness): BusinessMembership {

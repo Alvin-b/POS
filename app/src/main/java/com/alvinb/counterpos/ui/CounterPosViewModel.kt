@@ -1245,10 +1245,6 @@ class CounterPosViewModel(
             return
         }
 
-        val active = session.value.activeBusiness
-        val amount = if (active != null && active.subscriptionPriceKsh > 0) active.subscriptionPriceKsh else 2500
-        val planDays = if (active != null && active.subscriptionPlanDays > 0) active.subscriptionPlanDays else 30
-
         subscriptionPollingJob?.cancel()
         _uiState.update {
             it.copy(
@@ -1264,9 +1260,7 @@ class CounterPosViewModel(
         viewModelScope.launch {
             try {
                 val response = repository.initiateSubscriptionStkPush(
-                    phoneNumber = cleanPhone,
-                    amountKsh = amount,
-                    planDays = planDays
+                    phoneNumber = cleanPhone
                 )
                 if (response.success && response.checkoutRequestId != null) {
                     _uiState.update {
@@ -1279,35 +1273,70 @@ class CounterPosViewModel(
                     }
                     startPollingSubscriptionStatus(response.checkoutRequestId)
                 } else {
-                    _uiState.update {
-                        it.copy(
-                            isInitiatingStkPush = false,
-                            subscriptionPaymentError = response.error ?: "Failed to initiate M-Pesa payment. Please try again."
-                        )
-                    }
-                }
-            } catch (error: Exception) {
-                _uiState.update {
-                    it.copy(
-                        isInitiatingStkPush = false,
-                        subscriptionPaymentError = error.message ?: "Failed to initiate M-Pesa payment."
+                    recoverOrShowSubscriptionPaymentFailure(
+                        response.error ?: "Failed to initiate M-Pesa payment. Please check its status before retrying."
                     )
                 }
+            } catch (error: Exception) {
+                recoverOrShowSubscriptionPaymentFailure(
+                    error.message ?: "Could not confirm whether M-Pesa sent the prompt. Check payment status before retrying."
+                )
             }
         }
     }
 
-    private fun startPollingSubscriptionStatus(checkoutRequestId: String) {
+    private suspend fun recoverOrShowSubscriptionPaymentFailure(message: String) {
+        val recovered = runCatching { repository.verifySubscriptionPaymentStatus() }.getOrNull()
+        if (recovered != null && (recovered.paymentStatus == "initiating" || recovered.paymentStatus == "pending")) {
+            _uiState.update {
+                it.copy(
+                    isInitiatingStkPush = false,
+                    isPollingStkPayment = true,
+                    subscriptionPaymentError = null,
+                    stkCheckoutRequestId = recovered.checkoutRequestId,
+                    stkCustomerMessage = recovered.message ?: message
+                )
+            }
+            startPollingSubscriptionStatus(recovered.checkoutRequestId)
+            return
+        }
+        _uiState.update {
+            it.copy(
+                isInitiatingStkPush = false,
+                isPollingStkPayment = false,
+                subscriptionPaymentError = message
+            )
+        }
+    }
+
+    private fun startPollingSubscriptionStatus(checkoutRequestId: String?) {
         subscriptionPollingJob?.cancel()
         subscriptionPollingJob = viewModelScope.launch {
             var attempts = 0
-            val maxAttempts = 20
+            val maxAttempts = 60
             while (isActive && attempts < maxAttempts) {
-                delay(3000L)
+                delay(4000L)
                 attempts++
                 try {
+                    if (attempts % 4 == 0) {
+                        val payment = repository.verifySubscriptionPaymentStatus(checkoutRequestId)
+                        if (payment.checkoutRequestId != null && payment.checkoutRequestId != _uiState.value.stkCheckoutRequestId) {
+                            _uiState.update { it.copy(stkCheckoutRequestId = payment.checkoutRequestId) }
+                        }
+                        if (payment.paymentStatus == "failed") {
+                            _uiState.update {
+                                it.copy(
+                                    isPollingStkPayment = false,
+                                    subscriptionPaymentError = payment.message
+                                        ?: "M-Pesa did not complete the payment. You can start a new attempt."
+                                )
+                            }
+                            return@launch
+                        }
+                    }
                     val statusResult = repository.checkSubscriptionStatus()
-                    if (statusResult.isEntitled || statusResult.status == "active") {
+                    val expectedCheckoutId = checkoutRequestId ?: statusResult.latestCheckoutRequestId
+                    if (isConfirmedSubscriptionPayment(statusResult, expectedCheckoutId)) {
                         repository.refreshActiveBusinessSubscription()
                         _uiState.update {
                             it.copy(
@@ -1326,7 +1355,7 @@ class CounterPosViewModel(
                 _uiState.update {
                     it.copy(
                         isPollingStkPayment = false,
-                        subscriptionPaymentError = "Payment confirmation timed out. If you entered your M-Pesa PIN, tap 'Verify Payment' below to recheck."
+                        subscriptionPaymentError = "Payment is still unconfirmed. Tap Check Now to ask Safaricom again; do not pay again if you already entered your PIN."
                     )
                 }
             }
@@ -1337,9 +1366,11 @@ class CounterPosViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isPollingStkPayment = true, subscriptionPaymentError = null) }
             try {
+                val payment = repository.verifySubscriptionPaymentStatus(_uiState.value.stkCheckoutRequestId)
                 repository.refreshActiveBusinessSubscription()
                 val statusResult = repository.checkSubscriptionStatus()
-                if (statusResult.isEntitled || statusResult.status == "active") {
+                val expectedCheckoutId = payment.checkoutRequestId ?: _uiState.value.stkCheckoutRequestId
+                if (isConfirmedSubscriptionPayment(statusResult, expectedCheckoutId)) {
                     _uiState.update {
                         it.copy(
                             isPollingStkPayment = false,
@@ -1348,11 +1379,22 @@ class CounterPosViewModel(
                             notice = "Subscription is active! All features restored."
                         )
                     }
+                } else if (payment.paymentStatus == "initiating" || payment.paymentStatus == "pending") {
+                    _uiState.update {
+                        it.copy(
+                            stkCheckoutRequestId = payment.checkoutRequestId ?: it.stkCheckoutRequestId,
+                            stkCustomerMessage = payment.message ?: it.stkCustomerMessage,
+                            isPollingStkPayment = true,
+                            subscriptionPaymentError = null
+                        )
+                    }
+                    startPollingSubscriptionStatus(payment.checkoutRequestId ?: _uiState.value.stkCheckoutRequestId)
                 } else {
                     _uiState.update {
                         it.copy(
                             isPollingStkPayment = false,
-                            subscriptionPaymentError = "Payment has not yet been confirmed by M-Pesa. Please check your phone messages or retry."
+                            subscriptionPaymentError = payment.message
+                                ?: "No completed M-Pesa payment was found. Check your phone or start a new payment attempt."
                         )
                     }
                 }
@@ -1367,31 +1409,13 @@ class CounterPosViewModel(
         }
     }
 
-    fun simulateConfirmSubscriptionPayment() {
-        val checkoutId = _uiState.value.stkCheckoutRequestId ?: "ws_CO_demo"
-        val receipt = "MPESA" + (10000000..99999999).random().toString()
-        viewModelScope.launch {
-            _uiState.update { it.copy(isPollingStkPayment = true, subscriptionPaymentError = null) }
-            try {
-                repository.simulateConfirmSubscriptionPayment(checkoutId, receipt)
-                _uiState.update {
-                    it.copy(
-                        isPollingStkPayment = false,
-                        isSubscriptionPaymentSuccess = true,
-                        subscriptionPaymentError = null,
-                        notice = "Payment confirmed! Receipt: $receipt"
-                    )
-                }
-            } catch (error: Exception) {
-                _uiState.update {
-                    it.copy(
-                        isPollingStkPayment = false,
-                        subscriptionPaymentError = error.message ?: "Failed to confirm payment."
-                    )
-                }
-            }
-        }
-    }
+    private fun isConfirmedSubscriptionPayment(
+        status: com.alvinb.counterpos.data.remote.SubscriptionStatusResult,
+        checkoutRequestId: String?
+    ): Boolean = !checkoutRequestId.isNullOrBlank() &&
+        status.status.equals("active", ignoreCase = true) &&
+        status.latestPaymentStatus.equals("paid", ignoreCase = true) &&
+        status.latestCheckoutRequestId == checkoutRequestId
 
     // Superadmin Subscription Management
     fun adminOpenSubscriptionDialog(business: AdminBusiness) {

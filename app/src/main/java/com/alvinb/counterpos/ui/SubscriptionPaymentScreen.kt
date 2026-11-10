@@ -364,35 +364,17 @@ fun SubscriptionPaymentScreen(
 
                         Spacer(Modifier.height(16.dp))
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        OutlinedButton(
+                            onClick = viewModel::verifySubscriptionPayment,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("verify_payment_button"),
+                            shape = RoundedCornerShape(10.dp)
                         ) {
-                            OutlinedButton(
-                                onClick = viewModel::verifySubscriptionPayment,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp)
-                                    .testTag("verify_payment_button"),
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
-                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Check Now", fontSize = 13.sp)
-                            }
-
-                            // Instant confirmation helper for demo / sandbox environments
-                            Button(
-                                onClick = viewModel::simulateConfirmSubscriptionPayment,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp)
-                                    .testTag("confirm_test_button"),
-                                colors = ButtonDefaults.buttonColors(containerColor = MpesaGreen),
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
-                                Text("Confirm (Demo)", fontSize = 13.sp)
-                            }
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Check Now", fontSize = 13.sp)
                         }
                     }
                 }
