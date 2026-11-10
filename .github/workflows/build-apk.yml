@@ -10,7 +10,7 @@ jobs:
     # GitHub's ubuntu-24.04 hosted image is x86_64 (not ARM64).
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
+      contents: write
 
     steps:
       - name: Check out source
@@ -31,19 +31,42 @@ jobs:
           sdkmanager "platform-tools" "platforms;android-36" "platforms;android-36.1" "build-tools;36.0.0"
           yes | sdkmanager --licenses >/dev/null || true
 
+      - name: Set debug build version
+        run: |
+          echo "VERSION_CODE=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=0.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+
       - name: Compile Kotlin
-        run: ./gradlew :app:compileDebugKotlin --no-daemon
+        run: ./gradlew :app:compileDebugKotlin -PversionCode="$VERSION_CODE" -PversionName="$VERSION_NAME" --no-daemon
 
       - name: Build debug APK
-        run: ./gradlew :app:assembleDebug --no-daemon
+        run: ./gradlew :app:assembleDebug -PversionCode="$VERSION_CODE" -PversionName="$VERSION_NAME" --no-daemon
 
       - name: Run unit tests
         run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: Name APK for latest release
+        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/CounterPOS-latest.apk
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: counter-pos-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/debug/CounterPOS-latest.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish latest APK release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view latest >/dev/null 2>&1; then
+            gh release create latest \
+              --target "$GITHUB_SHA" \
+              --title "Latest Counter POS build" \
+              --notes "Automatically published from main commit $GITHUB_SHA."
+          fi
+          gh release edit latest \
+            --title "Latest Counter POS build ($VERSION_NAME)" \
+            --notes "Automatically published from [main commit](https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})."
+          gh release upload latest app/build/outputs/apk/debug/CounterPOS-latest.apk --clobber
