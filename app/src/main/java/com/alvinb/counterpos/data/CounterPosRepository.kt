@@ -527,7 +527,11 @@ class CounterPosRepository(
                                 lastPaymentAt = obj.optString("last_payment_at").takeIf(String::isNotBlank),
                                 lastPaymentReceipt = obj.optString("last_payment_receipt").takeIf(String::isNotBlank),
                                 lastPaymentPhone = obj.optString("last_payment_phone").takeIf(String::isNotBlank),
-                                customBillingNote = obj.optString("custom_billing_note").takeIf(String::isNotBlank)
+                                customBillingNote = obj.optString("custom_billing_note").takeIf(String::isNotBlank),
+                                paymentLockActive = obj.optBoolean("payment_lock_active", false),
+                                paymentLockAmountKsh = obj.optInt("payment_lock_amount_ksh", 0),
+                                paymentLockReason = obj.optString("payment_lock_reason").takeIf(String::isNotBlank),
+                                paymentLockStartedAt = obj.optString("payment_lock_started_at").takeIf(String::isNotBlank)
                             )
                         )
                     }
@@ -569,6 +573,10 @@ class CounterPosRepository(
                         .put("last_payment_receipt", b.lastPaymentReceipt ?: "")
                         .put("last_payment_phone", b.lastPaymentPhone ?: "")
                         .put("custom_billing_note", b.customBillingNote ?: "")
+                        .put("payment_lock_active", b.paymentLockActive)
+                        .put("payment_lock_amount_ksh", b.paymentLockAmountKsh)
+                        .put("payment_lock_reason", b.paymentLockReason ?: "")
+                        .put("payment_lock_started_at", b.paymentLockStartedAt ?: "")
                 )
             }
             adminCachePrefs.edit().putString("admin_businesses", array.toString()).apply()
@@ -790,6 +798,19 @@ class CounterPosRepository(
             trialEndsAtIso = trialEndsAtIso,
             note = note
         )
+        val fresh = remote.adminBusinesses()
+        saveCachedAdminBusinesses(fresh)
+        fresh
+    }
+
+    suspend fun adminSetShopPaymentLock(
+        shopId: String,
+        locked: Boolean,
+        amountKsh: Int? = null,
+        reason: String? = null
+    ): List<AdminBusiness> = withContext(Dispatchers.IO) {
+        require(account?.isPlatformAdmin == true) { "Only a platform administrator can change a payment lock." }
+        remote.adminSetShopPaymentLock(shopId, locked, amountKsh, reason)
         val fresh = remote.adminBusinesses()
         saveCachedAdminBusinesses(fresh)
         fresh
