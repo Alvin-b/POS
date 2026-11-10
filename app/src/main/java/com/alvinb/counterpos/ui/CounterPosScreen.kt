@@ -346,6 +346,29 @@ fun CounterPosWorkspace(
                         }
                     }
                 }
+                val entitlement = remember(session.activeBusiness, state.isOnline) {
+                    session.activeBusiness?.let { com.alvinb.counterpos.data.SubscriptionManager.evaluate(it, isOnline = state.isOnline) }
+                }
+                if (entitlement != null && entitlement.isGracePeriod) {
+                    Surface(color = MaterialTheme.colorScheme.errorContainer) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                "Offline Grace: ${entitlement.hoursGraceRemaining}h remaining to renew subscription.",
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = viewModel::openSubscriptionModal) {
+                                Text("Renew", color = MaterialTheme.colorScheme.onErrorContainer, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
                 if (state.blockedOutbox.isNotEmpty()) {
                     Surface(color = MaterialTheme.colorScheme.errorContainer) {
                         Row(
@@ -777,6 +800,10 @@ fun CounterPosWorkspace(
                 onOpenStaffManagement = {
                     viewModel.closeTeamPanel()
                     viewModel.openStaffManagement()
+                },
+                onOpenSubscription = {
+                    viewModel.closeTeamPanel()
+                    viewModel.openSubscriptionModal()
                 }
             )
         }

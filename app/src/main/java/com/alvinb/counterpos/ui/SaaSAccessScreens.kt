@@ -133,6 +133,22 @@ fun CounterPosApp(
                 qrPayload = state.loginQrPayload,
                 onClearError = viewModel::clearStartupError
             )
+            // Subscription gate: If subscription is expired and user is not superadmin, lock to payment screen
+            session.activeBusiness != null && !session.isPlatformAdmin &&
+                !com.alvinb.counterpos.data.SubscriptionManager.evaluate(session.activeBusiness!!, isOnline = state.isOnline).isEntitled ->
+                SubscriptionPaymentScreen(
+                    viewModel = viewModel,
+                    onContinueToPos = { viewModel.synchronizeData(showNotice = true) },
+                    onExitToAdmin = if (session.isPlatformAdmin) { { viewModel.exitToAdminPortal() } } else null,
+                    onSignOut = viewModel::signOut
+                )
+            state.isSubscriptionModalOpen && session.activeBusiness != null ->
+                SubscriptionPaymentScreen(
+                    viewModel = viewModel,
+                    onContinueToPos = viewModel::dismissSubscriptionModal,
+                    onExitToAdmin = if (session.isPlatformAdmin) { { viewModel.exitToAdminPortal() } } else null,
+                    onSignOut = viewModel::signOut
+                )
             // If an account has both roles, open its active owner POS by default;
             // the POS top bar still provides the Superadmin Portal switch.
             session.activeBusiness?.role.equals("owner", ignoreCase = true) ->

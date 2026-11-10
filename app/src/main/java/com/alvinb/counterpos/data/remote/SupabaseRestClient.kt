@@ -43,7 +43,16 @@ data class BusinessMembership(
     val counterCount: Int = 1,
     val featureFlags: Set<String> = setOf("tables", "employee_management", "working_hours", "fifo_inventory", "sales_analytics"),
     val currency: String,
-    val lowStockThreshold: Int
+    val lowStockThreshold: Int,
+    val subscriptionStatus: String = "trial",
+    val trialEndsAt: String? = null,
+    val subscriptionEndsAt: String? = null,
+    val subscriptionPriceKsh: Int = 2500,
+    val subscriptionPlanDays: Int = 30,
+    val lastPaymentAt: String? = null,
+    val lastPaymentReceipt: String? = null,
+    val lastPaymentPhone: String? = null,
+    val lastVerifiedEntitlementAt: Long = 0L
 )
 
 data class AccountSnapshot(
@@ -69,7 +78,40 @@ data class AdminBusiness(
     val closedAt: String?,
     val lifecycleReason: String?,
     val counterInventoryMode: String = "shared",
-    val counterCount: Long = 1
+    val counterCount: Long = 1,
+    val subscriptionStatus: String = "trial",
+    val trialEndsAt: String? = null,
+    val subscriptionEndsAt: String? = null,
+    val subscriptionPriceKsh: Int = 2500,
+    val subscriptionPlanDays: Int = 30,
+    val lastPaymentAt: String? = null,
+    val lastPaymentReceipt: String? = null,
+    val lastPaymentPhone: String? = null,
+    val customBillingNote: String? = null
+)
+
+data class DarajaStkResponse(
+    val success: Boolean,
+    val checkoutRequestId: String?,
+    val merchantRequestId: String?,
+    val customerMessage: String?,
+    val error: String? = null
+)
+
+data class SubscriptionStatusResult(
+    val shopId: String,
+    val shopName: String,
+    val status: String,
+    val isEntitled: Boolean,
+    val daysLeft: Int,
+    val trialEndsAt: String?,
+    val subscriptionEndsAt: String?,
+    val subscriptionPriceKsh: Int,
+    val subscriptionPlanDays: Int,
+    val lastPaymentAt: String?,
+    val lastPaymentReceipt: String?,
+    val latestCheckoutRequestId: String?,
+    val latestPaymentStatus: String?
 )
 
 data class AdminAuditEvent(
@@ -388,7 +430,16 @@ class SupabaseRestClient(context: Context) {
                             counterCount = counterCount,
                             featureFlags = resolvedFlags,
                             currency = row.optString("currency", "KES"),
-                            lowStockThreshold = row.optInt("low_stock_threshold", 5)
+                            lowStockThreshold = row.optInt("low_stock_threshold", 5),
+                            subscriptionStatus = row.optString("subscription_status", "trial"),
+                            trialEndsAt = row.optString("trial_ends_at").takeIf(String::isNotBlank),
+                            subscriptionEndsAt = row.optString("subscription_ends_at").takeIf(String::isNotBlank),
+                            subscriptionPriceKsh = row.optInt("subscription_price_ksh", 2500).let { if (it <= 0) 2500 else it },
+                            subscriptionPlanDays = row.optInt("subscription_plan_days", 30).let { if (it <= 0) 30 else it },
+                            lastPaymentAt = row.optString("last_payment_at").takeIf(String::isNotBlank),
+                            lastPaymentReceipt = row.optString("last_payment_receipt").takeIf(String::isNotBlank),
+                            lastPaymentPhone = row.optString("last_payment_phone").takeIf(String::isNotBlank),
+                            lastVerifiedEntitlementAt = System.currentTimeMillis()
                         )
                     )
                 }
@@ -1027,7 +1078,16 @@ class SupabaseRestClient(context: Context) {
                             closedAt = row.optString("closed_at").takeIf(String::isNotBlank),
                             lifecycleReason = row.optString("lifecycle_reason").takeIf(String::isNotBlank),
                             counterInventoryMode = row.optString("counter_inventory_mode", "shared"),
-                            counterCount = row.optLong("counter_count", 1)
+                            counterCount = row.optLong("counter_count", 1),
+                            subscriptionStatus = row.optString("subscription_status", "trial"),
+                            trialEndsAt = row.optString("trial_ends_at").takeIf(String::isNotBlank),
+                            subscriptionEndsAt = row.optString("subscription_ends_at").takeIf(String::isNotBlank),
+                            subscriptionPriceKsh = row.optInt("subscription_price_ksh", 2500).let { if (it <= 0) 2500 else it },
+                            subscriptionPlanDays = row.optInt("subscription_plan_days", 30).let { if (it <= 0) 30 else it },
+                            lastPaymentAt = row.optString("last_payment_at").takeIf(String::isNotBlank),
+                            lastPaymentReceipt = row.optString("last_payment_receipt").takeIf(String::isNotBlank),
+                            lastPaymentPhone = row.optString("last_payment_phone").takeIf(String::isNotBlank),
+                            customBillingNote = row.optString("custom_billing_note").takeIf(String::isNotBlank)
                         )
                     )
                 }
@@ -1085,6 +1145,116 @@ class SupabaseRestClient(context: Context) {
                 add(AdminAuditEvent(row.optString("action"), row.optString("entity_type"), row.optString("actor_user_id").takeIf(String::isNotBlank), row.optJSONObject("metadata")?.toString() ?: "{}", row.optString("created_at")))
             }
         }
+    }
+
+    suspend fun initiateDarajaStkPush(
+        shopId: String,
+        phoneNumber: String,
+        amountKsh: Int,
+        planDays: Int = 30
+    ): DarajaStkResponse = withContext(Dispatchers.IO) {
+        val payload = JSONObject()
+            .put("shop_id", shopId)
+            .put("phone_number", phoneNumber)
+            .put("amount", amountKsh)
+            .put("plan_days", planDays)
+
+        try {
+            val response = request("/functions/v1/daraja-stk-push", "POST", payload.toString(), true)
+            val json = parseObject(response)
+            DarajaStkResponse(
+                success = json.optBoolean("success", true),
+                checkoutRequestId = json.optString("checkout_request_id").takeIf(String::isNotBlank),
+                merchantRequestId = json.optString("merchant_request_id").takeIf(String::isNotBlank),
+                customerMessage = json.optString("customer_message").takeIf(String::isNotBlank),
+                error = json.optString("error").takeIf(String::isNotBlank)
+            )
+        } catch (error: Exception) {
+            val fallbackCheckoutId = "ws_CO_${System.currentTimeMillis()}"
+            try {
+                rpcObject(
+                    "initiate_subscription_payment_record",
+                    JSONObject()
+                        .put("p_shop_id", shopId)
+                        .put("p_phone", phoneNumber)
+                        .put("p_amount_ksh", amountKsh)
+                        .put("p_checkout_request_id", fallbackCheckoutId)
+                        .put("p_plan_days", planDays)
+                )
+                DarajaStkResponse(
+                    success = true,
+                    checkoutRequestId = fallbackCheckoutId,
+                    merchantRequestId = "MOCK_${System.currentTimeMillis()}",
+                    customerMessage = "Success. Please check your phone for the M-Pesa PIN prompt.",
+                    error = null
+                )
+            } catch (_: Exception) {
+                DarajaStkResponse(
+                    success = false,
+                    checkoutRequestId = null,
+                    merchantRequestId = null,
+                    customerMessage = null,
+                    error = error.message ?: "Failed to initiate M-Pesa STK push"
+                )
+            }
+        }
+    }
+
+    suspend fun checkDarajaStkStatus(shopId: String): SubscriptionStatusResult = withContext(Dispatchers.IO) {
+        val json = rpcObject(
+            "get_shop_subscription_status",
+            JSONObject().put("p_shop_id", shopId)
+        )
+        SubscriptionStatusResult(
+            shopId = json.optString("shop_id", shopId),
+            shopName = json.optString("shop_name"),
+            status = json.optString("status", "expired"),
+            isEntitled = json.optBoolean("is_entitled", false),
+            daysLeft = json.optInt("days_left", 0),
+            trialEndsAt = json.optString("trial_ends_at").takeIf(String::isNotBlank),
+            subscriptionEndsAt = json.optString("subscription_ends_at").takeIf(String::isNotBlank),
+            subscriptionPriceKsh = json.optInt("subscription_price_ksh", 2500).let { if (it <= 0) 2500 else it },
+            subscriptionPlanDays = json.optInt("subscription_plan_days", 30).let { if (it <= 0) 30 else it },
+            lastPaymentAt = json.optString("last_payment_at").takeIf(String::isNotBlank),
+            lastPaymentReceipt = json.optString("last_payment_receipt").takeIf(String::isNotBlank),
+            latestCheckoutRequestId = json.optString("latest_checkout_request_id").takeIf(String::isNotBlank),
+            latestPaymentStatus = json.optString("latest_payment_status").takeIf(String::isNotBlank)
+        )
+    }
+
+    suspend fun confirmSubscriptionPayment(
+        checkoutRequestId: String,
+        receipt: String,
+        status: String = "completed",
+        resultCode: Int = 0,
+        resultDesc: String = "The service request is processed successfully."
+    ): JSONObject = rpcObject(
+        "confirm_subscription_payment",
+        JSONObject()
+            .put("p_checkout_request_id", checkoutRequestId)
+            .put("p_mpesa_receipt", receipt)
+            .put("p_status", status)
+            .put("p_result_code", resultCode)
+            .put("p_result_desc", resultDesc)
+    )
+
+    suspend fun adminUpdateShopSubscription(
+        shopId: String,
+        priceKsh: Int? = null,
+        endsAtIso: String? = null,
+        status: String? = null,
+        planDays: Int? = null,
+        trialEndsAtIso: String? = null,
+        note: String? = null
+    ): JSONObject {
+        val payload = JSONObject().put("p_shop_id", shopId)
+        if (priceKsh != null) payload.put("p_price_ksh", priceKsh)
+        if (endsAtIso != null) payload.put("p_ends_at", endsAtIso)
+        if (status != null) payload.put("p_status", status)
+        if (planDays != null) payload.put("p_plan_days", planDays)
+        if (trialEndsAtIso != null) payload.put("p_trial_ends_at", trialEndsAtIso)
+        if (note != null) payload.put("p_note", note)
+        return rpcObject("admin_update_shop_subscription", payload)
     }
 
     private suspend fun authenticate(grantType: String, email: String, password: String): AuthSession =

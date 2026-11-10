@@ -184,7 +184,18 @@ data class CounterPosUiState(
     val blockedOutbox: List<OutboxEntity> = emptyList(),
     val isSyncRecoveryOpen: Boolean = false,
     val syncRecoveryError: String? = null,
-    val retryingOperationId: String? = null
+    val retryingOperationId: String? = null,
+
+    // Subscription & M-Pesa STK Push
+    val isSubscriptionModalOpen: Boolean = false,
+    val isInitiatingStkPush: Boolean = false,
+    val isPollingStkPayment: Boolean = false,
+    val stkCheckoutRequestId: String? = null,
+    val stkCustomerMessage: String? = null,
+    val subscriptionPaymentError: String? = null,
+    val isSubscriptionPaymentSuccess: Boolean = false,
+    val adminSelectedSubscriptionBusiness: AdminBusiness? = null,
+    val isUpdatingSubscription: Boolean = false
 )
 
 class CounterPosViewModel(
@@ -1158,6 +1169,249 @@ class CounterPosViewModel(
             .onFailure { error ->
                 _uiState.update { it.copy(startupError = error.message ?: "Could not return to Superadmin portal") }
             }
+    }
+
+    private var subscriptionPollingJob: Job? = null
+
+    fun dismissSubscriptionModal() {
+        subscriptionPollingJob?.cancel()
+        _uiState.update {
+            it.copy(
+                isSubscriptionModalOpen = false,
+                isInitiatingStkPush = false,
+                isPollingStkPayment = false,
+                subscriptionPaymentError = null,
+                isSubscriptionPaymentSuccess = false
+            )
+        }
+    }
+
+    fun openSubscriptionModal() {
+        _uiState.update {
+            it.copy(
+                isSubscriptionModalOpen = true,
+                subscriptionPaymentError = null,
+                isSubscriptionPaymentSuccess = false
+            )
+        }
+    }
+
+    fun initiateSubscriptionPayment(phoneNumber: String) {
+        val cleanPhone = com.alvinb.counterpos.data.SubscriptionManager.normalizeKenyanPhone(phoneNumber)
+        if (cleanPhone == null) {
+            _uiState.update { it.copy(subscriptionPaymentError = "Please enter a valid Kenyan phone number (e.g. 0712 345 678 or 254712345678).") }
+            return
+        }
+
+        val active = session.value.activeBusiness
+        val amount = if (active != null && active.subscriptionPriceKsh > 0) active.subscriptionPriceKsh else 2500
+        val planDays = if (active != null && active.subscriptionPlanDays > 0) active.subscriptionPlanDays else 30
+
+        subscriptionPollingJob?.cancel()
+        _uiState.update {
+            it.copy(
+                isInitiatingStkPush = true,
+                isPollingStkPayment = false,
+                subscriptionPaymentError = null,
+                isSubscriptionPaymentSuccess = false,
+                stkCheckoutRequestId = null,
+                stkCustomerMessage = null
+            )
+        }
+
+        viewModelScope.launch {
+            try {
+                val response = repository.initiateSubscriptionStkPush(
+                    phoneNumber = cleanPhone,
+                    amountKsh = amount,
+                    planDays = planDays
+                )
+                if (response.success && response.checkoutRequestId != null) {
+                    _uiState.update {
+                        it.copy(
+                            isInitiatingStkPush = false,
+                            isPollingStkPayment = true,
+                            stkCheckoutRequestId = response.checkoutRequestId,
+                            stkCustomerMessage = response.customerMessage ?: "M-Pesa STK push sent. Enter your M-Pesa PIN on your phone."
+                        )
+                    }
+                    startPollingSubscriptionStatus(response.checkoutRequestId)
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            isInitiatingStkPush = false,
+                            subscriptionPaymentError = response.error ?: "Failed to initiate M-Pesa payment. Please try again."
+                        )
+                    }
+                }
+            } catch (error: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isInitiatingStkPush = false,
+                        subscriptionPaymentError = error.message ?: "Failed to initiate M-Pesa payment."
+                    )
+                }
+            }
+        }
+    }
+
+    private fun startPollingSubscriptionStatus(checkoutRequestId: String) {
+        subscriptionPollingJob?.cancel()
+        subscriptionPollingJob = viewModelScope.launch {
+            var attempts = 0
+            val maxAttempts = 20
+            while (isActive && attempts < maxAttempts) {
+                delay(3000L)
+                attempts++
+                try {
+                    val statusResult = repository.checkSubscriptionStatus()
+                    if (statusResult.isEntitled || statusResult.status == "active") {
+                        repository.refreshActiveBusinessSubscription()
+                        _uiState.update {
+                            it.copy(
+                                isPollingStkPayment = false,
+                                isSubscriptionPaymentSuccess = true,
+                                subscriptionPaymentError = null,
+                                notice = "Subscription activated successfully! Thank you for renewing."
+                            )
+                        }
+                        return@launch
+                    }
+                } catch (_: Exception) {
+                }
+            }
+            if (isActive) {
+                _uiState.update {
+                    it.copy(
+                        isPollingStkPayment = false,
+                        subscriptionPaymentError = "Payment confirmation timed out. If you entered your M-Pesa PIN, tap 'Verify Payment' below to recheck."
+                    )
+                }
+            }
+        }
+    }
+
+    fun verifySubscriptionPayment() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isPollingStkPayment = true, subscriptionPaymentError = null) }
+            try {
+                repository.refreshActiveBusinessSubscription()
+                val statusResult = repository.checkSubscriptionStatus()
+                if (statusResult.isEntitled || statusResult.status == "active") {
+                    _uiState.update {
+                        it.copy(
+                            isPollingStkPayment = false,
+                            isSubscriptionPaymentSuccess = true,
+                            subscriptionPaymentError = null,
+                            notice = "Subscription is active! All features restored."
+                        )
+                    }
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            isPollingStkPayment = false,
+                            subscriptionPaymentError = "Payment has not yet been confirmed by M-Pesa. Please check your phone messages or retry."
+                        )
+                    }
+                }
+            } catch (error: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isPollingStkPayment = false,
+                        subscriptionPaymentError = error.message ?: "Could not verify payment status."
+                    )
+                }
+            }
+        }
+    }
+
+    fun simulateConfirmSubscriptionPayment() {
+        val checkoutId = _uiState.value.stkCheckoutRequestId ?: "ws_CO_demo"
+        val receipt = "MPESA" + (10000000..99999999).random().toString()
+        viewModelScope.launch {
+            _uiState.update { it.copy(isPollingStkPayment = true, subscriptionPaymentError = null) }
+            try {
+                repository.simulateConfirmSubscriptionPayment(checkoutId, receipt)
+                _uiState.update {
+                    it.copy(
+                        isPollingStkPayment = false,
+                        isSubscriptionPaymentSuccess = true,
+                        subscriptionPaymentError = null,
+                        notice = "Payment confirmed! Receipt: $receipt"
+                    )
+                }
+            } catch (error: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isPollingStkPayment = false,
+                        subscriptionPaymentError = error.message ?: "Failed to confirm payment."
+                    )
+                }
+            }
+        }
+    }
+
+    // Superadmin Subscription Management
+    fun adminOpenSubscriptionDialog(business: AdminBusiness) {
+        _uiState.update { it.copy(adminSelectedSubscriptionBusiness = business) }
+    }
+
+    fun adminCloseSubscriptionDialog() {
+        _uiState.update { it.copy(adminSelectedSubscriptionBusiness = null, isUpdatingSubscription = false) }
+    }
+
+    fun adminUpdateShopSubscription(
+        shopId: String,
+        priceKsh: Int? = null,
+        endsAtIso: String? = null,
+        status: String? = null,
+        planDays: Int? = null,
+        trialEndsAtIso: String? = null,
+        note: String? = null
+    ) = viewModelScope.launch {
+        _uiState.update { it.copy(isUpdatingSubscription = true, startupError = null) }
+        try {
+            val updated = repository.adminUpdateShopSubscription(
+                shopId = shopId,
+                priceKsh = priceKsh,
+                endsAtIso = endsAtIso,
+                status = status,
+                planDays = planDays,
+                trialEndsAtIso = trialEndsAtIso,
+                note = note
+            )
+            _adminBusinesses.value = updated
+            _uiState.update {
+                it.copy(
+                    isUpdatingSubscription = false,
+                    adminSelectedSubscriptionBusiness = updated.firstOrNull { b -> b.shopId == shopId },
+                    notice = "Store subscription updated successfully"
+                )
+            }
+        } catch (error: Exception) {
+            _uiState.update {
+                it.copy(
+                    isUpdatingSubscription = false,
+                    startupError = error.message ?: "Could not update subscription"
+                )
+            }
+        }
+    }
+
+    fun adminExtendTrial(shopId: String, daysToAdd: Int = 14) {
+        val target = _adminBusinesses.value.firstOrNull { it.shopId == shopId }
+        val baseTime = target?.trialEndsAt?.let { com.alvinb.counterpos.data.SubscriptionManager.parseTimestamp(it) } ?: System.currentTimeMillis()
+        val newTime = maxOf(baseTime, System.currentTimeMillis()) + (daysToAdd * 86400000L)
+        val iso = java.time.Instant.ofEpochMilli(newTime).toString()
+        adminUpdateShopSubscription(shopId = shopId, trialEndsAtIso = iso, status = "trial")
+    }
+
+    fun adminActivatePaidTerm(shopId: String, daysToAdd: Int = 30, priceKsh: Int? = null) {
+        val target = _adminBusinesses.value.firstOrNull { it.shopId == shopId }
+        val baseTime = target?.subscriptionEndsAt?.let { com.alvinb.counterpos.data.SubscriptionManager.parseTimestamp(it) } ?: System.currentTimeMillis()
+        val newTime = maxOf(baseTime, System.currentTimeMillis()) + (daysToAdd * 86400000L)
+        val iso = java.time.Instant.ofEpochMilli(newTime).toString()
+        adminUpdateShopSubscription(shopId = shopId, endsAtIso = iso, status = "active", planDays = daysToAdd, priceKsh = priceKsh)
     }
 
     fun openAdminEnrollmentScanner(shopId: String, role: String) {

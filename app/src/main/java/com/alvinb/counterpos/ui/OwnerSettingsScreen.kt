@@ -23,6 +23,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Business
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -91,7 +93,8 @@ fun OwnerSettingsScreen(
     onLoadMembers: () -> Unit,
     onCounterCreate: (String) -> Unit,
     onCounterRename: (String, String) -> Unit,
-    onOpenStaffManagement: () -> Unit = {}
+    onOpenStaffManagement: () -> Unit = {},
+    onOpenSubscription: () -> Unit = {}
 ) {
     BackHandler(onBack = onClose)
     val ownerCanEdit = role.equals("owner", ignoreCase = true)
@@ -194,6 +197,30 @@ fun OwnerSettingsScreen(
                         Text("Save business name")
                     }
                     if (!ownerCanEdit) ReadOnlyHint()
+                }
+
+                SettingsSection(
+                    title = "Subscription & M-Pesa billing",
+                    description = "Manage Daraja M-Pesa renewals and store entitlement.",
+                    icon = Icons.Default.CreditCard
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "One subscription covers all counters, staff devices, and counters in this shop.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Button(
+                            onClick = onOpenSubscription,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00A349)),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.CreditCard, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Manage / Renew Subscription", fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
 
                 SettingsSection(
