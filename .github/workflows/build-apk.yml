@@ -46,13 +46,13 @@ jobs:
         run: ./gradlew :app:testDebugUnitTest --no-daemon
 
       - name: Name APK for latest release
-        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/CounterPOS-latest.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/POS-app.apk
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: counter-pos-debug-apk
-          path: app/build/outputs/apk/debug/CounterPOS-latest.apk
+          path: app/build/outputs/apk/debug/POS-app.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -69,4 +69,4 @@ jobs:
           gh release edit latest \
             --title "Latest Counter POS build ($VERSION_NAME)" \
             --notes "Automatically published from [main commit](https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})."
-          gh release upload latest app/build/outputs/apk/debug/CounterPOS-latest.apk --clobber
+          gh release upload latest app/build/outputs/apk/debug/POS-app.apk --clobber
