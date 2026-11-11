@@ -82,6 +82,7 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -173,6 +174,8 @@ fun SuperadminDashboardScreen(
             val matchesFilter = when (statusFilter) {
                 "all" -> true
                 "active" -> business.status == "active"
+                "locked" -> business.paymentLockActive
+                "trial" -> business.subscriptionStatus == "trial"
                 "suspended" -> business.status == "suspended"
                 "closed" -> business.status == "closed"
                 "clubs" -> business.businessType == "big_club" || business.businessType == "club"
@@ -194,6 +197,27 @@ fun SuperadminDashboardScreen(
             )
     }
 
+    MaterialTheme(
+        colorScheme = lightColorScheme(
+            primary = Color(0xFF0E5B53),
+            onPrimary = Color.White,
+            primaryContainer = Color(0xFFE4EBE8),
+            onPrimaryContainer = Color(0xFF13211E),
+            secondaryContainer = Color(0xFFE4EBE8),
+            onSecondaryContainer = Color(0xFF13211E),
+            background = Color(0xFFEEF2F0),
+            onBackground = Color(0xFF13211E),
+            surface = Color.White,
+            onSurface = Color(0xFF13211E),
+            surfaceVariant = Color(0xFFE4EBE8),
+            onSurfaceVariant = Color(0xFF5F6F6A),
+            outline = Color(0xFFD3DDD9),
+            outlineVariant = Color(0xFFE3EBE6),
+            error = Color(0xFFB3261E),
+            errorContainer = Color(0xFFFBE0DC),
+            onErrorContainer = Color(0xFF7A271A)
+        )
+    ) {
     Scaffold(
         containerColor = Color(0xFFEEF2F0),
         topBar = {
@@ -259,6 +283,7 @@ fun SuperadminDashboardScreen(
                 onRefresh = { viewModel.loadAdminAuditEvents() }
             )
         }
+    }
     }
 
     val selectedSubBusiness = state.adminSelectedSubscriptionBusiness
@@ -2474,7 +2499,7 @@ private fun FaithfulSuperadminTopBar(
 ) {
     Surface(color = Color(0xFFEEF2F0)) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
@@ -2482,8 +2507,8 @@ private fun FaithfulSuperadminTopBar(
                 Text("Counter POS", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF13211E))
                 Text(email, fontSize = 11.sp, color = Color(0xFF5F6F6A), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, contentDescription = "Refresh") }
-            IconButton(onClick = onSignOut) { Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Sign out") }
+            IconButton(onClick = onRefresh, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = Color(0xFF13211E)) }
+            IconButton(onClick = onSignOut, modifier = Modifier.size(36.dp)) { Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Sign out", tint = Color(0xFF13211E)) }
         }
     }
 }
@@ -2493,7 +2518,7 @@ private fun FaithfulSuperadminBottomBar(
     selectedTab: SuperadminTab,
     onTabSelected: (SuperadminTab) -> Unit
 ) {
-    Surface(color = Color(0xFFFFFFFF), shadowElevation = 6.dp) {
+    Surface(color = Color(0xFFFFFFFF), tonalElevation = 0.dp) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceEvenly
@@ -2503,7 +2528,16 @@ private fun FaithfulSuperadminBottomBar(
                 TextButton(onClick = { onTabSelected(tab) }, modifier = Modifier.weight(1f)) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(tab.icon, contentDescription = null, tint = if (selected) Color(0xFF0E5B53) else Color(0xFF5F6F6A), modifier = Modifier.size(18.dp))
-                        Text(tab.title.substringBefore(' '), fontSize = 10.sp, color = if (selected) Color(0xFF0E5B53) else Color(0xFF5F6F6A), fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+                        Text(
+                            when (tab) {
+                                SuperadminTab.PORTFOLIO -> "Businesses"
+                                SuperadminTab.REGISTER -> "Register"
+                                SuperadminTab.AUDIT -> "Activity"
+                            },
+                            fontSize = 11.sp,
+                            color = if (selected) Color(0xFF0E5B53) else Color(0xFF5F6F6A),
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+                        )
                     }
                 }
             }
