@@ -39,7 +39,6 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CreditCard
-import androidx.compose.ui.window.Dialog
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Inventory2
@@ -73,6 +72,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -84,6 +84,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -117,6 +118,26 @@ private enum class SuperadminTab(val title: String, val icon: ImageVector) {
     REGISTER("Register Tenant", Icons.Default.AddBusiness),
     AUDIT("Audit & Activity", Icons.Default.History)
 }
+
+private fun superadminLightColorScheme() = lightColorScheme(
+    primary = Color(0xFF0E5B53),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFE4EBE8),
+    onPrimaryContainer = Color(0xFF13211E),
+    secondaryContainer = Color(0xFFE4EBE8),
+    onSecondaryContainer = Color(0xFF13211E),
+    background = Color(0xFFEEF2F0),
+    onBackground = Color(0xFF13211E),
+    surface = Color.White,
+    onSurface = Color(0xFF13211E),
+    surfaceVariant = Color(0xFFE4EBE8),
+    onSurfaceVariant = Color(0xFF5F6F6A),
+    outline = Color(0xFFD3DDD9),
+    outlineVariant = Color(0xFFE3EBE6),
+    error = Color(0xFFB3261E),
+    errorContainer = Color(0xFFFBE0DC),
+    onErrorContainer = Color(0xFF7A271A)
+)
 
 @Composable
 fun SuperadminDashboardScreen(
@@ -199,25 +220,7 @@ fun SuperadminDashboardScreen(
     }
 
     MaterialTheme(
-        colorScheme = lightColorScheme(
-            primary = Color(0xFF0E5B53),
-            onPrimary = Color.White,
-            primaryContainer = Color(0xFFE4EBE8),
-            onPrimaryContainer = Color(0xFF13211E),
-            secondaryContainer = Color(0xFFE4EBE8),
-            onSecondaryContainer = Color(0xFF13211E),
-            background = Color(0xFFEEF2F0),
-            onBackground = Color(0xFF13211E),
-            surface = Color.White,
-            onSurface = Color(0xFF13211E),
-            surfaceVariant = Color(0xFFE4EBE8),
-            onSurfaceVariant = Color(0xFF5F6F6A),
-            outline = Color(0xFFD3DDD9),
-            outlineVariant = Color(0xFFE3EBE6),
-            error = Color(0xFFB3261E),
-            errorContainer = Color(0xFFFBE0DC),
-            onErrorContainer = Color(0xFF7A271A)
-        )
+        colorScheme = superadminLightColorScheme()
     ) {
     Scaffold(
         containerColor = Color(0xFFEEF2F0),
@@ -243,6 +246,7 @@ fun SuperadminDashboardScreen(
                 modifier = Modifier.fillMaxSize().padding(paddingValues),
                 businesses = businesses,
                 filteredBusinesses = filteredBusinesses,
+                adminEnrollmentCredential = state.adminEnrollmentCredential,
                 searchQuery = searchQuery,
                 statusFilter = statusFilter,
                 selectedBusinessId = state.adminSelectedBusinessId,
@@ -289,27 +293,29 @@ fun SuperadminDashboardScreen(
 
     val selectedSubBusiness = state.adminSelectedSubscriptionBusiness
     if (selectedSubBusiness != null) {
-        AdminSubscriptionDialog(
-            business = selectedSubBusiness,
-            isUpdating = state.isUpdatingSubscription,
-            onDismiss = viewModel::adminCloseSubscriptionDialog,
-            onSave = { price, endsAt, status, planDays, trialEndsAt, note ->
-                viewModel.adminUpdateShopSubscription(
-                    shopId = selectedSubBusiness.shopId,
-                    priceKsh = price,
-                    endsAtIso = endsAt,
-                    status = status,
-                    planDays = planDays,
-                    trialEndsAtIso = trialEndsAt,
-                    note = note
-                )
-            },
-            onExtendTrial = { viewModel.adminExtendTrial(selectedSubBusiness.shopId, 14) },
-            onActivatePaid = { days -> viewModel.adminActivatePaidTerm(selectedSubBusiness.shopId, days) },
-            onSetPaymentLock = { locked, amount, reason ->
-                viewModel.adminSetPaymentLock(selectedSubBusiness.shopId, locked, amount, reason)
-            }
-        )
+        MaterialTheme(colorScheme = superadminLightColorScheme()) {
+            AdminSubscriptionDialog(
+                business = selectedSubBusiness,
+                isUpdating = state.isUpdatingSubscription,
+                onDismiss = viewModel::adminCloseSubscriptionDialog,
+                onSave = { price, endsAt, status, planDays, trialEndsAt, note ->
+                    viewModel.adminUpdateShopSubscription(
+                        shopId = selectedSubBusiness.shopId,
+                        priceKsh = price,
+                        endsAtIso = endsAt,
+                        status = status,
+                        planDays = planDays,
+                        trialEndsAtIso = trialEndsAt,
+                        note = note
+                    )
+                },
+                onExtendTrial = { viewModel.adminExtendTrial(selectedSubBusiness.shopId, 14) },
+                onActivatePaid = { days -> viewModel.adminActivatePaidTerm(selectedSubBusiness.shopId, days) },
+                onSetPaymentLock = { locked, amount, reason ->
+                    viewModel.adminSetPaymentLock(selectedSubBusiness.shopId, locked, amount, reason)
+                }
+            )
+        }
     }
 }
 
@@ -2205,22 +2211,20 @@ private fun AdminSubscriptionDialog(
     }
     var lockReasonText by remember(business.paymentLockReason) { mutableStateOf(business.paymentLockReason.orEmpty()) }
 
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 6.dp,
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.dp
+    ) {
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp)
+                .padding(horizontal = 16.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
                 // Header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -2489,7 +2493,6 @@ private fun AdminSubscriptionDialog(
             }
         }
     }
-}
 
 
 @Composable
@@ -2551,6 +2554,7 @@ private fun FaithfulPortfolioContent(
     modifier: Modifier,
     businesses: List<AdminBusiness>,
     filteredBusinesses: List<AdminBusiness>,
+    adminEnrollmentCredential: AdminEnrollmentCredential?,
     searchQuery: String,
     statusFilter: String,
     selectedBusinessId: String?,
@@ -2623,6 +2627,21 @@ private fun FaithfulPortfolioContent(
         }
         if (!error.isNullOrBlank()) item { FaithfulNotice(error, true, onClearMessage) }
         if (!notice.isNullOrBlank()) item { FaithfulNotice(notice, false, onClearMessage) }
+        adminEnrollmentCredential?.let { credential ->
+            item {
+                val clipboardManager = LocalClipboardManager.current
+                Surface(color = Color(0xFFE0E7FB), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Owner passkey", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            TextButton(onClick = { clipboardManager.setText(AnnotatedString(credential.passkey)) }) { Text("Copy", fontSize = 11.sp) }
+                        }
+                        Text(credential.passkey, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
+                        Text("One-time ${credential.role.replace('_', ' ')} credential · expires in ${credential.expiresInHours} hours", fontSize = 11.sp, color = Color(0xFF3B5BB5))
+                    }
+                }
+            }
+        }
         if (needsAttention.isNotEmpty()) {
             item { Text("Needs you · ${needsAttention.size}", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF13211E), modifier = Modifier.padding(top = 12.dp, bottom = 2.dp)) }
             items(needsAttention.take(4), key = { "need_${it.shopId}" }) { business ->
