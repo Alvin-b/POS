@@ -2291,6 +2291,7 @@ private fun SubscriptionStatusBadge(business: AdminBusiness) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AdminSubscriptionDialog(
     business: AdminBusiness,
