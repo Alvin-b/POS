@@ -1,5 +1,7 @@
 package com.alvinb.counterpos.ui
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -52,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -108,6 +111,7 @@ fun SubscriptionPaymentScreen(
     }
 
     val focusManager = LocalFocusManager.current
+    val context = LocalContext.current
     val formattedAmount = NumberFormat.getNumberInstance(Locale.US).format(entitlement.amountDueKsh)
     val isOwner = activeShop?.role.equals("owner", ignoreCase = true)
 
@@ -530,6 +534,17 @@ fun SubscriptionPaymentScreen(
             }
 
             Spacer(Modifier.height(24.dp))
+
+            TextButton(
+                onClick = {
+                    context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:+254759951373")))
+                },
+                modifier = Modifier.testTag("subscription_support_phone_button")
+            ) {
+                Icon(Icons.Default.Phone, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Need help? Call support team: 0759 951 373", fontSize = 13.sp)
+            }
 
             // Superadmin return shortcut if user is platform admin
             if (session.isPlatformAdmin && onExitToAdmin != null) {

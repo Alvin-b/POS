@@ -12,6 +12,7 @@ import com.alvinb.counterpos.data.SubscriptionManager
 import com.alvinb.counterpos.data.TableSettlementResult
 import com.alvinb.counterpos.data.remote.AdminBusiness
 import com.alvinb.counterpos.data.remote.AdminAuditEvent
+import com.alvinb.counterpos.data.remote.PlatformBillingSettings
 import com.alvinb.counterpos.data.remote.CounterReportRow
 import com.alvinb.counterpos.data.remote.ServiceCounter
 import com.alvinb.counterpos.data.SessionSnapshot
@@ -124,6 +125,9 @@ data class CounterPosUiState(
     val blockedTableSettlementIds: Set<String> = emptySet(),
     val adminSelectedBusinessId: String? = null,
     val adminQrRole: String = "owner",
+    val isLoadingAdminBusinesses: Boolean = false,
+    val hasFreshAdminBusinesses: Boolean = false,
+    val adminBusinessesError: String? = null,
     val isCreatingAdminBusiness: Boolean = false,
     val isCreatingBusiness: Boolean = false,
     val adminAuditEvents: List<AdminAuditEvent> = emptyList(),
@@ -199,7 +203,10 @@ data class CounterPosUiState(
     val isSubscriptionEntitled: Boolean = true,
     val subscriptionEntitlement: SubscriptionEntitlement? = null,
     val adminSelectedSubscriptionBusiness: AdminBusiness? = null,
-    val isUpdatingSubscription: Boolean = false
+    val isUpdatingSubscription: Boolean = false,
+    val platformBillingSettings: PlatformBillingSettings? = null,
+    val isLoadingPlatformBillingSettings: Boolean = false,
+    val isSavingPlatformBillingSettings: Boolean = false
 )
 
 class CounterPosViewModel(
@@ -1087,17 +1094,72 @@ class CounterPosViewModel(
     }
 
     fun loadAdminBusinesses() = viewModelScope.launch {
+        if (_uiState.value.isLoadingAdminBusinesses) return@launch
         val cached = repository.getCachedAdminBusinesses()
         if (cached.isNotEmpty() && _adminBusinesses.value.isEmpty()) {
             _adminBusinesses.value = cached
         }
-        runCatching { repository.adminBusinesses() }
-            .onSuccess { _adminBusinesses.value = it }
-            .onFailure { error ->
-                if (_adminBusinesses.value.isEmpty()) {
-                    _uiState.update { it.copy(startupError = error.message ?: "Could not load businesses") }
+        _uiState.update { it.copy(isLoadingAdminBusinesses = true, adminBusinessesError = null) }
+        runCatching { repository.refreshAdminBusinesses() }
+            .onSuccess {
+                _adminBusinesses.value = it
+                _uiState.update {
+                    it.copy(
+                        isLoadingAdminBusinesses = false,
+                        hasFreshAdminBusinesses = true,
+                        adminBusinessesError = null
+                    )
                 }
             }
+            .onFailure { error ->
+                _uiState.update {
+                    it.copy(
+                        isLoadingAdminBusinesses = false,
+                        hasFreshAdminBusinesses = false,
+                        adminBusinessesError = error.message ?: "Could not refresh businesses"
+                    )
+                }
+            }
+    }
+
+    fun loadAdminPlatformBillingSettings() = viewModelScope.launch {
+        _uiState.update { it.copy(isLoadingPlatformBillingSettings = true) }
+        runCatching { repository.adminPlatformBillingSettings() }
+            .onSuccess { settings ->
+                _uiState.update { it.copy(platformBillingSettings = settings, isLoadingPlatformBillingSettings = false) }
+            }
+            .onFailure { error ->
+                _uiState.update {
+                    it.copy(
+                        isLoadingPlatformBillingSettings = false,
+                        startupError = error.message ?: "Could not load global billing settings"
+                    )
+                }
+            }
+    }
+
+    fun adminUpdatePlatformBillingSettings(trialDurationDays: Int, subscriptionPriceKsh: Int) = viewModelScope.launch {
+        if (_uiState.value.isSavingPlatformBillingSettings) return@launch
+        _uiState.update { it.copy(isSavingPlatformBillingSettings = true, startupError = null) }
+        runCatching {
+            repository.adminUpdatePlatformBillingSettings(trialDurationDays, subscriptionPriceKsh)
+        }.onSuccess { settings ->
+            _adminBusinesses.value = repository.getCachedAdminBusinesses()
+            _uiState.update {
+                it.copy(
+                    platformBillingSettings = settings,
+                    isSavingPlatformBillingSettings = false,
+                    notice = "Global billing settings saved. Current trials and paid terms remain unchanged."
+                )
+            }
+        }.onFailure { error ->
+            _uiState.update {
+                it.copy(
+                    isSavingPlatformBillingSettings = false,
+                    startupError = error.message ?: "Could not update global billing settings"
+                )
+            }
+        }
     }
 
     fun loadAdminAuditEvents(shopId: String = "") = viewModelScope.launch {
