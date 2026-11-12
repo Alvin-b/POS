@@ -12,6 +12,7 @@ import com.alvinb.counterpos.data.SubscriptionManager
 import com.alvinb.counterpos.data.TableSettlementResult
 import com.alvinb.counterpos.data.remote.AdminBusiness
 import com.alvinb.counterpos.data.remote.AdminAuditEvent
+import com.alvinb.counterpos.data.remote.PlatformBillingSettings
 import com.alvinb.counterpos.data.remote.CounterReportRow
 import com.alvinb.counterpos.data.remote.ServiceCounter
 import com.alvinb.counterpos.data.SessionSnapshot
@@ -20,7 +21,7 @@ import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.OutboxEntity
 import com.alvinb.counterpos.data.local.entity.SaleUnit
-import com.alvinb.counterpos.data.local.entity.parseSaleUnits
+import com.alvinb.counterpos.data.local.entity.resolveSaleUnits
 import com.alvinb.counterpos.data.local.entity.serializeSaleUnits
 import com.alvinb.counterpos.data.model.BusinessHours
 import com.alvinb.counterpos.data.model.DayBusinessHours
@@ -124,6 +125,9 @@ data class CounterPosUiState(
     val blockedTableSettlementIds: Set<String> = emptySet(),
     val adminSelectedBusinessId: String? = null,
     val adminQrRole: String = "owner",
+    val isLoadingAdminBusinesses: Boolean = false,
+    val hasFreshAdminBusinesses: Boolean = false,
+    val adminBusinessesError: String? = null,
     val isCreatingAdminBusiness: Boolean = false,
     val isCreatingBusiness: Boolean = false,
     val adminAuditEvents: List<AdminAuditEvent> = emptyList(),
@@ -199,7 +203,10 @@ data class CounterPosUiState(
     val isSubscriptionEntitled: Boolean = true,
     val subscriptionEntitlement: SubscriptionEntitlement? = null,
     val adminSelectedSubscriptionBusiness: AdminBusiness? = null,
-    val isUpdatingSubscription: Boolean = false
+    val isUpdatingSubscription: Boolean = false,
+    val platformBillingSettings: PlatformBillingSettings? = null,
+    val isLoadingPlatformBillingSettings: Boolean = false,
+    val isSavingPlatformBillingSettings: Boolean = false
 )
 
 class CounterPosViewModel(
@@ -1087,17 +1094,72 @@ class CounterPosViewModel(
     }
 
     fun loadAdminBusinesses() = viewModelScope.launch {
+        if (_uiState.value.isLoadingAdminBusinesses) return@launch
         val cached = repository.getCachedAdminBusinesses()
         if (cached.isNotEmpty() && _adminBusinesses.value.isEmpty()) {
             _adminBusinesses.value = cached
         }
-        runCatching { repository.adminBusinesses() }
-            .onSuccess { _adminBusinesses.value = it }
-            .onFailure { error ->
-                if (_adminBusinesses.value.isEmpty()) {
-                    _uiState.update { it.copy(startupError = error.message ?: "Could not load businesses") }
+        _uiState.update { it.copy(isLoadingAdminBusinesses = true, adminBusinessesError = null) }
+        runCatching { repository.refreshAdminBusinesses() }
+            .onSuccess {
+                _adminBusinesses.value = it
+                _uiState.update {
+                    it.copy(
+                        isLoadingAdminBusinesses = false,
+                        hasFreshAdminBusinesses = true,
+                        adminBusinessesError = null
+                    )
                 }
             }
+            .onFailure { error ->
+                _uiState.update {
+                    it.copy(
+                        isLoadingAdminBusinesses = false,
+                        hasFreshAdminBusinesses = false,
+                        adminBusinessesError = error.message ?: "Could not refresh businesses"
+                    )
+                }
+            }
+    }
+
+    fun loadAdminPlatformBillingSettings() = viewModelScope.launch {
+        _uiState.update { it.copy(isLoadingPlatformBillingSettings = true) }
+        runCatching { repository.adminPlatformBillingSettings() }
+            .onSuccess { settings ->
+                _uiState.update { it.copy(platformBillingSettings = settings, isLoadingPlatformBillingSettings = false) }
+            }
+            .onFailure { error ->
+                _uiState.update {
+                    it.copy(
+                        isLoadingPlatformBillingSettings = false,
+                        startupError = error.message ?: "Could not load global billing settings"
+                    )
+                }
+            }
+    }
+
+    fun adminUpdatePlatformBillingSettings(trialDurationDays: Int, subscriptionPriceKsh: Int) = viewModelScope.launch {
+        if (_uiState.value.isSavingPlatformBillingSettings) return@launch
+        _uiState.update { it.copy(isSavingPlatformBillingSettings = true, startupError = null) }
+        runCatching {
+            repository.adminUpdatePlatformBillingSettings(trialDurationDays, subscriptionPriceKsh)
+        }.onSuccess { settings ->
+            _adminBusinesses.value = repository.getCachedAdminBusinesses()
+            _uiState.update {
+                it.copy(
+                    platformBillingSettings = settings,
+                    isSavingPlatformBillingSettings = false,
+                    notice = "Global billing settings saved. Current trials and paid terms remain unchanged."
+                )
+            }
+        }.onFailure { error ->
+            _uiState.update {
+                it.copy(
+                    isSavingPlatformBillingSettings = false,
+                    startupError = error.message ?: "Could not update global billing settings"
+                )
+            }
+        }
     }
 
     fun loadAdminAuditEvents(shopId: String = "") = viewModelScope.launch {
@@ -1238,7 +1300,28 @@ class CounterPosViewModel(
         }
     }
 
+    fun refreshCurrentBusinessSubscription() {
+        if (!_uiState.value.isOnline || repository.session.value.activeBusiness == null) return
+        viewModelScope.launch {
+            val wasEntitled = _uiState.value.isSubscriptionEntitled
+            val refreshed = repository.refreshActiveBusinessSubscription()
+            refreshSubscriptionEntitlement(refreshed, online = _uiState.value.isOnline)
+            if (!wasEntitled && _uiState.value.isSubscriptionEntitled) {
+                subscriptionPollingJob?.cancel()
+                _uiState.update {
+                    it.copy(
+                        isSubscriptionModalOpen = false,
+                        isPollingStkPayment = false,
+                        isInitiatingStkPush = false,
+                        subscriptionPaymentError = null
+                    )
+                }
+            }
+        }
+    }
+
     fun initiateSubscriptionPayment(phoneNumber: String) {
+        if (_uiState.value.isInitiatingStkPush || _uiState.value.isPollingStkPayment) return
         val cleanPhone = com.alvinb.counterpos.data.SubscriptionManager.normalizeKenyanPhone(phoneNumber)
         if (cleanPhone == null) {
             _uiState.update { it.copy(subscriptionPaymentError = "Please enter a valid Kenyan phone number (e.g. 0712 345 678 or 254712345678).") }
@@ -1313,7 +1396,7 @@ class CounterPosViewModel(
         subscriptionPollingJob?.cancel()
         subscriptionPollingJob = viewModelScope.launch {
             var attempts = 0
-            val maxAttempts = 60
+            val maxAttempts = 75
             while (isActive && attempts < maxAttempts) {
                 delay(4000L)
                 attempts++
@@ -1879,13 +1962,13 @@ class CounterPosViewModel(
     }
 
     fun openTableSale(tableId: String, product: ProductEntity) {
-        val units = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+        val units = resolveSaleUnits(product)
         val bulkOnly = units.isNotEmpty() && units.all { it.stockUnitsPerSale == 0 }
         if (!product.inMyStock || (product.stockQuantity <= 0 && !bulkOnly)) {
             _uiState.update { it.copy(actionError = "${product.name} is out of stock.") }
             return
         }
-        val defaultUnit = units.firstOrNull() ?: SaleUnit("Bottle", product.sellingPriceKsh)
+        val defaultUnit = units.firstOrNull() ?: SaleUnit("Bottle", product.sellingPriceKsh.coerceAtLeast(0))
         val defaultCounterId = _uiState.value.selectedServingCounterId
             ?: _uiState.value.selectedCounterId
             ?: serviceCounters.value.firstOrNull()?.id
@@ -1979,7 +2062,7 @@ class CounterPosViewModel(
     }
 
     fun handleScannedSale(product: ProductEntity) {
-        val units = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+        val units = resolveSaleUnits(product)
         val bulkOnly = units.isNotEmpty() && units.all { it.stockUnitsPerSale == 0 }
         if (!product.inMyStock || (product.stockQuantity < 1 && !bulkOnly)) {
             _uiState.update {
@@ -2000,7 +2083,7 @@ class CounterPosViewModel(
             _uiState.update { it.copy(isScannerOpen = false, notice = "Open a table before scanning a product.") }
             return
         }
-        val units = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+        val units = resolveSaleUnits(product)
         val bulkOnly = units.isNotEmpty() && units.all { it.stockUnitsPerSale == 0 }
         if (!product.inMyStock || (product.stockQuantity < 1 && !bulkOnly)) {
             _uiState.update {
@@ -2041,7 +2124,7 @@ class CounterPosViewModel(
                     stockMode = StockMode.LIBRARY,
                     selectedCatalogCode = product.catalogCode,
                     catalogInitialStock = 12,
-                    catalogSellingPrice = product.suggestedPriceKsh.toString(),
+                    catalogSellingPrice = "",
                     notice = "Found ${product.name}. Set price & bottles to add to stock."
                 )
             }
@@ -2072,8 +2155,8 @@ class CounterPosViewModel(
 
     // Selling & Unit of Sales
     fun openSale(product: ProductEntity) {
-        val units = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
-        val defaultUnit = units.firstOrNull() ?: SaleUnit("Bottle", product.sellingPriceKsh)
+        val units = resolveSaleUnits(product)
+        val defaultUnit = units.firstOrNull() ?: SaleUnit("Bottle", product.sellingPriceKsh.coerceAtLeast(0))
         _uiState.update {
             it.copy(
                 selectedSaleCode = product.catalogCode,
@@ -2415,7 +2498,7 @@ class CounterPosViewModel(
         it.copy(
             selectedCatalogCode = product.catalogCode,
             catalogInitialStock = 12,
-            catalogSellingPrice = product.suggestedPriceKsh.toString(),
+            catalogSellingPrice = "",
             actionError = null
         )
     }

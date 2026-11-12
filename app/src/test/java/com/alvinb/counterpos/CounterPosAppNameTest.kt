@@ -13,9 +13,9 @@ import org.robolectric.annotation.Config
 @Config(sdk = [36])
 class CounterPosAppNameTest {
     @Test
-    fun appIsNamedCounterPosAndHasCatalogSeed() {
+    fun appIsNamedPosAppAndHasCatalogSeed() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        assertEquals("Counter POS", context.getString(R.string.app_name))
+        assertEquals("POS app", context.getString(R.string.app_name))
         assertTrue(context.assets.list("")?.contains("counterpos_catalog.json") == true)
     }
 }

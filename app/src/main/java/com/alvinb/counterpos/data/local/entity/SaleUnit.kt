@@ -30,6 +30,14 @@ fun parseSaleUnits(json: String?, fallbackPrice: Int = 0): List<SaleUnit> {
     }
 }
 
+/** Resolves stale zero-valued unit prices only from this shop's saved selling price. */
+fun resolveSaleUnits(product: ProductEntity): List<SaleUnit> {
+    val shopPrice = product.sellingPriceKsh.coerceAtLeast(0)
+    return parseSaleUnits(product.salesUnitsJson, shopPrice).map { unit ->
+        if (unit.priceKsh <= 0 && shopPrice > 0) unit.copy(priceKsh = shopPrice) else unit
+    }
+}
+
 fun serializeSaleUnits(units: List<SaleUnit>): String {
     val array = JSONArray()
     for (unit in units) {
