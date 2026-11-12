@@ -30,6 +30,16 @@ fun parseSaleUnits(json: String?, fallbackPrice: Int = 0): List<SaleUnit> {
     }
 }
 
+fun effectiveSellingPriceKsh(sellingPriceKsh: Int, suggestedPriceKsh: Int): Int =
+    sellingPriceKsh.takeIf { it > 0 } ?: suggestedPriceKsh.coerceAtLeast(0)
+
+fun resolveSaleUnits(product: ProductEntity): List<SaleUnit> {
+    val fallbackPrice = effectiveSellingPriceKsh(product.sellingPriceKsh, product.suggestedPriceKsh)
+    return parseSaleUnits(product.salesUnitsJson, fallbackPrice).map { unit ->
+        if (unit.priceKsh <= 0 && fallbackPrice > 0) unit.copy(priceKsh = fallbackPrice) else unit
+    }
+}
+
 fun serializeSaleUnits(units: List<SaleUnit>): String {
     val array = JSONArray()
     for (unit in units) {
