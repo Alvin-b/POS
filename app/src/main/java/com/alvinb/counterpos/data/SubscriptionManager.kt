@@ -3,6 +3,7 @@ package com.alvinb.counterpos.data
 import android.content.Context
 import android.content.SharedPreferences
 import com.alvinb.counterpos.data.remote.BusinessMembership
+import com.alvinb.counterpos.data.remote.SubscriptionStatusResult
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -90,6 +91,26 @@ class SubscriptionManager(context: Context) {
     /** Default renewal term in days. */
     const val DEFAULT_PLAN_DAYS = 30
 
+    /** Merge an authoritative subscription response into the cached business membership. */
+    fun mergeServerSubscriptionStatus(
+        membership: BusinessMembership,
+        status: SubscriptionStatusResult,
+        verifiedAtMillis: Long
+    ): BusinessMembership = membership.copy(
+        subscriptionStatus = status.status,
+        trialEndsAt = status.trialEndsAt,
+        subscriptionEndsAt = status.subscriptionEndsAt,
+        subscriptionPriceKsh = status.subscriptionPriceKsh,
+        subscriptionPlanDays = status.subscriptionPlanDays,
+        lastPaymentAt = status.lastPaymentAt,
+        lastPaymentReceipt = status.lastPaymentReceipt,
+        paymentLockActive = status.paymentLockActive,
+        paymentLockAmountKsh = status.paymentLockAmountKsh,
+        paymentLockReason = status.paymentLockReason,
+        paymentLockStartedAt = if (status.paymentLockActive) membership.paymentLockStartedAt else null,
+        lastVerifiedEntitlementAt = verifiedAtMillis
+    )
+
     /** Standardizes any valid Kenyan phone number to Daraja international format (254XXXXXXXXX). */
     fun normalizeKenyanPhone(raw: String): String? {
         val digits = raw.filter(Char::isDigit)
@@ -113,6 +134,12 @@ class SubscriptionManager(context: Context) {
             phone
         }
     }
+
+    /** Prefills only a valid Kenyan M-Pesa number; JSON null-like strings are ignored. */
+    fun paymentPhonePrefill(lastPaymentPhone: String?, ownerPhone: String?): String =
+        listOfNotNull(lastPaymentPhone, ownerPhone)
+            .firstNotNullOfOrNull { candidate -> normalizeKenyanPhone(candidate)?.let(::formatPhoneForDisplay) }
+            .orEmpty()
 
     /** Parses ISO 8601 or common UTC timestamps to epoch millis. */
     fun parseTimestamp(iso: String?): Long? {
@@ -155,6 +182,9 @@ class SubscriptionManager(context: Context) {
 
         if (membership.paymentLockActive) {
             val lockedAmount = membership.paymentLockAmountKsh.takeIf { it > 0 } ?: amountDue
+            val lockReason = membership.paymentLockReason?.trim()?.takeIf {
+                it.isNotEmpty() && !it.equals("null", ignoreCase = true) && !it.equals("undefined", ignoreCase = true)
+            }
             return SubscriptionEntitlement(
                 status = SubscriptionStatus.PAYMENT_LOCKED,
                 isEntitled = false,
@@ -166,7 +196,7 @@ class SubscriptionManager(context: Context) {
                 planDays = planDays,
                 isGracePeriod = false,
                 statusLabel = "Payment Lock",
-                message = membership.paymentLockReason?.let { "Business locked by platform administrator: $it" }
+                message = lockReason?.let { "Business locked by platform administrator: $it" }
                     ?: "This business is locked by the platform administrator. Pay KSh $lockedAmount to restore access.",
                 isPaymentLocked = true
             )
