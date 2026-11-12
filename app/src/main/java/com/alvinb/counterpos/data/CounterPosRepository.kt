@@ -20,6 +20,7 @@ import com.alvinb.counterpos.data.model.TimeSlot
 import com.alvinb.counterpos.data.remote.AccountSnapshot
 import com.alvinb.counterpos.data.remote.AdminAuditEvent
 import com.alvinb.counterpos.data.remote.AdminBusiness
+import com.alvinb.counterpos.data.remote.PlatformBillingSettings
 import com.alvinb.counterpos.data.remote.AuthSession
 import com.alvinb.counterpos.data.remote.BusinessMembership
 import com.alvinb.counterpos.data.remote.CounterReportRow
@@ -519,7 +520,7 @@ class CounterPosRepository(
                                 lifecycleReason = obj.optString("lifecycle_reason").takeIf(String::isNotBlank),
                                 counterInventoryMode = obj.optString("counter_inventory_mode", "shared"),
                                 counterCount = obj.optLong("counter_count", 1),
-                                subscriptionStatus = obj.optString("subscription_status", "trial"),
+                                subscriptionStatus = obj.optString("subscription_status", "unknown"),
                                 trialEndsAt = obj.optString("trial_ends_at").takeIf(String::isNotBlank),
                                 subscriptionEndsAt = obj.optString("subscription_ends_at").takeIf(String::isNotBlank),
                                 subscriptionPriceKsh = obj.optInt("subscription_price_ksh", 2500).let { if (it <= 0) 2500 else it },
@@ -654,6 +655,26 @@ class CounterPosRepository(
         } catch (error: Exception) {
             if (cached.isNotEmpty()) cached else throw error
         }
+    }
+
+    suspend fun refreshAdminBusinesses(): List<AdminBusiness> = withContext(Dispatchers.IO) {
+        remote.adminBusinesses().also(::saveCachedAdminBusinesses)
+    }
+
+    suspend fun adminPlatformBillingSettings(): PlatformBillingSettings = withContext(Dispatchers.IO) {
+        require(account?.isPlatformAdmin == true) { "Only a platform administrator can view global billing settings." }
+        remote.adminPlatformBillingSettings()
+    }
+
+    suspend fun adminUpdatePlatformBillingSettings(
+        trialDurationDays: Int,
+        subscriptionPriceKsh: Int
+    ): PlatformBillingSettings = withContext(Dispatchers.IO) {
+        require(account?.isPlatformAdmin == true) { "Only a platform administrator can change global billing settings." }
+        val updated = remote.adminUpdatePlatformBillingSettings(trialDurationDays, subscriptionPriceKsh)
+        val freshBusinesses = remote.adminBusinesses()
+        saveCachedAdminBusinesses(freshBusinesses)
+        updated
     }
 
     suspend fun adminAuditEvents(shopId: String = ""): List<AdminAuditEvent> = withContext(Dispatchers.IO) {
@@ -842,15 +863,10 @@ class CounterPosRepository(
         val currentActive = activeBusiness ?: return@withContext session.value
         try {
             val statusResult = remote.checkDarajaStkStatus(currentActive.shopId)
-            val updatedMembership = currentActive.copy(
-                subscriptionStatus = statusResult.status,
-                trialEndsAt = statusResult.trialEndsAt,
-                subscriptionEndsAt = statusResult.subscriptionEndsAt,
-                subscriptionPriceKsh = statusResult.subscriptionPriceKsh,
-                subscriptionPlanDays = statusResult.subscriptionPlanDays,
-                lastPaymentAt = statusResult.lastPaymentAt,
-                lastPaymentReceipt = statusResult.lastPaymentReceipt,
-                lastVerifiedEntitlementAt = System.currentTimeMillis()
+            val updatedMembership = SubscriptionManager.mergeServerSubscriptionStatus(
+                membership = currentActive,
+                status = statusResult,
+                verifiedAtMillis = System.currentTimeMillis()
             )
             activeBusiness = updatedMembership
             account = account?.copy(
