@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -56,6 +57,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.LocalDrink
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.QrCodeScanner
@@ -137,7 +139,6 @@ import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.OutboxEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.SaleUnit
-import com.alvinb.counterpos.data.local.entity.effectiveSellingPriceKsh
 import com.alvinb.counterpos.data.local.entity.parseSaleUnits
 import com.alvinb.counterpos.data.local.entity.resolveSaleUnits
 import com.alvinb.counterpos.data.remote.ServiceCounter
@@ -1971,35 +1972,38 @@ private fun FullscreenSalesScreen(
             }
         }
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)
             ) {
-                listOf("today" to "Today", "all" to "All dates").forEach { (value, label) ->
-                    FilterChip(
-                        selected = dateFilter == value,
-                        onClick = { dateFilter = value },
-                        label = { Text(label, fontSize = 12.sp) }
-                    )
-                }
-                FilterChip(
-                    selected = newestFirst,
-                    onClick = { newestFirst = !newestFirst },
-                    label = { Text(if (newestFirst) "Newest first" else "Oldest first", fontSize = 12.sp) }
-                )
-            }
-        }
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                listOf("all" to "All payments", "cash" to "Cash", "mpesa" to "M-Pesa").forEach { (value, label) ->
-                    FilterChip(
-                        selected = paymentFilter == value,
-                        onClick = { paymentFilter = value },
-                        label = { Text(label, fontSize = 12.sp) }
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(9.dp)
+                ) {
+                    Text("Filter receipts", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SalesFilterDropdown(
+                            label = "Date range",
+                            selectedValue = dateFilter,
+                            options = listOf("today" to "Today", "all" to "All dates"),
+                            modifier = Modifier.weight(1f),
+                            onSelect = { dateFilter = it }
+                        )
+                        SalesFilterDropdown(
+                            label = "Sort order",
+                            selectedValue = if (newestFirst) "newest" else "oldest",
+                            options = listOf("newest" to "Newest first", "oldest" to "Oldest first"),
+                            modifier = Modifier.weight(1f),
+                            onSelect = { newestFirst = it == "newest" }
+                        )
+                    }
+                    SalesFilterDropdown(
+                        label = "Payment method",
+                        selectedValue = paymentFilter,
+                        options = listOf("all" to "All payments", "cash" to "Cash", "mpesa" to "M-Pesa"),
+                        modifier = Modifier.fillMaxWidth(),
+                        onSelect = { paymentFilter = it }
                     )
                 }
             }
@@ -2031,6 +2035,49 @@ private fun FullscreenSalesScreen(
                 if (shareAfterDateSelection) onSharePdf(start, end) else onExportPdf(start, end)
             }
         )
+    }
+}
+
+@Composable
+private fun SalesFilterDropdown(
+    label: String,
+    selectedValue: String,
+    options: List<Pair<String, String>>,
+    modifier: Modifier = Modifier,
+    onSelect: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedLabel = options.firstOrNull { it.first == selectedValue }?.second ?: selectedValue
+    Box(modifier = modifier) {
+        OutlinedButton(
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
+            contentPadding = PaddingValues(horizontal = 11.dp, vertical = 6.dp),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(1.dp)
+            ) {
+                Text(label, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                Text(selectedLabel, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(18.dp))
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { (value, optionLabel) ->
+                DropdownMenuItem(
+                    text = { Text(optionLabel) },
+                    onClick = {
+                        onSelect(value)
+                        expanded = false
+                    },
+                    trailingIcon = if (value == selectedValue) {
+                        { Icon(Icons.Default.Check, contentDescription = "Selected") }
+                    } else null
+                )
+            }
+        }
     }
 }
 
@@ -2469,7 +2516,9 @@ private fun StockProductCard(
                 // Show units of sale configured (e.g. Bottle @ 300, Glass @ 70, Cup @ 35)
                 if (units.size > 1) {
                     Text(
-                        text = units.joinToString(" · ") { "${it.name} ${ksh(it.priceKsh)}" },
+                        text = units.joinToString(" · ") {
+                            "${it.name} ${if (it.priceKsh > 0) ksh(it.priceKsh) else "Price not set"}"
+                        },
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -2861,7 +2910,7 @@ private fun RecordDispensationBottomSheet(
         else emptyList()
     }
     var selectedUnit by remember(units) {
-        mutableStateOf(units.firstOrNull() ?: SaleUnit("Bottle", selectedProduct?.let { effectiveSellingPriceKsh(it.sellingPriceKsh, it.suggestedPriceKsh) } ?: 0))
+        mutableStateOf(units.firstOrNull() ?: SaleUnit("Bottle", selectedProduct?.sellingPriceKsh?.coerceAtLeast(0) ?: 0))
     }
 
     val resolvedCounter = counters.firstOrNull { it.id == selectedCounterId }
@@ -3206,7 +3255,7 @@ private fun EditProductDialog(
     var barcodeText by remember(product.catalogCode) { mutableStateOf(product.verifiedBarcode ?: "") }
     var stockText by remember(product.catalogCode) { mutableStateOf(product.stockQuantity.toString()) }
     var priceText by remember(product.catalogCode) {
-        mutableStateOf(effectiveSellingPriceKsh(product.sellingPriceKsh, product.suggestedPriceKsh).toString())
+        mutableStateOf(product.sellingPriceKsh.coerceAtLeast(0).toString())
     }
     var selectedPhotoUri by remember(product.catalogCode) {
         mutableStateOf(product.photoOverrideUri?.takeIf(String::isNotBlank))
@@ -3367,6 +3416,15 @@ private fun EditProductDialog(
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(1f)
+                    )
+                }
+
+                if (product.sellingPriceKsh <= 0 && product.suggestedPriceKsh > 0) {
+                    Text(
+                        "Catalog suggestion: ${ksh(product.suggestedPriceKsh)}. This is not a saved shop price; enter your actual price above.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp)
                     )
                 }
 
@@ -3926,7 +3984,7 @@ private fun AddCatalogItemDialog(
     onConfirm: (quantity: Int, priceKsh: Int, unitCostKsh: Int) -> Unit
 ) {
     var quantityText by remember(product.catalogCode) { mutableStateOf("12") }
-    var priceText by remember(product.catalogCode) { mutableStateOf(product.suggestedPriceKsh.toString()) }
+    var priceText by remember(product.catalogCode) { mutableStateOf("") }
     var unitCostText by remember(product.catalogCode) { mutableStateOf("") }
 
     AlertDialog(
@@ -3934,7 +3992,7 @@ private fun AddCatalogItemDialog(
         title = { Text("Add ${product.name} to Stock", fontSize = 17.sp, fontWeight = FontWeight.Bold) },
         text = {
             Column {
-                Text("${product.brand} · ${product.size} · Suggested: ${ksh(product.suggestedPriceKsh)}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Catalog suggestion: ${ksh(product.suggestedPriceKsh)} · not your shop price", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
                     value = quantityText,
@@ -3948,6 +4006,7 @@ private fun AddCatalogItemDialog(
                     value = priceText,
                     onValueChange = { priceText = it.filter(Char::isDigit) },
                     label = { Text("Your Selling Price (KSh)") },
+                    placeholder = { Text("Enter your actual shop price") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier

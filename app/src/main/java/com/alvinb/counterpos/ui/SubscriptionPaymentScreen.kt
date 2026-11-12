@@ -2,6 +2,7 @@ package com.alvinb.counterpos.ui
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,10 +12,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -45,6 +49,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +57,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalContext
@@ -69,12 +75,14 @@ import com.alvinb.counterpos.data.SubscriptionManager
 import com.alvinb.counterpos.data.SubscriptionStatus
 import java.text.NumberFormat
 import java.util.Locale
+import kotlinx.coroutines.delay
 
 // Safaricom M-Pesa Brand Colors
 private val MpesaGreen = Color(0xFF00A349)
 private val MpesaGreenDark = Color(0xFF007A34)
 private val MpesaGreenLight = Color(0xFFE8F8EE)
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SubscriptionPaymentScreen(
     viewModel: CounterPosViewModel,
@@ -85,6 +93,9 @@ fun SubscriptionPaymentScreen(
     val session by viewModel.session.collectAsStateWithLifecycle()
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val activeShop = session.activeBusiness
+    LaunchedEffect(activeShop?.shopId) {
+        viewModel.refreshCurrentBusinessSubscription()
+    }
 
     val entitlement = remember(activeShop, state.isOnline, state.subscriptionEntitlement) {
         state.subscriptionEntitlement ?: if (activeShop != null) {
@@ -107,13 +118,22 @@ fun SubscriptionPaymentScreen(
     }
 
     var phoneNumber by remember(activeShop?.lastPaymentPhone, activeShop?.ownerPhone) {
-        mutableStateOf(activeShop?.lastPaymentPhone ?: activeShop?.ownerPhone ?: "")
+        mutableStateOf(SubscriptionManager.paymentPhonePrefill(activeShop?.lastPaymentPhone, activeShop?.ownerPhone))
+    }
+    val phoneBringIntoViewRequester = remember { BringIntoViewRequester() }
+    var phoneFieldFocused by remember { mutableStateOf(false) }
+    LaunchedEffect(phoneFieldFocused) {
+        if (phoneFieldFocused) {
+            delay(250)
+            phoneBringIntoViewRequester.bringIntoView()
+        }
     }
 
     val focusManager = LocalFocusManager.current
     val context = LocalContext.current
     val formattedAmount = NumberFormat.getNumberInstance(Locale.US).format(entitlement.amountDueKsh)
     val isOwner = activeShop?.role.equals("owner", ignoreCase = true)
+    val normalizedPhone = SubscriptionManager.normalizeKenyanPhone(phoneNumber)
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -122,6 +142,7 @@ fun SubscriptionPaymentScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -215,6 +236,16 @@ fun SubscriptionPaymentScreen(
                         textAlign = TextAlign.Center,
                         modifier = Modifier.padding(top = 6.dp)
                     )
+                }
+                if (state.isOnline) {
+                    TextButton(
+                        onClick = viewModel::refreshCurrentBusinessSubscription,
+                        modifier = Modifier.testTag("refresh_subscription_status_button")
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Refresh business access", fontSize = 12.sp)
+                    }
                 }
             }
 
@@ -373,7 +404,11 @@ fun SubscriptionPaymentScreen(
                         )
                         Spacer(Modifier.height(14.dp))
                         Text(
-                            text = "STK Push Sent to Your Phone",
+                            text = if (state.stkCheckoutRequestId.isNullOrBlank()) {
+                                "Checking M-Pesa Request"
+                            } else {
+                                "M-Pesa Prompt Sent to Your Phone"
+                            },
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
@@ -381,7 +416,11 @@ fun SubscriptionPaymentScreen(
                         Spacer(Modifier.height(6.dp))
                         Text(
                             text = state.stkCustomerMessage
-                                ?: "Please check your phone and enter your 4-digit M-Pesa PIN to complete payment of KSh $formattedAmount.",
+                                ?: if (state.stkCheckoutRequestId.isNullOrBlank()) {
+                                    "Safaricom has not confirmed an STK prompt yet. We are checking the request; do not retry until its status is resolved."
+                                } else {
+                                    "Please check your phone and enter your 4-digit M-Pesa PIN to complete payment of KSh $formattedAmount."
+                                },
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
@@ -399,7 +438,7 @@ fun SubscriptionPaymentScreen(
                         ) {
                             Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Check Now", fontSize = 13.sp)
+                            Text("Check Payment Status", fontSize = 13.sp)
                         }
                     }
                 }
@@ -436,6 +475,8 @@ fun SubscriptionPaymentScreen(
                             onValueChange = { phoneNumber = it },
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .bringIntoViewRequester(phoneBringIntoViewRequester)
+                                .onFocusChanged { phoneFieldFocused = it.isFocused }
                                 .testTag("mpesa_phone_input"),
                             placeholder = { Text("0712 345 678 or 2547...") },
                             leadingIcon = {
@@ -446,15 +487,18 @@ fun SubscriptionPaymentScreen(
                                 )
                             },
                             singleLine = true,
+                            isError = phoneNumber.isNotBlank() && normalizedPhone == null,
+                            supportingText = {
+                                if (phoneNumber.isNotBlank() && normalizedPhone == null) {
+                                    Text("Enter a valid Kenyan mobile number (07… or 01…).", color = MaterialTheme.colorScheme.error)
+                                }
+                            },
                             keyboardOptions = KeyboardOptions(
                                 keyboardType = KeyboardType.Phone,
                                 imeAction = ImeAction.Done
                             ),
                             keyboardActions = KeyboardActions(
-                                onDone = {
-                                    focusManager.clearFocus()
-                                    viewModel.initiateSubscriptionPayment(phoneNumber)
-                                }
+                                onDone = { focusManager.clearFocus() }
                             ),
                             shape = RoundedCornerShape(12.dp)
                         )
@@ -491,7 +535,7 @@ fun SubscriptionPaymentScreen(
                                 focusManager.clearFocus()
                                 viewModel.initiateSubscriptionPayment(phoneNumber)
                             },
-                            enabled = isOwner && !state.isInitiatingStkPush && phoneNumber.isNotBlank(),
+                            enabled = isOwner && !state.isInitiatingStkPush && normalizedPhone != null,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(52.dp)

@@ -1300,7 +1300,28 @@ class CounterPosViewModel(
         }
     }
 
+    fun refreshCurrentBusinessSubscription() {
+        if (!_uiState.value.isOnline || repository.session.value.activeBusiness == null) return
+        viewModelScope.launch {
+            val wasEntitled = _uiState.value.isSubscriptionEntitled
+            val refreshed = repository.refreshActiveBusinessSubscription()
+            refreshSubscriptionEntitlement(refreshed, online = _uiState.value.isOnline)
+            if (!wasEntitled && _uiState.value.isSubscriptionEntitled) {
+                subscriptionPollingJob?.cancel()
+                _uiState.update {
+                    it.copy(
+                        isSubscriptionModalOpen = false,
+                        isPollingStkPayment = false,
+                        isInitiatingStkPush = false,
+                        subscriptionPaymentError = null
+                    )
+                }
+            }
+        }
+    }
+
     fun initiateSubscriptionPayment(phoneNumber: String) {
+        if (_uiState.value.isInitiatingStkPush || _uiState.value.isPollingStkPayment) return
         val cleanPhone = com.alvinb.counterpos.data.SubscriptionManager.normalizeKenyanPhone(phoneNumber)
         if (cleanPhone == null) {
             _uiState.update { it.copy(subscriptionPaymentError = "Please enter a valid Kenyan phone number (e.g. 0712 345 678 or 254712345678).") }
@@ -1375,7 +1396,7 @@ class CounterPosViewModel(
         subscriptionPollingJob?.cancel()
         subscriptionPollingJob = viewModelScope.launch {
             var attempts = 0
-            val maxAttempts = 60
+            val maxAttempts = 75
             while (isActive && attempts < maxAttempts) {
                 delay(4000L)
                 attempts++
@@ -1947,7 +1968,7 @@ class CounterPosViewModel(
             _uiState.update { it.copy(actionError = "${product.name} is out of stock.") }
             return
         }
-        val defaultUnit = units.firstOrNull() ?: SaleUnit("Bottle", product.suggestedPriceKsh.coerceAtLeast(0))
+        val defaultUnit = units.firstOrNull() ?: SaleUnit("Bottle", product.sellingPriceKsh.coerceAtLeast(0))
         val defaultCounterId = _uiState.value.selectedServingCounterId
             ?: _uiState.value.selectedCounterId
             ?: serviceCounters.value.firstOrNull()?.id
@@ -2103,7 +2124,7 @@ class CounterPosViewModel(
                     stockMode = StockMode.LIBRARY,
                     selectedCatalogCode = product.catalogCode,
                     catalogInitialStock = 12,
-                    catalogSellingPrice = product.suggestedPriceKsh.toString(),
+                    catalogSellingPrice = "",
                     notice = "Found ${product.name}. Set price & bottles to add to stock."
                 )
             }
@@ -2135,7 +2156,7 @@ class CounterPosViewModel(
     // Selling & Unit of Sales
     fun openSale(product: ProductEntity) {
         val units = resolveSaleUnits(product)
-        val defaultUnit = units.firstOrNull() ?: SaleUnit("Bottle", product.suggestedPriceKsh.coerceAtLeast(0))
+        val defaultUnit = units.firstOrNull() ?: SaleUnit("Bottle", product.sellingPriceKsh.coerceAtLeast(0))
         _uiState.update {
             it.copy(
                 selectedSaleCode = product.catalogCode,
@@ -2477,7 +2498,7 @@ class CounterPosViewModel(
         it.copy(
             selectedCatalogCode = product.catalogCode,
             catalogInitialStock = 12,
-            catalogSellingPrice = product.suggestedPriceKsh.toString(),
+            catalogSellingPrice = "",
             actionError = null
         )
     }
