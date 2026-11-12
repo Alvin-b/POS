@@ -21,7 +21,7 @@ import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.OutboxEntity
 import com.alvinb.counterpos.data.local.entity.SaleUnit
-import com.alvinb.counterpos.data.local.entity.parseSaleUnits
+import com.alvinb.counterpos.data.local.entity.resolveSaleUnits
 import com.alvinb.counterpos.data.local.entity.serializeSaleUnits
 import com.alvinb.counterpos.data.model.BusinessHours
 import com.alvinb.counterpos.data.model.DayBusinessHours
@@ -1941,13 +1941,13 @@ class CounterPosViewModel(
     }
 
     fun openTableSale(tableId: String, product: ProductEntity) {
-        val units = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+        val units = resolveSaleUnits(product)
         val bulkOnly = units.isNotEmpty() && units.all { it.stockUnitsPerSale == 0 }
         if (!product.inMyStock || (product.stockQuantity <= 0 && !bulkOnly)) {
             _uiState.update { it.copy(actionError = "${product.name} is out of stock.") }
             return
         }
-        val defaultUnit = units.firstOrNull() ?: SaleUnit("Bottle", product.sellingPriceKsh)
+        val defaultUnit = units.firstOrNull() ?: SaleUnit("Bottle", product.suggestedPriceKsh.coerceAtLeast(0))
         val defaultCounterId = _uiState.value.selectedServingCounterId
             ?: _uiState.value.selectedCounterId
             ?: serviceCounters.value.firstOrNull()?.id
@@ -2041,7 +2041,7 @@ class CounterPosViewModel(
     }
 
     fun handleScannedSale(product: ProductEntity) {
-        val units = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+        val units = resolveSaleUnits(product)
         val bulkOnly = units.isNotEmpty() && units.all { it.stockUnitsPerSale == 0 }
         if (!product.inMyStock || (product.stockQuantity < 1 && !bulkOnly)) {
             _uiState.update {
@@ -2062,7 +2062,7 @@ class CounterPosViewModel(
             _uiState.update { it.copy(isScannerOpen = false, notice = "Open a table before scanning a product.") }
             return
         }
-        val units = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+        val units = resolveSaleUnits(product)
         val bulkOnly = units.isNotEmpty() && units.all { it.stockUnitsPerSale == 0 }
         if (!product.inMyStock || (product.stockQuantity < 1 && !bulkOnly)) {
             _uiState.update {
@@ -2134,8 +2134,8 @@ class CounterPosViewModel(
 
     // Selling & Unit of Sales
     fun openSale(product: ProductEntity) {
-        val units = parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
-        val defaultUnit = units.firstOrNull() ?: SaleUnit("Bottle", product.sellingPriceKsh)
+        val units = resolveSaleUnits(product)
+        val defaultUnit = units.firstOrNull() ?: SaleUnit("Bottle", product.suggestedPriceKsh.coerceAtLeast(0))
         _uiState.update {
             it.copy(
                 selectedSaleCode = product.catalogCode,

@@ -137,7 +137,9 @@ import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.OutboxEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.SaleUnit
+import com.alvinb.counterpos.data.local.entity.effectiveSellingPriceKsh
 import com.alvinb.counterpos.data.local.entity.parseSaleUnits
+import com.alvinb.counterpos.data.local.entity.resolveSaleUnits
 import com.alvinb.counterpos.data.remote.ServiceCounter
 import com.alvinb.counterpos.ui.scanner.BarcodeScannerScreen
 import com.alvinb.counterpos.ui.scanner.ScannerMode
@@ -2285,8 +2287,8 @@ private fun ProductSellCard(
     product: ProductEntity,
     onClick: () -> Unit
 ) {
-    val units = remember(product.salesUnitsJson, product.sellingPriceKsh) {
-        parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+    val units = remember(product.salesUnitsJson, product.sellingPriceKsh, product.suggestedPriceKsh) {
+        resolveSaleUnits(product)
     }
 
     Card(
@@ -2371,10 +2373,14 @@ private fun ProductSellCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    ksh(product.sellingPriceKsh),
+                    when {
+                        product.sellingPriceKsh > 0 -> ksh(product.sellingPriceKsh)
+                        product.suggestedPriceKsh > 0 -> "Suggested ${ksh(product.suggestedPriceKsh)}"
+                        else -> "Price not set"
+                    },
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
-                    color = MaterialTheme.colorScheme.primary
+                    color = if (product.sellingPriceKsh > 0 || product.suggestedPriceKsh > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                 )
 
                 Surface(
@@ -2411,8 +2417,8 @@ private fun StockProductCard(
     onTransferStock: () -> Unit,
     onChangePhoto: () -> Unit
 ) {
-    val units = remember(product.salesUnitsJson, product.sellingPriceKsh) {
-        parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+    val units = remember(product.salesUnitsJson, product.sellingPriceKsh, product.suggestedPriceKsh) {
+        resolveSaleUnits(product)
     }
 
     Card(
@@ -2472,7 +2478,11 @@ private fun StockProductCard(
                     )
                 } else {
                     Text(
-                        text = "${ksh(product.sellingPriceKsh)} · ${product.category}",
+                        text = "${when {
+                            product.sellingPriceKsh > 0 -> ksh(product.sellingPriceKsh)
+                            product.suggestedPriceKsh > 0 -> "Suggested ${ksh(product.suggestedPriceKsh)}"
+                            else -> "Price not set"
+                        }} · ${product.category}",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp)
@@ -2601,8 +2611,8 @@ private fun SaleWithUnitsSheet(
     onSelectPaymentMethod: (String) -> Unit,
     onConfirm: () -> Unit
 ) {
-    val units = remember(product.salesUnitsJson, product.sellingPriceKsh) {
-        parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+    val units = remember(product.salesUnitsJson, product.sellingPriceKsh, product.suggestedPriceKsh) {
+        resolveSaleUnits(product)
     }
 
     Column(
@@ -2736,7 +2746,7 @@ private fun SaleWithUnitsSheet(
                             color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            ksh(unit.priceKsh),
+                            if (unit.priceKsh > 0) ksh(unit.priceKsh) else "Price not set",
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp,
                             color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
@@ -2776,17 +2786,21 @@ private fun SaleWithUnitsSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "$quantity × $selectedUnitName @ ${ksh(selectedUnitPrice)}",
+                    if (selectedUnitPrice > 0) "$quantity × $selectedUnitName @ ${ksh(selectedUnitPrice)}" else "Selling price not set",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    ksh(total),
+                    if (selectedUnitPrice > 0) ksh(total) else "—",
                     fontWeight = FontWeight.Bold,
                     fontSize = 20.sp,
                     color = MaterialTheme.colorScheme.primary
                 )
             }
+        }
+
+        if (selectedUnitPrice <= 0) {
+            Text("Set a selling price in Stock before completing this sale.", color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp))
         }
 
         if (!error.isNullOrBlank()) {
@@ -2800,7 +2814,11 @@ private fun SaleWithUnitsSheet(
                 .fillMaxWidth()
                 .padding(bottom = 20.dp)
         ) {
-            val label = if (!selectedTableName.isNullOrBlank()) "Add to $selectedTableName check · ${ksh(total)}" else "Complete ${if (selectedPaymentMethod == "mpesa") "M-Pesa" else "Cash"} Sale · ${ksh(total)}"
+            val label = when {
+                selectedUnitPrice <= 0 -> "Set price in Stock before selling"
+                !selectedTableName.isNullOrBlank() -> "Add to $selectedTableName check · ${ksh(total)}"
+                else -> "Complete ${if (selectedPaymentMethod == "mpesa") "M-Pesa" else "Cash"} Sale · ${ksh(total)}"
+            }
             Text(label, fontSize = 15.sp, fontWeight = FontWeight.Bold)
         }
     }
@@ -2839,10 +2857,12 @@ private fun RecordDispensationBottomSheet(
 
     val selectedProduct = products.firstOrNull { it.catalogCode == selectedProductCode } ?: products.firstOrNull()
     val units = remember(selectedProduct) {
-        if (selectedProduct != null) parseSaleUnits(selectedProduct.salesUnitsJson, selectedProduct.sellingPriceKsh)
+        if (selectedProduct != null) resolveSaleUnits(selectedProduct)
         else emptyList()
     }
-    var selectedUnit by remember(units) { mutableStateOf(units.firstOrNull() ?: SaleUnit("Bottle", selectedProduct?.sellingPriceKsh ?: 0)) }
+    var selectedUnit by remember(units) {
+        mutableStateOf(units.firstOrNull() ?: SaleUnit("Bottle", selectedProduct?.let { effectiveSellingPriceKsh(it.sellingPriceKsh, it.suggestedPriceKsh) } ?: 0))
+    }
 
     val resolvedCounter = counters.firstOrNull { it.id == selectedCounterId }
     val resolvedTable = if (supportsTables && destinationMode == "table") diningTables.firstOrNull { it.id == selectedTableId } else null
@@ -2973,7 +2993,7 @@ private fun RecordDispensationBottomSheet(
                         FilterChip(
                             selected = unit.name.equals(selectedUnit.name, ignoreCase = true),
                             onClick = { selectedUnit = unit },
-                            label = { Text("${unit.name} · ${ksh(unit.priceKsh)}") }
+                            label = { Text("${unit.name} · ${if (unit.priceKsh > 0) ksh(unit.priceKsh) else "Price not set"}") }
                         )
                     }
                 }
@@ -3011,7 +3031,7 @@ private fun RecordDispensationBottomSheet(
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                     Text(
-                        "Total: ${ksh(totalAmount)}",
+                        if (selectedUnit.priceKsh > 0) "Total: ${ksh(totalAmount)}" else "Total: selling price not set",
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp,
                         color = MaterialTheme.colorScheme.primary
@@ -3047,7 +3067,11 @@ private fun RecordDispensationBottomSheet(
                     (destinationMode != "table" || resolvedTable != null),
                 modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp)
             ) {
-                Text("Record sale · ${ksh(totalAmount)}", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    if (selectedUnit.priceKsh > 0) "Record sale · ${ksh(totalAmount)}" else "Set price in Stock before selling",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }
@@ -3181,7 +3205,9 @@ private fun EditProductDialog(
     var name by remember(product.catalogCode) { mutableStateOf(product.name) }
     var barcodeText by remember(product.catalogCode) { mutableStateOf(product.verifiedBarcode ?: "") }
     var stockText by remember(product.catalogCode) { mutableStateOf(product.stockQuantity.toString()) }
-    var priceText by remember(product.catalogCode) { mutableStateOf(product.sellingPriceKsh.toString()) }
+    var priceText by remember(product.catalogCode) {
+        mutableStateOf(effectiveSellingPriceKsh(product.sellingPriceKsh, product.suggestedPriceKsh).toString())
+    }
     var selectedPhotoUri by remember(product.catalogCode) {
         mutableStateOf(product.photoOverrideUri?.takeIf(String::isNotBlank))
     }
@@ -3202,7 +3228,7 @@ private fun EditProductDialog(
     }
 
     val initialUnits = remember(product.catalogCode) {
-        parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh)
+        resolveSaleUnits(product)
     }
     val unitsList = remember(product.catalogCode) {
         mutableStateListOf<SaleUnit>().apply { addAll(initialUnits) }
