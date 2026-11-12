@@ -84,7 +84,7 @@ data class AdminBusiness(
     val lifecycleReason: String?,
     val counterInventoryMode: String = "shared",
     val counterCount: Long = 1,
-    val subscriptionStatus: String = "trial",
+    val subscriptionStatus: String = "unknown",
     val trialEndsAt: String? = null,
     val subscriptionEndsAt: String? = null,
     val subscriptionPriceKsh: Int = 2500,
@@ -129,7 +129,16 @@ data class SubscriptionStatusResult(
     val lastPaymentAt: String?,
     val lastPaymentReceipt: String?,
     val latestCheckoutRequestId: String?,
-    val latestPaymentStatus: String?
+    val latestPaymentStatus: String?,
+    val paymentLockActive: Boolean = false,
+    val paymentLockAmountKsh: Int = 0,
+    val paymentLockReason: String? = null
+)
+
+data class PlatformBillingSettings(
+    val trialDurationDays: Int = 14,
+    val subscriptionPriceKsh: Int = 2500,
+    val updatedAt: String? = null
 )
 
 data class AdminAuditEvent(
@@ -1107,7 +1116,7 @@ class SupabaseRestClient(context: Context) {
                             lifecycleReason = row.optString("lifecycle_reason").takeIf(String::isNotBlank),
                             counterInventoryMode = row.optString("counter_inventory_mode", "shared"),
                             counterCount = row.optLong("counter_count", 1),
-                            subscriptionStatus = row.optString("subscription_status", "trial"),
+                            subscriptionStatus = row.optString("subscription_status", "unknown"),
                             trialEndsAt = row.optString("trial_ends_at").takeIf(String::isNotBlank),
                             subscriptionEndsAt = row.optString("subscription_ends_at").takeIf(String::isNotBlank),
                             subscriptionPriceKsh = row.optInt("subscription_price_ksh", 2500).let { if (it <= 0) 2500 else it },
@@ -1126,6 +1135,27 @@ class SupabaseRestClient(context: Context) {
             }
         }
     }
+
+    suspend fun adminPlatformBillingSettings(): PlatformBillingSettings =
+        parsePlatformBillingSettings(rpcObject("admin_get_platform_billing_settings", JSONObject()))
+
+    suspend fun adminUpdatePlatformBillingSettings(
+        trialDurationDays: Int,
+        subscriptionPriceKsh: Int
+    ): PlatformBillingSettings = parsePlatformBillingSettings(
+        rpcObject(
+            "admin_update_platform_billing_settings",
+            JSONObject()
+                .put("p_trial_duration_days", trialDurationDays)
+                .put("p_subscription_price_ksh", subscriptionPriceKsh)
+        )
+    )
+
+    private fun parsePlatformBillingSettings(json: JSONObject) = PlatformBillingSettings(
+        trialDurationDays = json.optInt("trial_duration_days", 14),
+        subscriptionPriceKsh = json.optInt("subscription_price_ksh", 2500),
+        updatedAt = json.optString("updated_at").takeIf(String::isNotBlank)
+    )
 
     suspend fun adminSetBusinessStatus(shopId: String, status: String, reason: String?): AdminBusiness? {
         rpcObject(
@@ -1229,7 +1259,10 @@ class SupabaseRestClient(context: Context) {
             lastPaymentAt = json.optString("last_payment_at").takeIf(String::isNotBlank),
             lastPaymentReceipt = json.optString("last_payment_receipt").takeIf(String::isNotBlank),
             latestCheckoutRequestId = json.optString("latest_checkout_request_id").takeIf(String::isNotBlank),
-            latestPaymentStatus = json.optString("latest_payment_status").takeIf(String::isNotBlank)
+            latestPaymentStatus = json.optString("latest_payment_status").takeIf(String::isNotBlank),
+            paymentLockActive = json.optBoolean("payment_lock_active", false),
+            paymentLockAmountKsh = json.optInt("payment_lock_amount_ksh", 0),
+            paymentLockReason = json.optString("payment_lock_reason").takeIf(String::isNotBlank)
         )
     }
 
