@@ -30,6 +30,15 @@ class SubscriptionManagerTest {
     }
 
     @Test
+    fun paymentPhonePrefillIgnoresNullLikeValuesAndUsesValidOwnerNumber() {
+        assertEquals("", SubscriptionManager.paymentPhonePrefill("null", "undefined"))
+        assertEquals(
+            "0712 345 678",
+            SubscriptionManager.paymentPhonePrefill("null", "+254 712 345 678")
+        )
+    }
+
+    @Test
     fun testFormatPhoneForDisplay() {
         assertEquals("0712 345 678", SubscriptionManager.formatPhoneForDisplay("254712345678"))
         assertEquals("0112 345 678", SubscriptionManager.formatPhoneForDisplay("254112345678"))
@@ -156,6 +165,27 @@ class SubscriptionManagerTest {
         val entitlement = SubscriptionManager.evaluate(refreshed, now, isOnline = true)
         assertFalse(entitlement.isEntitled)
         assertEquals(SubscriptionStatus.PAYMENT_LOCKED, entitlement.status)
+    }
+
+    @Test
+    fun nullLikePaymentLockReasonUsesGenericMessage() {
+        val membership = BusinessMembership(
+            shopId = "shop-null-lock-reason",
+            shopName = "Locked Lounge",
+            role = "owner",
+            status = "active",
+            currency = "KES",
+            lowStockThreshold = 5,
+            paymentLockActive = true,
+            paymentLockAmountKsh = 4200,
+            paymentLockReason = "null"
+        )
+
+        val entitlement = SubscriptionManager.evaluate(membership, isOnline = true)
+
+        assertFalse(entitlement.isEntitled)
+        assertTrue(entitlement.message.contains("KSh 4200"))
+        assertFalse(entitlement.message.contains("null", ignoreCase = true))
     }
 
     @Test
