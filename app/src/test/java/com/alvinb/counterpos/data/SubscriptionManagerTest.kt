@@ -1,6 +1,7 @@
 package com.alvinb.counterpos.data
 
 import com.alvinb.counterpos.data.remote.BusinessMembership
+import com.alvinb.counterpos.data.remote.SubscriptionStatusResult
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -58,6 +59,103 @@ class SubscriptionManagerTest {
         assertEquals(20, entitlement.daysRemaining)
         assertEquals(3000, entitlement.amountDueKsh)
         assertFalse(entitlement.isGracePeriod)
+    }
+
+    @Test
+    fun serverConfirmedPaymentClearsCachedPaymentLock() {
+        val now = System.currentTimeMillis()
+        val expiry = Instant.ofEpochMilli(now + TimeUnit.DAYS.toMillis(30)).toString()
+        val previouslyLocked = BusinessMembership(
+            shopId = "shop-locked",
+            shopName = "Locked Club",
+            role = "owner",
+            status = "active",
+            currency = "KES",
+            lowStockThreshold = 5,
+            subscriptionStatus = "payment_locked",
+            subscriptionEndsAt = expiry,
+            paymentLockActive = true,
+            paymentLockAmountKsh = 4200,
+            paymentLockReason = "Outstanding balance",
+            paymentLockStartedAt = Instant.ofEpochMilli(now - 60_000).toString()
+        )
+        val paidStatus = SubscriptionStatusResult(
+            shopId = previouslyLocked.shopId,
+            shopName = previouslyLocked.shopName,
+            status = "active",
+            isEntitled = true,
+            daysLeft = 30,
+            trialEndsAt = null,
+            subscriptionEndsAt = expiry,
+            subscriptionPriceKsh = 2500,
+            subscriptionPlanDays = 30,
+            lastPaymentAt = Instant.ofEpochMilli(now).toString(),
+            lastPaymentReceipt = "QAB123XYZ",
+            latestCheckoutRequestId = "ws_CO_123",
+            latestPaymentStatus = "paid",
+            paymentLockActive = false,
+            paymentLockAmountKsh = 0,
+            paymentLockReason = null
+        )
+
+        val refreshed = SubscriptionManager.mergeServerSubscriptionStatus(
+            membership = previouslyLocked,
+            status = paidStatus,
+            verifiedAtMillis = now
+        )
+
+        assertFalse(refreshed.paymentLockActive)
+        assertEquals(0, refreshed.paymentLockAmountKsh)
+        assertNull(refreshed.paymentLockReason)
+        assertNull(refreshed.paymentLockStartedAt)
+        assertTrue(SubscriptionManager.evaluate(refreshed, now, isOnline = true).isEntitled)
+    }
+
+    @Test
+    fun serverPaymentLockRemainsInForceAfterSubscriptionRefresh() {
+        val now = System.currentTimeMillis()
+        val expiry = Instant.ofEpochMilli(now + TimeUnit.DAYS.toMillis(30)).toString()
+        val membership = BusinessMembership(
+            shopId = "shop-locked-2",
+            shopName = "Locked Lounge",
+            role = "owner",
+            status = "active",
+            currency = "KES",
+            lowStockThreshold = 5,
+            subscriptionStatus = "active",
+            subscriptionEndsAt = expiry
+        )
+        val lockedStatus = SubscriptionStatusResult(
+            shopId = membership.shopId,
+            shopName = membership.shopName,
+            status = "payment_locked",
+            isEntitled = false,
+            daysLeft = 30,
+            trialEndsAt = null,
+            subscriptionEndsAt = expiry,
+            subscriptionPriceKsh = 4200,
+            subscriptionPlanDays = 30,
+            lastPaymentAt = null,
+            lastPaymentReceipt = null,
+            latestCheckoutRequestId = null,
+            latestPaymentStatus = null,
+            paymentLockActive = true,
+            paymentLockAmountKsh = 4200,
+            paymentLockReason = "Outstanding balance"
+        )
+
+        val refreshed = SubscriptionManager.mergeServerSubscriptionStatus(
+            membership = membership,
+            status = lockedStatus,
+            verifiedAtMillis = now
+        )
+
+        assertTrue(refreshed.paymentLockActive)
+        assertEquals(4200, refreshed.paymentLockAmountKsh)
+        assertEquals("Outstanding balance", refreshed.paymentLockReason)
+        val entitlement = SubscriptionManager.evaluate(refreshed, now, isOnline = true)
+        assertFalse(entitlement.isEntitled)
+        assertEquals(SubscriptionStatus.PAYMENT_LOCKED, entitlement.status)
     }
 
     @Test
