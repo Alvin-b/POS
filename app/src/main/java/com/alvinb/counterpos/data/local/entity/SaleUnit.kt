@@ -30,13 +30,11 @@ fun parseSaleUnits(json: String?, fallbackPrice: Int = 0): List<SaleUnit> {
     }
 }
 
-fun effectiveSellingPriceKsh(sellingPriceKsh: Int, suggestedPriceKsh: Int): Int =
-    sellingPriceKsh.takeIf { it > 0 } ?: suggestedPriceKsh.coerceAtLeast(0)
-
+/** Resolves stale zero-valued unit prices only from this shop's saved selling price. */
 fun resolveSaleUnits(product: ProductEntity): List<SaleUnit> {
-    val fallbackPrice = effectiveSellingPriceKsh(product.sellingPriceKsh, product.suggestedPriceKsh)
-    return parseSaleUnits(product.salesUnitsJson, fallbackPrice).map { unit ->
-        if (unit.priceKsh <= 0 && fallbackPrice > 0) unit.copy(priceKsh = fallbackPrice) else unit
+    val shopPrice = product.sellingPriceKsh.coerceAtLeast(0)
+    return parseSaleUnits(product.salesUnitsJson, shopPrice).map { unit ->
+        if (unit.priceKsh <= 0 && shopPrice > 0) unit.copy(priceKsh = shopPrice) else unit
     }
 }
 
