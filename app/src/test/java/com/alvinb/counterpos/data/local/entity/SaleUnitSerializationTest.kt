@@ -20,17 +20,24 @@ class SaleUnitSerializationTest {
     }
 
     @Test
-    fun zeroSaleUnitPriceFallsBackToCatalogSuggestionWhenShopPriceIsUnset() {
-        val product = product(sellingPriceKsh = 0, suggestedPriceKsh = 80, unitsJson = """[{"name":"Bottle","priceKsh":0}]""")
-
-        assertEquals(listOf(SaleUnit("Bottle", 80, 1)), resolveSaleUnits(product))
-    }
-
-    @Test
-    fun configuredShopPriceTakesPrecedenceOverCatalogSuggestion() {
+    fun zeroUnitPriceFallsBackToConfiguredShopPrice() {
         val product = product(sellingPriceKsh = 95, suggestedPriceKsh = 80, unitsJson = """[{"name":"Bottle","priceKsh":0}]""")
 
         assertEquals(listOf(SaleUnit("Bottle", 95, 1)), resolveSaleUnits(product))
+    }
+
+    @Test
+    fun catalogSuggestionIsNotUsedAsSalePriceWhenShopPriceIsUnset() {
+        val product = product(sellingPriceKsh = 0, suggestedPriceKsh = 80, unitsJson = """[{"name":"Bottle","priceKsh":0}]""")
+
+        assertEquals(listOf(SaleUnit("Bottle", 0, 1)), resolveSaleUnits(product))
+    }
+
+    @Test
+    fun configuredUnitPriceTakesPrecedenceOverProductBasePrice() {
+        val product = product(sellingPriceKsh = 95, suggestedPriceKsh = 80, unitsJson = """[{"name":"Jug","priceKsh":450}]""")
+
+        assertEquals(listOf(SaleUnit("Jug", 450, 1)), resolveSaleUnits(product))
     }
 
     @Test
