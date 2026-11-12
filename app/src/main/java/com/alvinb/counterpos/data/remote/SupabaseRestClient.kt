@@ -141,6 +141,13 @@ data class PlatformBillingSettings(
     val updatedAt: String? = null
 )
 
+private fun JSONObject.optNullableString(name: String): String? {
+    if (!has(name) || isNull(name)) return null
+    return optString(name).trim().takeUnless {
+        it.isEmpty() || it.equals("null", ignoreCase = true) || it.equals("undefined", ignoreCase = true)
+    }
+}
+
 data class AdminAuditEvent(
     val action: String,
     val entityType: String,
@@ -459,19 +466,19 @@ class SupabaseRestClient(context: Context) {
                             currency = row.optString("currency", "KES"),
                             lowStockThreshold = row.optInt("low_stock_threshold", 5),
                             subscriptionStatus = row.optString("subscription_status", "trial"),
-                            trialEndsAt = row.optString("trial_ends_at").takeIf(String::isNotBlank),
-                            subscriptionEndsAt = row.optString("subscription_ends_at").takeIf(String::isNotBlank),
+                            trialEndsAt = row.optNullableString("trial_ends_at"),
+                            subscriptionEndsAt = row.optNullableString("subscription_ends_at"),
                             subscriptionPriceKsh = row.optInt("subscription_price_ksh", 2500).let { if (it <= 0) 2500 else it },
                             subscriptionPlanDays = row.optInt("subscription_plan_days", 30).let { if (it <= 0) 30 else it },
-                            lastPaymentAt = row.optString("last_payment_at").takeIf(String::isNotBlank),
-                            lastPaymentReceipt = row.optString("last_payment_receipt").takeIf(String::isNotBlank),
-                            lastPaymentPhone = row.optString("last_payment_phone").takeIf(String::isNotBlank),
+                            lastPaymentAt = row.optNullableString("last_payment_at"),
+                            lastPaymentReceipt = row.optNullableString("last_payment_receipt"),
+                            lastPaymentPhone = row.optNullableString("last_payment_phone"),
                             lastVerifiedEntitlementAt = System.currentTimeMillis(),
-                            ownerPhone = row.optString("owner_phone").takeIf(String::isNotBlank),
+                            ownerPhone = row.optNullableString("owner_phone"),
                             paymentLockActive = row.optBoolean("payment_lock_active", false),
                             paymentLockAmountKsh = row.optInt("payment_lock_amount_ksh", 0),
-                            paymentLockReason = row.optString("payment_lock_reason").takeIf(String::isNotBlank),
-                            paymentLockStartedAt = row.optString("payment_lock_started_at").takeIf(String::isNotBlank)
+                            paymentLockReason = row.optNullableString("payment_lock_reason"),
+                            paymentLockStartedAt = row.optNullableString("payment_lock_started_at")
                         )
                     )
                 }
@@ -1117,18 +1124,18 @@ class SupabaseRestClient(context: Context) {
                             counterInventoryMode = row.optString("counter_inventory_mode", "shared"),
                             counterCount = row.optLong("counter_count", 1),
                             subscriptionStatus = row.optString("subscription_status", "unknown"),
-                            trialEndsAt = row.optString("trial_ends_at").takeIf(String::isNotBlank),
-                            subscriptionEndsAt = row.optString("subscription_ends_at").takeIf(String::isNotBlank),
+                            trialEndsAt = row.optNullableString("trial_ends_at"),
+                            subscriptionEndsAt = row.optNullableString("subscription_ends_at"),
                             subscriptionPriceKsh = row.optInt("subscription_price_ksh", 2500).let { if (it <= 0) 2500 else it },
                             subscriptionPlanDays = row.optInt("subscription_plan_days", 30).let { if (it <= 0) 30 else it },
-                            lastPaymentAt = row.optString("last_payment_at").takeIf(String::isNotBlank),
-                            lastPaymentReceipt = row.optString("last_payment_receipt").takeIf(String::isNotBlank),
-                            lastPaymentPhone = row.optString("last_payment_phone").takeIf(String::isNotBlank),
-                            customBillingNote = row.optString("custom_billing_note").takeIf(String::isNotBlank),
+                            lastPaymentAt = row.optNullableString("last_payment_at"),
+                            lastPaymentReceipt = row.optNullableString("last_payment_receipt"),
+                            lastPaymentPhone = row.optNullableString("last_payment_phone"),
+                            customBillingNote = row.optNullableString("custom_billing_note"),
                             paymentLockActive = row.optBoolean("payment_lock_active", false),
                             paymentLockAmountKsh = row.optInt("payment_lock_amount_ksh", 0),
-                            paymentLockReason = row.optString("payment_lock_reason").takeIf(String::isNotBlank),
-                            paymentLockStartedAt = row.optString("payment_lock_started_at").takeIf(String::isNotBlank)
+                            paymentLockReason = row.optNullableString("payment_lock_reason"),
+                            paymentLockStartedAt = row.optNullableString("payment_lock_started_at")
                         )
                     )
                 }
@@ -1220,14 +1227,14 @@ class SupabaseRestClient(context: Context) {
         try {
             val response = request("/functions/v1/daraja-stk-push", "POST", payload.toString(), true)
             val json = parseObject(response)
-            val checkoutRequestId = json.optString("checkout_request_id").takeIf(String::isNotBlank)
+            val checkoutRequestId = json.optNullableString("checkout_request_id")
             val accepted = json.optBoolean("success", false) && checkoutRequestId != null
             DarajaStkResponse(
                 success = accepted,
                 checkoutRequestId = checkoutRequestId,
-                merchantRequestId = json.optString("merchant_request_id").takeIf(String::isNotBlank),
-                customerMessage = json.optString("customer_message").takeIf(String::isNotBlank),
-                error = json.optString("error").takeIf(String::isNotBlank)
+                merchantRequestId = json.optNullableString("merchant_request_id"),
+                customerMessage = json.optNullableString("customer_message"),
+                error = json.optNullableString("error")
                     ?: if (accepted) null else "The payment service did not return a valid M-Pesa checkout reference."
             )
         } catch (error: Exception) {
@@ -1252,17 +1259,17 @@ class SupabaseRestClient(context: Context) {
             status = json.optString("status", "expired"),
             isEntitled = json.optBoolean("is_entitled", false),
             daysLeft = json.optInt("days_left", 0),
-            trialEndsAt = json.optString("trial_ends_at").takeIf(String::isNotBlank),
-            subscriptionEndsAt = json.optString("subscription_ends_at").takeIf(String::isNotBlank),
+            trialEndsAt = json.optNullableString("trial_ends_at"),
+            subscriptionEndsAt = json.optNullableString("subscription_ends_at"),
             subscriptionPriceKsh = json.optInt("subscription_price_ksh", 2500).let { if (it <= 0) 2500 else it },
             subscriptionPlanDays = json.optInt("subscription_plan_days", 30).let { if (it <= 0) 30 else it },
-            lastPaymentAt = json.optString("last_payment_at").takeIf(String::isNotBlank),
-            lastPaymentReceipt = json.optString("last_payment_receipt").takeIf(String::isNotBlank),
-            latestCheckoutRequestId = json.optString("latest_checkout_request_id").takeIf(String::isNotBlank),
-            latestPaymentStatus = json.optString("latest_payment_status").takeIf(String::isNotBlank),
+            lastPaymentAt = json.optNullableString("last_payment_at"),
+            lastPaymentReceipt = json.optNullableString("last_payment_receipt"),
+            latestCheckoutRequestId = json.optNullableString("latest_checkout_request_id"),
+            latestPaymentStatus = json.optNullableString("latest_payment_status"),
             paymentLockActive = json.optBoolean("payment_lock_active", false),
             paymentLockAmountKsh = json.optInt("payment_lock_amount_ksh", 0),
-            paymentLockReason = json.optString("payment_lock_reason").takeIf(String::isNotBlank)
+            paymentLockReason = json.optNullableString("payment_lock_reason")
         )
     }
 
@@ -1279,11 +1286,11 @@ class SupabaseRestClient(context: Context) {
         )
         DarajaPaymentStatusResponse(
             success = json.optBoolean("success", false),
-            paymentStatus = json.optString("payment_status", "unknown"),
-            checkoutRequestId = json.optString("checkout_request_id").takeIf(String::isNotBlank),
+            paymentStatus = json.optNullableString("payment_status") ?: "unknown",
+            checkoutRequestId = json.optNullableString("checkout_request_id"),
             resultCode = if (json.has("result_code") && !json.isNull("result_code")) json.optInt("result_code") else null,
-            message = json.optString("message").takeIf(String::isNotBlank),
-            error = json.optString("error").takeIf(String::isNotBlank)
+            message = json.optNullableString("message"),
+            error = json.optNullableString("error")
         )
     }
 
