@@ -35,6 +35,8 @@ interface CounterPosDao {
     suspend fun clearAllServiceCounters()
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertServiceCounters(counters: List<ServiceCounterEntity>)
+    @Query("SELECT * FROM counter_stock WHERE shopId = :shopId AND counterId = :counterId")
+    fun observeCounterStock(shopId: String, counterId: String): Flow<List<CounterStockEntity>>
     @Query("SELECT * FROM counter_stock WHERE counterId = :counterId")
     suspend fun getCounterStockRows(counterId: String): List<CounterStockEntity>
     @Query("SELECT quantity FROM counter_stock WHERE counterId = :counterId AND catalogCode = :catalogCode LIMIT 1")

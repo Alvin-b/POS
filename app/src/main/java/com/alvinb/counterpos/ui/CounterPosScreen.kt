@@ -9,6 +9,7 @@ import android.net.Uri
 import androidx.core.content.FileProvider
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -170,8 +171,11 @@ fun CounterPosWorkspace(
     val products = remember(cachedProducts, state.counterStockByProduct, state.selectedCounterId, session.activeBusiness?.counterInventoryMode) {
         if (session.activeBusiness?.counterInventoryMode == "per_counter") {
             cachedProducts.map { product ->
-                if (product.inMyStock && product.remoteId != null) {
-                    product.copy(stockQuantity = state.counterStockByProduct[product.remoteId] ?: 0)
+                if (product.inMyStock) {
+                    val qty = product.remoteId?.let { state.counterStockByProduct[it] }
+                        ?: state.counterStockByProduct[product.catalogCode]
+                        ?: 0
+                    product.copy(stockQuantity = qty)
                 } else product
             }
         } else cachedProducts
@@ -185,16 +189,10 @@ fun CounterPosWorkspace(
     var transferProductCode by remember { mutableStateOf<String?>(null) }
     var pendingSalesPdf by remember { mutableStateOf<ByteArray?>(null) }
 
-    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         val code = photoTargetCode
         photoTargetCode = null
         if (uri != null && code != null) {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            }
             products.firstOrNull { it.catalogCode == code }?.let { product ->
                 viewModel.updatePhoto(product, uri.toString())
             }
@@ -248,10 +246,14 @@ fun CounterPosWorkspace(
         }
     }
     LaunchedEffect(state.selectedCounterId, session.activeBusiness?.counterInventoryMode, session.activeBusiness?.shopId) {
-        viewModel.refreshCounterStock()
+        if (state.counterStockByProduct.isEmpty()) {
+            viewModel.refreshCounterStock()
+        }
+    }
+    LaunchedEffect(session.activeBusiness?.shopId) {
+        viewModel.refreshBusinessData(force = false)
     }
     LaunchedEffect(state.tab, supportsSalesAnalytics) {
-        viewModel.refreshBusinessData()
         if (supportsSalesAnalytics && state.tab == PosTab.REPORTS) viewModel.loadCounterReport(todayStartIso(), nowIso())
     }
 
@@ -349,9 +351,7 @@ fun CounterPosWorkspace(
                         }
                     }
                 }
-                val entitlement = remember(session.activeBusiness, state.isOnline) {
-                    session.activeBusiness?.let { com.alvinb.counterpos.data.SubscriptionManager.evaluate(it, isOnline = state.isOnline) }
-                }
+                val entitlement = state.subscriptionEntitlement
                 if (entitlement != null && entitlement.isGracePeriod) {
                     Surface(color = MaterialTheme.colorScheme.errorContainer) {
                         Row(
@@ -491,7 +491,7 @@ fun CounterPosWorkspace(
                         onTransferStock = { product -> transferProductCode = product.catalogCode },
                         onChangePhoto = { product ->
                             photoTargetCode = product.catalogCode
-                            photoPicker.launch(arrayOf("image/*"))
+                            photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                         }
                     )
                 } else {
@@ -3260,18 +3260,10 @@ private fun EditProductDialog(
     var selectedPhotoUri by remember(product.catalogCode) {
         mutableStateOf(product.photoOverrideUri?.takeIf(String::isNotBlank))
     }
-    val context = LocalContext.current
-
     val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
+        contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         if (uri != null) {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            }
             selectedPhotoUri = uri.toString()
         }
     }
@@ -3345,7 +3337,7 @@ private fun EditProductDialog(
                     Column(modifier = Modifier.weight(1f)) {
                         OutlinedButton(
                             onClick = {
-                                photoPickerLauncher.launch(arrayOf("image/*"))
+                                photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
@@ -3602,18 +3594,11 @@ private fun AddNewProductDialog(
     var basePriceText by remember { mutableStateOf("") }
     var unitCostText by remember { mutableStateOf("") }
     var selectedPhotoUri by remember { mutableStateOf<String?>(null) }
-    val context = LocalContext.current
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
+        contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         if (uri != null) {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            }
             selectedPhotoUri = uri.toString()
         }
     }
@@ -3684,7 +3669,7 @@ private fun AddNewProductDialog(
                     Column(modifier = Modifier.weight(1f)) {
                         OutlinedButton(
                             onClick = {
-                                photoPickerLauncher.launch(arrayOf("image/*"))
+                                photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {

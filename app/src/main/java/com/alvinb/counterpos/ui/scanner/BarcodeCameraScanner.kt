@@ -212,10 +212,20 @@ private fun CameraScannerView(
         BarcodeScanning.getClient(options)
     }
 
+    val toneGenerator = remember {
+        runCatching { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 85) }.getOrNull()
+    }
+    val previewView = remember(context) {
+        PreviewView(context).apply {
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+        }
+    }
+
     DisposableEffect(Unit) {
         onDispose {
             cameraExecutor.shutdown()
             barcodeScanner.close()
+            runCatching { toneGenerator?.release() }
         }
     }
 
@@ -242,7 +252,7 @@ private fun CameraScannerView(
         lastScannedTime = now
         scanSuccessFlash = true
 
-        triggerHapticAndTone(context)
+        triggerHapticAndTone(context, toneGenerator)
 
         val matchedProduct = findProductByCodeOrBarcode(rawBarcode, products)
         lastScannedProduct = matchedProduct
@@ -251,7 +261,6 @@ private fun CameraScannerView(
             barcode = rawBarcode,
             mode = mode,
             products = products,
-            context = context,
             onProductScannedForSale = onProductScannedForSale,
             onProductScannedForStock = onProductScannedForStock,
             onProductScannedForTable = onProductScannedForTable,
@@ -259,6 +268,74 @@ private fun CameraScannerView(
             onBarcodeAssigned = onBarcodeAssigned,
             onBarcodeNotRecognized = onBarcodeNotRecognized
         )
+    }
+
+    DisposableEffect(previewView, useFrontCamera, lifecycleOwner) {
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+        val mainExecutor = ContextCompat.getMainExecutor(context)
+        var boundProvider: ProcessCameraProvider? = null
+        var disposed = false
+
+        cameraProviderFuture.addListener({
+            if (disposed) return@addListener
+            val cameraProvider = runCatching { cameraProviderFuture.get() }.getOrNull() ?: return@addListener
+            boundProvider = cameraProvider
+            val preview = Preview.Builder().build().also {
+                it.surfaceProvider = previewView.surfaceProvider
+            }
+
+            val imageAnalysis = ImageAnalysis.Builder()
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .build()
+
+            imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
+                val mediaImage = imageProxy.image
+                if (mediaImage != null) {
+                    val image = InputImage.fromMediaImage(
+                        mediaImage,
+                        imageProxy.imageInfo.rotationDegrees
+                    )
+                    barcodeScanner.process(image)
+                        .addOnSuccessListener { barcodes ->
+                            for (barcode in barcodes) {
+                                val rawValue = barcode.rawValue
+                                if (!rawValue.isNullOrBlank()) {
+                                    onBarcodeDetected(rawValue)
+                                    break
+                                }
+                            }
+                        }
+                        .addOnCompleteListener {
+                            imageProxy.close()
+                        }
+                } else {
+                    imageProxy.close()
+                }
+            }
+
+            val cameraSelector = if (useFrontCamera) {
+                CameraSelector.DEFAULT_FRONT_CAMERA
+            } else {
+                CameraSelector.DEFAULT_BACK_CAMERA
+            }
+
+            try {
+                cameraProvider.unbindAll()
+                camera = cameraProvider.bindToLifecycle(
+                    lifecycleOwner,
+                    cameraSelector,
+                    preview,
+                    imageAnalysis
+                )
+                isTorchOn = false
+            } catch (_: Exception) {}
+        }, mainExecutor)
+
+        onDispose {
+            disposed = true
+            runCatching { boundProvider?.unbindAll() }
+            camera = null
+        }
     }
 
     LaunchedEffect(scanSuccessFlash) {
@@ -276,67 +353,7 @@ private fun CameraScannerView(
         // Camera Preview
         AndroidView(
             modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
-                val previewView = PreviewView(ctx).apply {
-                    scaleType = PreviewView.ScaleType.FILL_CENTER
-                }
-                val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-                cameraProviderFuture.addListener({
-                    val cameraProvider = cameraProviderFuture.get()
-                    val preview = Preview.Builder().build().also {
-                        it.surfaceProvider = previewView.surfaceProvider
-                    }
-
-                    val imageAnalysis = ImageAnalysis.Builder()
-                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                        .build()
-
-                    imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
-                        val mediaImage = imageProxy.image
-                        if (mediaImage != null) {
-                            val image = InputImage.fromMediaImage(
-                                mediaImage,
-                                imageProxy.imageInfo.rotationDegrees
-                            )
-                            barcodeScanner.process(image)
-                                .addOnSuccessListener { barcodes ->
-                                    for (barcode in barcodes) {
-                                        val rawValue = barcode.rawValue
-                                        if (!rawValue.isNullOrBlank()) {
-                                            onBarcodeDetected(rawValue)
-                                            break
-                                        }
-                                    }
-                                }
-                                .addOnCompleteListener {
-                                    imageProxy.close()
-                                }
-                        } else {
-                            imageProxy.close()
-                        }
-                    }
-
-                    val cameraSelector = if (useFrontCamera) {
-                        CameraSelector.DEFAULT_FRONT_CAMERA
-                    } else {
-                        CameraSelector.DEFAULT_BACK_CAMERA
-                    }
-
-                    try {
-                        cameraProvider.unbindAll()
-                        camera = cameraProvider.bindToLifecycle(
-                            lifecycleOwner,
-                            cameraSelector,
-                            preview,
-                            imageAnalysis
-                        )
-                    } catch (_: Exception) {}
-                }, ContextCompat.getMainExecutor(ctx))
-                previewView
-            },
-            update = {
-                // Handle camera toggles if needed
-            }
+            factory = { previewView }
         )
 
         // Overlay with scanning reticle
@@ -665,7 +682,7 @@ private fun PermissionRequiredScreen(
     }
 }
 
-private fun triggerHapticAndTone(context: Context) {
+private fun triggerHapticAndTone(context: Context, toneGenerator: ToneGenerator?) {
     try {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
@@ -680,8 +697,7 @@ private fun triggerHapticAndTone(context: Context) {
     } catch (_: Exception) {}
 
     try {
-        val toneGen = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 85)
-        toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 100)
+        toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 100)
     } catch (_: Exception) {}
 }
 
@@ -696,7 +712,6 @@ private fun handleBarcodeResult(
     barcode: String,
     mode: ScannerMode,
     products: List<ProductEntity>,
-    context: Context,
     onProductScannedForSale: (ProductEntity) -> Unit,
     onProductScannedForStock: (ProductEntity) -> Unit,
     onProductScannedForTable: (ProductEntity) -> Unit,

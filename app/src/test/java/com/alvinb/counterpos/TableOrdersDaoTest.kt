@@ -182,4 +182,65 @@ class TableOrdersDaoTest {
         assertEquals(listOf("New table"), nextTables.await().map { it.name })
         assertEquals(listOf("New product"), nextOrders.await().map { it.productName })
     }
+
+    @Test
+    fun observeCounterStockReactsImmediatelyToLocalSale() = runBlocking {
+        val dao = database.counterPosDao()
+        dao.insertProduct(
+            ProductEntity(
+                catalogCode = "KE-100",
+                verifiedBarcode = null,
+                name = "Counter Beer",
+                brand = "Brewer",
+                size = "500 ml",
+                category = "Beer",
+                suggestedPriceKsh = 300,
+                sellingPriceKsh = 300,
+                stockQuantity = 10,
+                inMyStock = true,
+                lowStockThreshold = 2,
+                imageAssetName = "product_stock_001",
+                remoteId = "prod-remote-100"
+            )
+        )
+        dao.insertCounterStock(
+            listOf(
+                com.alvinb.counterpos.data.local.entity.CounterStockEntity(
+                    shopId = "shop-1",
+                    counterId = "counter-1",
+                    catalogCode = "KE-100",
+                    productId = "prod-remote-100",
+                    quantity = 10
+                )
+            )
+        )
+
+        assertEquals(10, dao.observeCounterStock("shop-1", "counter-1").first().single().quantity)
+
+        val sale = com.alvinb.counterpos.data.local.entity.SaleEntity(
+            catalogCode = "KE-100",
+            productName = "Counter Beer",
+            imageAssetName = "product_stock_001",
+            unitName = "Bottle",
+            quantity = 3,
+            unitPriceKsh = 300,
+            totalKsh = 900,
+            createdAt = 1_000L,
+            counterId = "counter-1",
+            sourceCounterId = "counter-1"
+        )
+        val outbox = com.alvinb.counterpos.data.local.entity.OutboxEntity(
+            operationId = "op-1",
+            shopId = "shop-1",
+            actorUserId = "user-1",
+            operationType = "sell",
+            payloadJson = "{}",
+            createdAt = 1_000L
+        )
+        val localSaleId = dao.queueSaleAtCounter(sale, outbox, "counter-1", stockToDecrement = 3, perCounter = true)
+
+        assertTrue(localSaleId != null && localSaleId > 0L)
+        assertEquals(7, dao.observeCounterStock("shop-1", "counter-1").first().single().quantity)
+        assertEquals(1, dao.outboxCount("shop-1"))
+    }
 }

@@ -3,6 +3,9 @@ package com.alvinb.counterpos.data.remote
 import android.content.Context
 import com.alvinb.counterpos.BuildConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -17,6 +20,7 @@ import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.UnknownHostException
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 open class SupabaseHttpException(val statusCode: Int, message: String) : IOException(message)
 
@@ -189,6 +193,7 @@ class SupabaseRestClient(context: Context) {
     private val sessionStore = EncryptedSessionStore(context)
     private val installationId = sessionStore.installationId()
     private val refreshMutex = Mutex()
+    private val signedPhotoUrlCache = ConcurrentHashMap<String, String>()
     @Volatile private var session: AuthSession? = loadSession()
 
     val hasSession: Boolean
@@ -553,15 +558,33 @@ class SupabaseRestClient(context: Context) {
         val rows = query(
             "products?select=*&shop_id=eq.$shopId&or=(archived.is.null,archived.eq.false)&order=name.asc"
         )
+        val rowsToSign = mutableListOf<Pair<JSONObject, String>>()
         for (index in 0 until rows.length()) {
             val row = rows.optJSONObject(index) ?: continue
             if (row.optString("photo_url").isBlank()) {
-                val path = row.optString("photo_path").takeIf(String::isNotBlank)
+                val path = row.optString("photo_path").trim().trimStart('/').takeIf(String::isNotBlank)
                 if (path != null) {
-                    runCatching { signedProductPhotoUrl(path) }
-                        .getOrNull()
-                        ?.let { row.put("photo_url", it) }
+                    val cached = signedPhotoUrlCache[path]
+                    if (cached != null) {
+                        row.put("photo_url", cached)
+                    } else {
+                        rowsToSign += row to path
+                    }
                 }
+            }
+        }
+        if (rowsToSign.isNotEmpty()) {
+            coroutineScope {
+                rowsToSign.map { (row, path) ->
+                    async {
+                        runCatching { signedProductPhotoUrl(path) }
+                            .getOrNull()
+                            ?.let { url ->
+                                signedPhotoUrlCache[path] = url
+                                row.put("photo_url", url)
+                            }
+                    }
+                }.awaitAll()
             }
         }
         return rows
@@ -597,6 +620,7 @@ class SupabaseRestClient(context: Context) {
     suspend fun signedProductPhotoUrl(objectPath: String): String? = withContext(Dispatchers.IO) {
         val path = objectPath.trim().trimStart('/')
         if (path.isBlank()) return@withContext null
+        signedPhotoUrlCache[path]?.let { return@withContext it }
         val response = request(
             "/storage/v1/object/sign/product-photos",
             "POST",
@@ -605,7 +629,9 @@ class SupabaseRestClient(context: Context) {
         )
         val rows = parseArray(response)
         val signed = rows.optJSONObject(0)?.optString("signedURL").orEmpty()
-        signed.takeIf(String::isNotBlank)?.let { if (it.startsWith("http")) it else baseUrl + "/storage/v1" + it }
+        signed.takeIf(String::isNotBlank)
+            ?.let { if (it.startsWith("http")) it else baseUrl + "/storage/v1" + it }
+            ?.also { signedPhotoUrlCache[path] = it }
     }
 
 
@@ -878,7 +904,7 @@ class SupabaseRestClient(context: Context) {
 
                 if (name.isBlank() && catalogId != null) {
                     val catRow = runCatching {
-                        query("catalog?id=eq.$catalogId&select=code,name,brand,size,category").optJSONObject(0)
+                        query("catalog_items?id=eq.$catalogId&select=code,name,brand,size,category").optJSONObject(0)
                     }.getOrNull()
                     if (catRow != null) {
                         name = catRow.optString("name", "")

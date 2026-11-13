@@ -228,6 +228,7 @@ class CounterPosViewModel(
     private var mutationInProgress = false
     private var reconnectSyncJob: Job? = null
     private var tableSettlementOutboxJob: Job? = null
+    private var counterStockJob: Job? = null
     private var loginQrJob: Job? = null
     private var lastSessionKeepAliveAt = 0L
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
@@ -239,9 +240,7 @@ class CounterPosViewModel(
                 delay(150)
                 runCatching {
                     repository.keepSessionAlive()
-                    repository.syncPendingOutbox()
                     repository.synchronizeWhenOnline()
-                    refreshCounterStock()
                 }
                     .onSuccess { _uiState.update { it.copy(notice = "Internet connected. Real-time data synchronized.") } }
                     .onFailure { _uiState.update { it.copy(notice = "Syncing in background…") } }
@@ -276,16 +275,19 @@ class CounterPosViewModel(
                     loadAdminAuditEvents()
                 }
                 if (sess.activeBusiness == null) {
+                    counterStockJob?.cancel()
                     _uiState.update {
                         it.copy(
                             businessHours = BusinessHours.Unrestricted,
                             blockedOutbox = emptyList(),
                             pendingTableSettlementIds = emptySet(),
-                            blockedTableSettlementIds = emptySet()
+                            blockedTableSettlementIds = emptySet(),
+                            counterStockByProduct = emptyMap()
                         )
                     }
                 } else {
                     val shopId = sess.activeBusiness.shopId
+                    observeSelectedCounterStock(shopId, _uiState.value.selectedCounterId)
                     tableSettlementOutboxJob = viewModelScope.launch {
                         repository.observeTableSettlementOutbox(shopId).collect { items ->
                             val pendingIds = items.asSequence()
@@ -345,15 +347,26 @@ class CounterPosViewModel(
                 if (repository.session.value.isAuthenticated) {
                     val now = System.currentTimeMillis()
                     if (repository.session.value.activeBusiness != null) {
-                        runCatching {
-                            repository.synchronizeWhenOnline()
-                            refreshCounterStock()
-                        }
+                        runCatching { repository.synchronizeWhenOnline() }
                     } else if (now - lastSessionKeepAliveAt >= 5 * 60 * 1_000L) {
                         lastSessionKeepAliveAt = now
                         runCatching { repository.keepSessionAlive() }
                     }
                 }
+            }
+        }
+    }
+
+    private fun observeSelectedCounterStock(shopId: String?, counterId: String?) {
+        counterStockJob?.cancel()
+        val business = repository.session.value.activeBusiness
+        if (shopId.isNullOrBlank() || counterId.isNullOrBlank() || business?.counterInventoryMode != "per_counter") {
+            _uiState.update { it.copy(counterStockByProduct = emptyMap()) }
+            return
+        }
+        counterStockJob = viewModelScope.launch {
+            repository.observeCounterStock(shopId, counterId).collect { stock ->
+                _uiState.update { it.copy(counterStockByProduct = stock) }
             }
         }
     }
@@ -379,6 +392,8 @@ class CounterPosViewModel(
     override fun onCleared() {
         runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
         reconnectSyncJob?.cancel()
+        counterStockJob?.cancel()
+        tableSettlementOutboxJob?.cancel()
         super.onCleared()
     }
 
@@ -1496,8 +1511,9 @@ class CounterPosViewModel(
         status: com.alvinb.counterpos.data.remote.SubscriptionStatusResult,
         checkoutRequestId: String?
     ): Boolean = !checkoutRequestId.isNullOrBlank() &&
-        status.status.equals("active", ignoreCase = true) &&
-        status.latestPaymentStatus.equals("paid", ignoreCase = true) &&
+        (status.isEntitled || status.status.equals("active", ignoreCase = true)) &&
+        (status.latestPaymentStatus.equals("paid", ignoreCase = true) ||
+            status.latestPaymentStatus.equals("completed", ignoreCase = true)) &&
         status.latestCheckoutRequestId == checkoutRequestId
 
     // Superadmin Subscription Management
@@ -1745,8 +1761,7 @@ class CounterPosViewModel(
             previousTab = it.tab,
             actionError = null,
             isSearchActive = false,
-            searchQuery = "",
-            isRefreshingBusinessData = it.isRefreshingBusinessData || tab == PosTab.TABLES
+            searchQuery = ""
         )
     }
 
@@ -1757,6 +1772,7 @@ class CounterPosViewModel(
 
     fun selectCounter(counterId: String) {
         _uiState.update { it.copy(selectedCounterId = counterId, actionError = null) }
+        observeSelectedCounterStock(session.value.activeBusiness?.shopId, counterId)
         refreshCounterStock(counterId)
     }
 
@@ -1766,9 +1782,9 @@ class CounterPosViewModel(
             _uiState.update { it.copy(counterStockByProduct = emptyMap()) }
             return@launch
         }
+        observeSelectedCounterStock(business.shopId, counterId)
         runCatching { repository.loadCounterStock(counterId) }
             .onSuccess { stock -> _uiState.update { it.copy(counterStockByProduct = stock) } }
-            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not load counter stock") } }
     }
 
     fun createServiceCounter(name: String) = viewModelScope.launch {
@@ -1793,46 +1809,35 @@ class CounterPosViewModel(
             .onSuccess {
                 val destination = serviceCounters.value.firstOrNull { it.id == destinationCounterId }?.name ?: "counter"
                 _uiState.update { it.copy(notice = "Stock transferred to $destination.", actionError = null) }
-                refreshCounterStock()
             }
             .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not transfer stock") } }
     }
 
     fun loadCounterReport(fromIso: String, toIso: String) = viewModelScope.launch {
         _uiState.update { it.copy(isLoadingCounterReport = true, actionError = null) }
-        runCatching { repository.synchronizeWhenOnline() }
+        runCatching { repository.syncPendingOutbox(refreshSnapshot = false) }
         runCatching { repository.counterSalesReport(fromIso, toIso) }
             .onSuccess { rows -> _uiState.update { it.copy(counterReport = rows) } }
             .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not load counter report") } }
         _uiState.update { it.copy(isLoadingCounterReport = false) }
     }
 
-    fun refreshBusinessData() = viewModelScope.launch {
-        _uiState.update { it.copy(isRefreshingBusinessData = true) }
+    fun refreshBusinessData(force: Boolean = false) = viewModelScope.launch {
+        if (force) _uiState.update { it.copy(isRefreshingBusinessData = true) }
         try {
-            repository.synchronizeWhenOnline()
+            repository.synchronizeWhenOnline(force = force)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            _uiState.update { it.copy(actionError = error.message ?: "Could not refresh business data") }
+            if (force) _uiState.update { it.copy(actionError = error.message ?: "Could not refresh business data") }
         } finally {
-            _uiState.update { it.copy(isRefreshingBusinessData = false) }
-        }
-    }
-
-    private fun syncInventoryQuietly(counterId: String?) {
-        viewModelScope.launch {
-            // Room is updated optimistically by the repository. Retry the
-            // server flush immediately so other devices see stock changes
-            // without waiting for the background worker interval.
-            runCatching { repository.synchronizeWhenOnline() }
-            refreshCounterStock(counterId)
+            if (force) _uiState.update { it.copy(isRefreshingBusinessData = false) }
         }
     }
 
     fun synchronizeData(showNotice: Boolean = false) = viewModelScope.launch {
         _uiState.update { it.copy(isSyncingData = true, actionError = null) }
-        runCatching { repository.synchronizeWhenOnline() }
+        runCatching { repository.synchronizeWhenOnline(force = true) }
             .onSuccess {
                 _uiState.update { it.copy(isSyncingData = false, notice = if (showNotice) "Data synced" else it.notice) }
             }
@@ -2185,13 +2190,16 @@ class CounterPosViewModel(
 
     fun dismissSale() = _uiState.update { it.copy(selectedSaleCode = null, actionError = null) }
 
-    fun selectServingCounter(counterId: String, counterName: String) = _uiState.update {
-        it.copy(
-            selectedCounterId = counterId,
-            selectedServingCounterId = counterId,
-            selectedServingCounterName = counterName,
-            actionError = null
-        )
+    fun selectServingCounter(counterId: String, counterName: String) {
+        _uiState.update {
+            it.copy(
+                selectedCounterId = counterId,
+                selectedServingCounterId = counterId,
+                selectedServingCounterName = counterName,
+                actionError = null
+            )
+        }
+        observeSelectedCounterStock(session.value.activeBusiness?.shopId, counterId)
     }
 
     fun selectWaiter(waiterName: String) = _uiState.update {
@@ -2246,7 +2254,6 @@ class CounterPosViewModel(
                 tableId = tableId,
                 tableName = tableName
             )
-            runCatching { refreshCounterStock(counterId) }
             _uiState.update {
                 it.copy(
                     isRecordDispensationOpen = false,
@@ -2313,7 +2320,6 @@ class CounterPosViewModel(
                     )
                 }
                 if (success) {
-                    runCatching { refreshCounterStock(counterId) }
                     val product = products.value.firstOrNull { it.catalogCode == code }
                     val total = state.selectedUnitPrice * state.saleQuantity
                     _uiState.update {
@@ -2371,7 +2377,6 @@ class CounterPosViewModel(
                         actionError = null
                     )
                 }
-                syncInventoryQuietly(counterId)
             } else {
                 _uiState.update { it.copy(actionError = "Failed to update stock.") }
             }
@@ -2418,7 +2423,6 @@ class CounterPosViewModel(
                         actionError = null
                     )
                 }
-                syncInventoryQuietly(counterId)
             } else {
                 _uiState.update { it.copy(actionError = "Failed to save product changes.") }
             }
@@ -2481,7 +2485,6 @@ class CounterPosViewModel(
                             notice = null
                         )
                     }
-                    syncInventoryQuietly(counterId)
                 } else {
                     _uiState.update { it.copy(actionError = "Failed to add product.") }
                 }
@@ -2526,7 +2529,6 @@ class CounterPosViewModel(
                                 notice = null
                             )
                         }
-                        syncInventoryQuietly(counterId)
                     } else {
                         _uiState.update { it.copy(actionError = "This catalog item is not linked to the backend catalog. Refresh products and try again.") }
                     }
@@ -2546,7 +2548,6 @@ class CounterPosViewModel(
                 _uiState.update {
                     it.copy(notice = if (success) "✓ Last sale undone and stock restored" else "Nothing to undo")
                 }
-                refreshCounterStock()
             } catch (e: Exception) {
                 _uiState.update { it.copy(notice = e.message ?: "Failed to undo") }
             } finally {
