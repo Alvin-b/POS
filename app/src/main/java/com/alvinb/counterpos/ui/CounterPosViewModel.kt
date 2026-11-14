@@ -196,6 +196,7 @@ data class CounterPosUiState(
     val isSubscriptionModalOpen: Boolean = false,
     val isInitiatingStkPush: Boolean = false,
     val isPollingStkPayment: Boolean = false,
+    val isStkNeedsAttention: Boolean = false,
     val stkCheckoutRequestId: String? = null,
     val stkCustomerMessage: String? = null,
     val subscriptionPaymentError: String? = null,
@@ -1328,6 +1329,7 @@ class CounterPosViewModel(
                         isSubscriptionModalOpen = false,
                         isPollingStkPayment = false,
                         isInitiatingStkPush = false,
+                        isStkNeedsAttention = false,
                         subscriptionPaymentError = null
                     )
                 }
@@ -1348,6 +1350,7 @@ class CounterPosViewModel(
             it.copy(
                 isInitiatingStkPush = true,
                 isPollingStkPayment = false,
+                isStkNeedsAttention = false,
                 subscriptionPaymentError = null,
                 isSubscriptionPaymentSuccess = false,
                 stkCheckoutRequestId = null,
@@ -1385,17 +1388,19 @@ class CounterPosViewModel(
 
     private suspend fun recoverOrShowSubscriptionPaymentFailure(message: String) {
         val recovered = runCatching { repository.verifySubscriptionPaymentStatus() }.getOrNull()
-        if (recovered != null && (recovered.paymentStatus == "initiating" || recovered.paymentStatus == "pending")) {
+        if (recovered != null && recovered.paymentStatus in setOf("initiating", "pending", "needs_attention")) {
+            val needsAttention = recovered.paymentStatus == "needs_attention"
             _uiState.update {
                 it.copy(
                     isInitiatingStkPush = false,
-                    isPollingStkPayment = true,
-                    subscriptionPaymentError = null,
+                    isPollingStkPayment = !needsAttention,
+                    isStkNeedsAttention = needsAttention,
+                    subscriptionPaymentError = if (needsAttention) recovered.message else null,
                     stkCheckoutRequestId = recovered.checkoutRequestId,
                     stkCustomerMessage = recovered.message ?: message
                 )
             }
-            startPollingSubscriptionStatus(recovered.checkoutRequestId)
+            if (!needsAttention) startPollingSubscriptionStatus(recovered.checkoutRequestId)
             return
         }
         _uiState.update {
@@ -1418,13 +1423,30 @@ class CounterPosViewModel(
                 try {
                     if (attempts % 4 == 0) {
                         val payment = repository.verifySubscriptionPaymentStatus(checkoutRequestId)
+                        if (payment.paymentStatus == "needs_attention") {
+                            _uiState.update {
+                                it.copy(
+                                    isPollingStkPayment = false,
+                                    isStkNeedsAttention = true,
+                                    subscriptionPaymentError = payment.message,
+                                    stkCustomerMessage = payment.message
+                                )
+                            }
+                            return@launch
+                        }
                         if (payment.checkoutRequestId != null && payment.checkoutRequestId != _uiState.value.stkCheckoutRequestId) {
-                            _uiState.update { it.copy(stkCheckoutRequestId = payment.checkoutRequestId) }
+                            _uiState.update {
+                                it.copy(
+                                    stkCheckoutRequestId = payment.checkoutRequestId,
+                                    stkCustomerMessage = payment.message ?: it.stkCustomerMessage
+                                )
+                            }
                         }
                         if (payment.paymentStatus == "failed") {
                             _uiState.update {
                                 it.copy(
                                     isPollingStkPayment = false,
+                                    isStkNeedsAttention = false,
                                     subscriptionPaymentError = payment.message
                                         ?: "M-Pesa did not complete the payment. You can start a new attempt."
                                 )
@@ -1439,6 +1461,7 @@ class CounterPosViewModel(
                         _uiState.update {
                             it.copy(
                                 isPollingStkPayment = false,
+                                isStkNeedsAttention = false,
                                 isSubscriptionPaymentSuccess = true,
                                 subscriptionPaymentError = null,
                                 notice = "Subscription activated successfully! Thank you for renewing."
@@ -1462,7 +1485,13 @@ class CounterPosViewModel(
 
     fun verifySubscriptionPayment() {
         viewModelScope.launch {
-            _uiState.update { it.copy(isPollingStkPayment = true, subscriptionPaymentError = null) }
+            _uiState.update {
+                it.copy(
+                    isPollingStkPayment = true,
+                    isStkNeedsAttention = false,
+                    subscriptionPaymentError = null
+                )
+            }
             try {
                 val payment = repository.verifySubscriptionPaymentStatus(_uiState.value.stkCheckoutRequestId)
                 repository.refreshActiveBusinessSubscription()
@@ -1477,12 +1506,23 @@ class CounterPosViewModel(
                             notice = "Subscription is active! All features restored."
                         )
                     }
+                } else if (payment.paymentStatus == "needs_attention") {
+                    _uiState.update {
+                        it.copy(
+                            isPollingStkPayment = false,
+                            isStkNeedsAttention = true,
+                            stkCustomerMessage = payment.message,
+                            subscriptionPaymentError = payment.message
+                                ?: "Safaricom could not verify this payment. Do not retry until the attempt is reconciled."
+                        )
+                    }
                 } else if (payment.paymentStatus == "initiating" || payment.paymentStatus == "pending") {
                     _uiState.update {
                         it.copy(
                             stkCheckoutRequestId = payment.checkoutRequestId ?: it.stkCheckoutRequestId,
                             stkCustomerMessage = payment.message ?: it.stkCustomerMessage,
                             isPollingStkPayment = true,
+                            isStkNeedsAttention = false,
                             subscriptionPaymentError = null
                         )
                     }

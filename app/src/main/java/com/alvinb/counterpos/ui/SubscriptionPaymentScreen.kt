@@ -381,7 +381,7 @@ fun SubscriptionPaymentScreen(
                         }
                     }
                 }
-            } else if (state.isPollingStkPayment) {
+            } else if (state.isPollingStkPayment || state.isStkNeedsAttention) {
                 // STK Push Waiting / Polling State
                 Card(
                     modifier = Modifier
@@ -389,7 +389,9 @@ fun SubscriptionPaymentScreen(
                         .widthIn(max = 520.dp),
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        containerColor = if (state.isStkNeedsAttention) {
+                            MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
+                        } else MaterialTheme.colorScheme.surfaceVariant
                     )
                 ) {
                     Column(
@@ -398,16 +400,25 @@ fun SubscriptionPaymentScreen(
                             .padding(20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        CircularProgressIndicator(
-                            color = MpesaGreen,
-                            modifier = Modifier.size(44.dp)
-                        )
+                        if (state.isPollingStkPayment) {
+                            CircularProgressIndicator(
+                                color = MpesaGreen,
+                                modifier = Modifier.size(44.dp)
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = "Payment needs attention",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(44.dp)
+                            )
+                        }
                         Spacer(Modifier.height(14.dp))
                         Text(
-                            text = if (state.stkCheckoutRequestId.isNullOrBlank()) {
-                                "Checking M-Pesa Request"
-                            } else {
-                                "M-Pesa Prompt Sent to Your Phone"
+                            text = when {
+                                state.isStkNeedsAttention -> "Payment verification needs attention"
+                                state.stkCheckoutRequestId.isNullOrBlank() -> "Checking M-Pesa request"
+                                else -> "Safaricom accepted the STK request"
                             },
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
@@ -415,12 +426,15 @@ fun SubscriptionPaymentScreen(
                         )
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            text = state.stkCustomerMessage
-                                ?: if (state.stkCheckoutRequestId.isNullOrBlank()) {
-                                    "Safaricom has not confirmed an STK prompt yet. We are checking the request; do not retry until its status is resolved."
-                                } else {
-                                    "Please check your phone and enter your 4-digit M-Pesa PIN to complete payment of KSh $formattedAmount."
-                                },
+                            text = if (state.isStkNeedsAttention) {
+                                state.stkCustomerMessage
+                                    ?: "Safaricom could not verify this payment. Do not request another prompt until this attempt is reconciled."
+                            } else if (state.stkCheckoutRequestId.isNullOrBlank()) {
+                                state.stkCustomerMessage
+                                    ?: "Safaricom has not confirmed the request yet. Do not retry until its status is resolved."
+                            } else {
+                                "A checkout reference means Safaricom accepted the request, but does not confirm that the prompt reached your phone. Check the M-Pesa SIM ending ${normalizedPhone?.takeLast(4) ?: "...."}. Do not pay again while this attempt is unresolved."
+                            },
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
@@ -438,7 +452,10 @@ fun SubscriptionPaymentScreen(
                         ) {
                             Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Check Payment Status", fontSize = 13.sp)
+                            Text(
+                                if (state.isStkNeedsAttention) "Recheck payment status" else "Check Payment Status",
+                                fontSize = 13.sp
+                            )
                         }
                     }
                 }
