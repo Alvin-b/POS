@@ -1646,6 +1646,8 @@ class SupabaseRestClient(context: Context) {
             }
         }
         when (raw) {
+            "subscription_expired" -> "Subscription expired. Your saved POS changes remain on this phone and will sync after the business renews."
+            "business_payment_locked" -> "This business is payment-locked by the platform administrator. Saved POS changes are retained until access is restored."
             "passkey_not_found" -> "Passkey not recognized or already redeemed. Ask the business owner for a new passkey."
             "passkey_expired" -> "This passkey has expired. Ask the business owner to generate a new passkey."
             "Email not confirmed", "email_not_confirmed" ->
