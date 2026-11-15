@@ -141,26 +141,27 @@ class SubscriptionManager(context: Context) {
             .firstNotNullOfOrNull { candidate -> normalizeKenyanPhone(candidate)?.let(::formatPhoneForDisplay) }
             .orEmpty()
 
-    /** Parses ISO 8601 or common UTC timestamps to epoch millis. */
+    /** Parses ISO 8601 or Postgres UTC timestamps (including +00/+00:00 offsets) to epoch millis. */
     fun parseTimestamp(iso: String?): Long? {
-        if (iso.isNullOrBlank()) return null
-        return try {
-            java.time.Instant.parse(iso).toEpochMilli()
-        } catch (_: Exception) {
-            try {
-                SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).parse(iso)?.time
-            } catch (_: Exception) {
-                try {
-                    SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).parse(iso)?.time
-                } catch (_: Exception) {
-                    try {
-                        SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(iso)?.time
-                    } catch (_: Exception) {
-                        null
-                    }
-                }
+        val trimmed = iso?.trim()?.takeIf {
+            it.isNotEmpty() && !it.equals("null", ignoreCase = true) && !it.equals("undefined", ignoreCase = true)
+        } ?: return null
+
+        val isoCandidate = trimmed
+            .replace(' ', 'T')
+            .let { value ->
+                if (Regex(".*[+-]\\d{2}$").matches(value)) "$value:00" else value
             }
-        }
+
+        return runCatching { java.time.Instant.parse(trimmed).toEpochMilli() }.getOrNull()
+            ?: runCatching { java.time.OffsetDateTime.parse(isoCandidate).toInstant().toEpochMilli() }.getOrNull()
+            ?: listOf("yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd").firstNotNullOfOrNull { pattern ->
+                runCatching {
+                    SimpleDateFormat(pattern, Locale.US).apply {
+                        timeZone = java.util.TimeZone.getTimeZone("UTC")
+                    }.parse(trimmed)?.time
+                }.getOrNull()
+            }
     }
 
     /** Formats timestamp to readable format (e.g. 24 Nov 2026). */
@@ -169,8 +170,8 @@ class SubscriptionManager(context: Context) {
     }
 
     /**
-     * Evaluates current entitlement for a given shop membership.
-     * Respects 14-day trial, active subscription, and up to 72 hours of offline grace.
+     * Evaluates current entitlement for a given shop membership using authoritative
+     * server/Superadmin status, individual trial/paid end dates, and up to 72 hours of offline grace.
      */
     fun evaluate(
         membership: BusinessMembership,
@@ -179,8 +180,9 @@ class SubscriptionManager(context: Context) {
     ): SubscriptionEntitlement {
         val amountDue = if (membership.subscriptionPriceKsh > 0) membership.subscriptionPriceKsh else DEFAULT_MONTHLY_PRICE_KSH
         val planDays = if (membership.subscriptionPlanDays > 0) membership.subscriptionPlanDays else DEFAULT_PLAN_DAYS
+        val rawStatus = membership.subscriptionStatus.trim().lowercase(Locale.ROOT)
 
-        if (membership.paymentLockActive) {
+        if (membership.paymentLockActive || rawStatus == "payment_locked") {
             val lockedAmount = membership.paymentLockAmountKsh.takeIf { it > 0 } ?: amountDue
             val lockReason = membership.paymentLockReason?.trim()?.takeIf {
                 it.isNotEmpty() && !it.equals("null", ignoreCase = true) && !it.equals("undefined", ignoreCase = true)
@@ -204,44 +206,134 @@ class SubscriptionManager(context: Context) {
 
         val subscriptionEnd = parseTimestamp(membership.subscriptionEndsAt)
         val trialEnd = parseTimestamp(membership.trialEndsAt)
+        val dayMs = TimeUnit.DAYS.toMillis(1)
 
-        // 1. Check active paid subscription
-        if (subscriptionEnd != null && subscriptionEnd > currentTimeMillis) {
-            val daysLeft = ((subscriptionEnd - currentTimeMillis) / TimeUnit.DAYS.toMillis(1)).toInt().coerceAtLeast(1)
-            return SubscriptionEntitlement(
-                status = SubscriptionStatus.ACTIVE,
-                isEntitled = true,
-                daysRemaining = daysLeft,
-                hoursGraceRemaining = 0,
-                expiryTimestamp = subscriptionEnd,
-                expiryFormatted = formatDate(subscriptionEnd),
-                amountDueKsh = amountDue,
-                planDays = planDays,
-                isGracePeriod = false,
-                statusLabel = "Active ($daysLeft days left)",
-                message = "Subscription is active until ${formatDate(subscriptionEnd)}."
-            )
+        // Superadmin explicitly marked business as expired — bypass stale timestamps
+        if (rawStatus != "expired") {
+            // 1. Active paid / admin-activated term
+            if (rawStatus == "active" || rawStatus == "paid") {
+                if (subscriptionEnd != null && subscriptionEnd > currentTimeMillis) {
+                    val daysLeft = ((subscriptionEnd - currentTimeMillis + dayMs - 1) / dayMs).toInt().coerceAtLeast(1)
+                    return SubscriptionEntitlement(
+                        status = SubscriptionStatus.ACTIVE,
+                        isEntitled = true,
+                        daysRemaining = daysLeft,
+                        hoursGraceRemaining = 0,
+                        expiryTimestamp = subscriptionEnd,
+                        expiryFormatted = formatDate(subscriptionEnd),
+                        amountDueKsh = amountDue,
+                        planDays = planDays,
+                        isGracePeriod = false,
+                        statusLabel = "Active ($daysLeft ${if (daysLeft == 1) "day" else "days"} left)",
+                        message = "Subscription is active until ${formatDate(subscriptionEnd)}."
+                    )
+                }
+                if (subscriptionEnd == null) {
+                    return SubscriptionEntitlement(
+                        status = SubscriptionStatus.ACTIVE,
+                        isEntitled = true,
+                        daysRemaining = planDays,
+                        hoursGraceRemaining = 0,
+                        expiryTimestamp = currentTimeMillis + planDays * dayMs,
+                        expiryFormatted = "Active",
+                        amountDueKsh = amountDue,
+                        planDays = planDays,
+                        isGracePeriod = false,
+                        statusLabel = "Active Plan",
+                        message = "Subscription is active. Standard renewal: KSh $amountDue for $planDays days."
+                    )
+                }
+            }
+
+            // 2. Trial status assigned by Superadmin / onboarding
+            if (rawStatus == "trial") {
+                if (trialEnd != null && trialEnd > currentTimeMillis) {
+                    val daysLeft = ((trialEnd - currentTimeMillis + dayMs - 1) / dayMs).toInt().coerceAtLeast(1)
+                    return SubscriptionEntitlement(
+                        status = SubscriptionStatus.TRIAL,
+                        isEntitled = true,
+                        daysRemaining = daysLeft,
+                        hoursGraceRemaining = 0,
+                        expiryTimestamp = trialEnd,
+                        expiryFormatted = formatDate(trialEnd),
+                        amountDueKsh = amountDue,
+                        planDays = planDays,
+                        isGracePeriod = false,
+                        statusLabel = "Free Trial ($daysLeft ${if (daysLeft == 1) "day" else "days"} left)",
+                        message = "Free trial active until ${formatDate(trialEnd)}. Renews at KSh $amountDue for $planDays days."
+                    )
+                }
+                if (subscriptionEnd != null && subscriptionEnd > currentTimeMillis) {
+                    val daysLeft = ((subscriptionEnd - currentTimeMillis + dayMs - 1) / dayMs).toInt().coerceAtLeast(1)
+                    return SubscriptionEntitlement(
+                        status = SubscriptionStatus.ACTIVE,
+                        isEntitled = true,
+                        daysRemaining = daysLeft,
+                        hoursGraceRemaining = 0,
+                        expiryTimestamp = subscriptionEnd,
+                        expiryFormatted = formatDate(subscriptionEnd),
+                        amountDueKsh = amountDue,
+                        planDays = planDays,
+                        isGracePeriod = false,
+                        statusLabel = "Active ($daysLeft ${if (daysLeft == 1) "day" else "days"} left)",
+                        message = "Subscription is active until ${formatDate(subscriptionEnd)}."
+                    )
+                }
+                if (trialEnd == null) {
+                    return SubscriptionEntitlement(
+                        status = SubscriptionStatus.TRIAL,
+                        isEntitled = true,
+                        daysRemaining = DEFAULT_TRIAL_DAYS,
+                        hoursGraceRemaining = 0,
+                        expiryTimestamp = currentTimeMillis + DEFAULT_TRIAL_DAYS * dayMs,
+                        expiryFormatted = "Trial Active",
+                        amountDueKsh = amountDue,
+                        planDays = planDays,
+                        isGracePeriod = false,
+                        statusLabel = "Free Trial Active",
+                        message = "Free trial active. Renews at KSh $amountDue for $planDays days."
+                    )
+                }
+            }
+
+            // 3. Fallback if status string is unknown/empty: trust valid future timestamps
+            if (rawStatus !in setOf("active", "paid", "trial", "expired")) {
+                if (subscriptionEnd != null && subscriptionEnd > currentTimeMillis) {
+                    val daysLeft = ((subscriptionEnd - currentTimeMillis + dayMs - 1) / dayMs).toInt().coerceAtLeast(1)
+                    return SubscriptionEntitlement(
+                        status = SubscriptionStatus.ACTIVE,
+                        isEntitled = true,
+                        daysRemaining = daysLeft,
+                        hoursGraceRemaining = 0,
+                        expiryTimestamp = subscriptionEnd,
+                        expiryFormatted = formatDate(subscriptionEnd),
+                        amountDueKsh = amountDue,
+                        planDays = planDays,
+                        isGracePeriod = false,
+                        statusLabel = "Active ($daysLeft ${if (daysLeft == 1) "day" else "days"} left)",
+                        message = "Subscription is active until ${formatDate(subscriptionEnd)}."
+                    )
+                }
+                if (trialEnd != null && trialEnd > currentTimeMillis) {
+                    val daysLeft = ((trialEnd - currentTimeMillis + dayMs - 1) / dayMs).toInt().coerceAtLeast(1)
+                    return SubscriptionEntitlement(
+                        status = SubscriptionStatus.TRIAL,
+                        isEntitled = true,
+                        daysRemaining = daysLeft,
+                        hoursGraceRemaining = 0,
+                        expiryTimestamp = trialEnd,
+                        expiryFormatted = formatDate(trialEnd),
+                        amountDueKsh = amountDue,
+                        planDays = planDays,
+                        isGracePeriod = false,
+                        statusLabel = "Free Trial ($daysLeft ${if (daysLeft == 1) "day" else "days"} left)",
+                        message = "Free trial active until ${formatDate(trialEnd)}. Renews at KSh $amountDue for $planDays days."
+                    )
+                }
+            }
         }
 
-        // 2. Check 14-day free trial period
-        if (trialEnd != null && trialEnd > currentTimeMillis) {
-            val daysLeft = ((trialEnd - currentTimeMillis) / TimeUnit.DAYS.toMillis(1)).toInt().coerceAtLeast(1)
-            return SubscriptionEntitlement(
-                status = SubscriptionStatus.TRIAL,
-                isEntitled = true,
-                daysRemaining = daysLeft,
-                hoursGraceRemaining = 0,
-                expiryTimestamp = trialEnd,
-                expiryFormatted = formatDate(trialEnd),
-                amountDueKsh = amountDue,
-                planDays = planDays,
-                isGracePeriod = false,
-                statusLabel = "14-Day Free Trial ($daysLeft days left)",
-                message = "Free trial active. Renews at KSh $amountDue for $planDays days."
-            )
-        }
-
-        // 3. Subscription or trial has passed current time: evaluate offline grace period
+        // 4. Subscription or trial has expired: evaluate offline 72-hour grace period
         val latestExpiry = subscriptionEnd ?: trialEnd ?: currentTimeMillis
         val lastVerified = if (membership.lastVerifiedEntitlementAt > 0L) {
             membership.lastVerifiedEntitlementAt
@@ -269,7 +361,7 @@ class SubscriptionManager(context: Context) {
             )
         }
 
-        // 4. Fully Expired: lock app to Payment Screen
+        // 5. Fully Expired: lock app to Payment Screen
         val expiryDateStr = formatDate(latestExpiry)
         return SubscriptionEntitlement(
             status = SubscriptionStatus.EXPIRED,

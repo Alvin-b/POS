@@ -22,7 +22,8 @@ class SupabaseRealtimeClient(
     private val baseUrl: String,
     private val publishableKey: String,
     private val accessToken: () -> String?,
-    private val onDataChanged: () -> Unit
+    private val onDataChanged: () -> Unit,
+    private val onShopChanged: () -> Unit = {}
 ) {
     private val http = OkHttpClient.Builder()
         .pingInterval(30, TimeUnit.SECONDS)
@@ -40,12 +41,45 @@ class SupabaseRealtimeClient(
 
     @Synchronized
     fun start(shopId: String) {
-        if (this.shopId == shopId && !stopped.get()) return
+        if (this.shopId == shopId && !stopped.get()) {
+            if (socket == null) {
+                reconnect?.cancel(false)
+                reconnect = null
+                retryAttempt = 0
+                connect()
+            }
+            return
+        }
         stop()
         this.shopId = shopId
         stopped.set(false)
         retryAttempt = 0
         connect()
+    }
+
+    @Synchronized
+    fun reconnectIfNeeded() {
+        val activeShop = shopId ?: return
+        if (stopped.get() || activeShop.isBlank() || socket != null) return
+        reconnect?.cancel(false)
+        reconnect = null
+        retryAttempt = 0
+        connect()
+    }
+
+    @Synchronized
+    fun updateAccessToken(token: String) {
+        val activeShop = shopId ?: return
+        val activeSocket = socket ?: return
+        if (stopped.get() || token.isBlank()) return
+        runCatching {
+            send(
+                activeSocket,
+                "realtime:counter-pos-$activeShop",
+                "access_token",
+                JSONObject().put("access_token", token)
+            )
+        }
     }
 
     @Synchronized
@@ -62,7 +96,7 @@ class SupabaseRealtimeClient(
 
     private fun connect() {
         val activeShop = shopId ?: return
-        if (stopped.get()) return
+        if (stopped.get() || socket != null) return
         val token = accessToken() ?: return
         val wsBase = baseUrl.trimEnd('/')
             .replaceFirst("https://", "wss://")
@@ -74,6 +108,13 @@ class SupabaseRealtimeClient(
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 retryAttempt = 0
                 val postgresChanges = JSONArray().apply {
+                    put(
+                        JSONObject()
+                            .put("event", "*")
+                            .put("schema", "public")
+                            .put("table", "shops")
+                            .put("filter", "id=eq.$activeShop")
+                    )
                     listOf(
                         "products", "sales", "stock_batches", "stock_receipts",
                         "dining_tables", "table_orders", "service_counters",
@@ -92,7 +133,7 @@ class SupabaseRealtimeClient(
                         .put("broadcast", JSONObject().put("ack", false).put("self", false))
                         .put("presence", JSONObject().put("enabled", false))
                         .put("postgres_changes", postgresChanges))
-                    .put("access_token", token)
+                    .put("access_token", accessToken() ?: token)
                 send(webSocket, "realtime:counter-pos-$activeShop", "phx_join", payload)
                 heartbeat?.cancel(false)
                 heartbeat = scheduler.scheduleAtFixedRate({
@@ -103,15 +144,36 @@ class SupabaseRealtimeClient(
             override fun onMessage(webSocket: WebSocket, text: String) {
                 val message = runCatching { JSONObject(text) }.getOrNull() ?: return
                 val event = message.optString("event")
-                if (event == "postgres_changes") onDataChanged()
-                if (event == "phx_error" || event == "phx_close") scheduleReconnect()
+                if (event == "postgres_changes") {
+                    val changedTable = message.optJSONObject("payload")
+                        ?.optJSONObject("data")
+                        ?.optString("table")
+                        ?: message.optJSONObject("payload")?.optString("table")
+                    if (changedTable.equals("shops", ignoreCase = true)) {
+                        onShopChanged()
+                    } else {
+                        onDataChanged()
+                    }
+                }
+                if (event == "phx_error" || event == "phx_close") {
+                    synchronized(this@SupabaseRealtimeClient) {
+                        if (socket === webSocket) socket = null
+                    }
+                    scheduleReconnect()
+                }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                synchronized(this@SupabaseRealtimeClient) {
+                    if (socket === webSocket) socket = null
+                }
                 scheduleReconnect()
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                synchronized(this@SupabaseRealtimeClient) {
+                    if (socket === webSocket) socket = null
+                }
                 scheduleReconnect()
             }
         })

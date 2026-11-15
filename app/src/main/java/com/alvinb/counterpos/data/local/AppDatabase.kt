@@ -10,11 +10,13 @@ import com.alvinb.counterpos.data.local.dao.CounterPosDao
 import com.alvinb.counterpos.data.local.entity.CounterStockEntity
 import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.OfflineSessionEntity
+import com.alvinb.counterpos.data.local.entity.OfflineTransactionLogEntity
 import com.alvinb.counterpos.data.local.entity.OutboxEntity
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.ServiceCounterEntity
 import com.alvinb.counterpos.data.local.entity.TableOrderEntity
+import java.util.concurrent.Executors
 
 @Database(
     entities = [
@@ -23,11 +25,12 @@ import com.alvinb.counterpos.data.local.entity.TableOrderEntity
         DiningTableEntity::class,
         TableOrderEntity::class,
         OutboxEntity::class,
+        OfflineTransactionLogEntity::class,
         OfflineSessionEntity::class,
         ServiceCounterEntity::class,
         CounterStockEntity::class
     ],
-    version = 11,
+    version = 12,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -139,6 +142,66 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS offline_transaction_logs (
+                        operationId TEXT NOT NULL,
+                        shopId TEXT NOT NULL,
+                        actorUserId TEXT NOT NULL,
+                        operationType TEXT NOT NULL,
+                        summary TEXT NOT NULL,
+                        amountKsh INTEGER NOT NULL,
+                        status TEXT NOT NULL,
+                        recordedOffline INTEGER NOT NULL,
+                        attempts INTEGER NOT NULL,
+                        lastError TEXT,
+                        localSaleId INTEGER,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL,
+                        syncedAt INTEGER,
+                        PRIMARY KEY(operationId)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_offline_transaction_logs_shopId_createdAt " +
+                        "ON offline_transaction_logs(shopId, createdAt)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_offline_transaction_logs_shopId_status_createdAt " +
+                        "ON offline_transaction_logs(shopId, status, createdAt)"
+                )
+                // Preserve visibility of any pre-existing queued outbox operations across upgrades.
+                db.execSQL(
+                    """
+                    INSERT OR IGNORE INTO offline_transaction_logs (
+                        operationId, shopId, actorUserId, operationType, summary, amountKsh,
+                        status, recordedOffline, attempts, lastError, localSaleId,
+                        createdAt, updatedAt, syncedAt
+                    )
+                    SELECT
+                        operationId,
+                        shopId,
+                        actorUserId,
+                        operationType,
+                        operationType,
+                        0,
+                        CASE WHEN blocked = 1 THEN 'BLOCKED' ELSE 'QUEUED' END,
+                        1,
+                        attempts,
+                        lastError,
+                        localSaleId,
+                        createdAt,
+                        createdAt,
+                        NULL
+                    FROM sync_outbox
+                    """.trimIndent()
+                )
+            }
+        }
+
         private fun ensureColumn(db: SupportSQLiteDatabase, table: String, column: String, declaration: String) {
             val cursor = db.query("PRAGMA table_info($table)")
             val exists = try {
@@ -154,6 +217,18 @@ abstract class AppDatabase : RoomDatabase() {
             if (!exists) db.execSQL("ALTER TABLE $table ADD COLUMN $column $declaration")
         }
 
+        private val queryExecutor = Executors.newFixedThreadPool(4) { runnable ->
+            Thread(runnable, "counterpos-room-query").apply {
+                isDaemon = true
+            }
+        }
+
+        private val transactionExecutor = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "counterpos-room-tx").apply {
+                isDaemon = true
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -162,16 +237,21 @@ abstract class AppDatabase : RoomDatabase() {
                 context.applicationContext,
                 AppDatabase::class.java,
                 "counterpos.db"
-            ).addMigrations(
-                MIGRATION_3_4,
-                MIGRATION_4_5,
-                MIGRATION_5_6,
-                MIGRATION_6_7,
-                MIGRATION_7_8,
-                MIGRATION_8_9,
-                MIGRATION_9_10,
-                MIGRATION_10_11
             )
+                .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
+                .setQueryExecutor(queryExecutor)
+                .setTransactionExecutor(transactionExecutor)
+                .addMigrations(
+                    MIGRATION_3_4,
+                    MIGRATION_4_5,
+                    MIGRATION_5_6,
+                    MIGRATION_6_7,
+                    MIGRATION_7_8,
+                    MIGRATION_8_9,
+                    MIGRATION_9_10,
+                    MIGRATION_10_11,
+                    MIGRATION_11_12
+                )
                 .build().also { instance = it }
         }
     }

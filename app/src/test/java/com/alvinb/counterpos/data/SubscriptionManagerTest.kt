@@ -297,4 +297,56 @@ class SubscriptionManagerTest {
             )
         )
     }
+
+    @Test
+    fun parseTimestampHandlesPostgresOffsetAndSpaceFormats() {
+        val parsedIso = SubscriptionManager.parseTimestamp("2026-11-28T10:00:00+00:00")
+        val parsedSpace = SubscriptionManager.parseTimestamp("2026-11-28 10:00:00+00")
+        assertNotNull(parsedIso)
+        assertNotNull(parsedSpace)
+        assertEquals(parsedIso, parsedSpace)
+    }
+
+    @Test
+    fun superadminExplicitExpiredOverridesStaleFutureDates() {
+        val now = System.currentTimeMillis()
+        val membership = BusinessMembership(
+            shopId = "shop-override",
+            shopName = "Admin Expired Lounge",
+            role = "owner",
+            status = "active",
+            currency = "KES",
+            lowStockThreshold = 5,
+            subscriptionStatus = "expired",
+            trialEndsAt = Instant.ofEpochMilli(now + TimeUnit.DAYS.toMillis(10)).toString(),
+            subscriptionEndsAt = Instant.ofEpochMilli(now + TimeUnit.DAYS.toMillis(20)).toString()
+        )
+
+        val entitlement = SubscriptionManager.evaluate(membership, currentTimeMillis = now, isOnline = true)
+        assertFalse(entitlement.isEntitled)
+        assertEquals(SubscriptionStatus.EXPIRED, entitlement.status)
+    }
+
+    @Test
+    fun customTrialDurationReflectsActualRemainingDaysWithoutHardcoded14DayLabel() {
+        val now = System.currentTimeMillis()
+        val trialExpiry = Instant.ofEpochMilli(now + TimeUnit.DAYS.toMillis(21)).toString()
+        val membership = BusinessMembership(
+            shopId = "shop-custom-trial",
+            shopName = "Partner Club",
+            role = "owner",
+            status = "active",
+            currency = "KES",
+            lowStockThreshold = 5,
+            subscriptionStatus = "trial",
+            trialEndsAt = trialExpiry
+        )
+
+        val entitlement = SubscriptionManager.evaluate(membership, currentTimeMillis = now, isOnline = true)
+        assertTrue(entitlement.isEntitled)
+        assertEquals(SubscriptionStatus.TRIAL, entitlement.status)
+        assertEquals(21, entitlement.daysRemaining)
+        assertTrue(entitlement.statusLabel.contains("21 days left"))
+        assertFalse(entitlement.statusLabel.contains("14-Day"))
+    }
 }

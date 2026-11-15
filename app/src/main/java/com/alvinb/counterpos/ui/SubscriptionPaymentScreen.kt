@@ -2,6 +2,7 @@ package com.alvinb.counterpos.ui
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -13,8 +14,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.relocation.BringIntoViewRequester
@@ -33,6 +36,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -134,6 +138,12 @@ fun SubscriptionPaymentScreen(
     val formattedAmount = NumberFormat.getNumberInstance(Locale.US).format(entitlement.amountDueKsh)
     val isOwner = activeShop?.role.equals("owner", ignoreCase = true)
     val normalizedPhone = SubscriptionManager.normalizeKenyanPhone(phoneNumber)
+    val isLockedGate = !entitlement.isEntitled || entitlement.isPaymentLocked
+    val canDismissScreen = !isLockedGate && !state.isInitiatingStkPush && !state.isPollingStkPayment
+
+    BackHandler(enabled = canDismissScreen) {
+        onContinueToPos()
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -142,12 +152,51 @@ fun SubscriptionPaymentScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
                 .imePadding()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 24.dp),
+                .padding(horizontal = 20.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(Modifier.height(16.dp))
+            if (!isLockedGate) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = 520.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    IconButton(
+                        onClick = onContinueToPos,
+                        enabled = canDismissScreen,
+                        modifier = Modifier.testTag("subscription_back_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back to POS"
+                        )
+                    }
+                    Text(
+                        text = "Subscription & Billing",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    IconButton(
+                        onClick = viewModel::refreshCurrentBusinessSubscription,
+                        enabled = state.isOnline
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Refresh status"
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            } else {
+                Spacer(Modifier.height(12.dp))
+            }
 
             // Brand Header Badge
             Row(
@@ -175,35 +224,47 @@ fun SubscriptionPaymentScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            // Main Lock Icon / Status Icon
+            // Main Status Icon
             Box(
                 modifier = Modifier
                     .size(72.dp)
                     .clip(CircleShape)
                     .background(
-                        if (state.isSubscriptionPaymentSuccess) MpesaGreenLight
-                        else MaterialTheme.colorScheme.errorContainer
+                        when {
+                            state.isSubscriptionPaymentSuccess || !isLockedGate -> MpesaGreenLight
+                            else -> MaterialTheme.colorScheme.errorContainer
+                        }
                     ),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = if (state.isSubscriptionPaymentSuccess) Icons.Default.CheckCircle
-                    else Icons.Default.Lock,
+                    imageVector = when {
+                        state.isSubscriptionPaymentSuccess -> Icons.Default.CheckCircle
+                        !isLockedGate -> Icons.Default.Verified
+                        else -> Icons.Default.Lock
+                    },
                     contentDescription = "Subscription Status",
-                    tint = if (state.isSubscriptionPaymentSuccess) MpesaGreen
-                    else MaterialTheme.colorScheme.error,
+                    tint = when {
+                        state.isSubscriptionPaymentSuccess || !isLockedGate -> MpesaGreen
+                        else -> MaterialTheme.colorScheme.error
+                    },
                     modifier = Modifier.size(36.dp)
                 )
             }
 
             Spacer(Modifier.height(16.dp))
 
-            // Title & Subtitle
+            // Title & Subtitle driven by live server/Superadmin entitlement
             Text(
-                text = if (state.isSubscriptionPaymentSuccess) "Subscription Activated!"
-                else if (entitlement.isPaymentLocked) "Business Payment Lock"
-                else if (entitlement.status == SubscriptionStatus.TRIAL) "Free Trial Ended"
-                else "Subscription Renewal Required",
+                text = when {
+                    state.isSubscriptionPaymentSuccess -> "Subscription Activated!"
+                    entitlement.isPaymentLocked -> "Business Payment Lock"
+                    !isLockedGate && entitlement.status == SubscriptionStatus.TRIAL -> "Free Trial Active"
+                    !isLockedGate && entitlement.status == SubscriptionStatus.OFFLINE_GRACE -> "Offline Grace Active"
+                    !isLockedGate -> "Subscription Active"
+                    activeShop?.subscriptionStatus.equals("trial", ignoreCase = true) -> "Free Trial Ended"
+                    else -> "Subscription Renewal Required"
+                },
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground,
@@ -220,14 +281,19 @@ fun SubscriptionPaymentScreen(
                 textAlign = TextAlign.Center
             )
 
-            if (entitlement.isPaymentLocked) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = entitlement.message,
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.error,
-                    textAlign = TextAlign.Center
-                )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = if (!isLockedGate) {
+                    "${entitlement.statusLabel} • Valid until ${entitlement.expiryFormatted}"
+                } else {
+                    entitlement.message
+                },
+                fontSize = 13.sp,
+                color = if (isLockedGate) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+
+            if (isLockedGate) {
                 if (!session.activeBusiness?.role.equals("owner", ignoreCase = true)) {
                     Text(
                         text = "Ask the business owner to complete this payment. Employee access will return automatically after confirmation.",
@@ -246,6 +312,26 @@ fun SubscriptionPaymentScreen(
                         Spacer(Modifier.width(6.dp))
                         Text("Refresh business access", fontSize = 12.sp)
                     }
+                }
+            } else {
+                Spacer(Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = onContinueToPos,
+                    enabled = canDismissScreen,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = 520.dp)
+                        .height(48.dp)
+                        .testTag("return_to_pos_button"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Return to POS Workspace", fontWeight = FontWeight.SemiBold)
                 }
             }
 
@@ -474,14 +560,18 @@ fun SubscriptionPaymentScreen(
                             .padding(20.dp)
                     ) {
                         Text(
-                            text = "M-Pesa Phone Number",
+                            text = if (isLockedGate) "M-Pesa Phone Number" else "Renew or Extend Early via M-Pesa",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = "The phone will receive an STK Push prompt for your PIN.",
+                            text = if (isLockedGate) {
+                                "The phone will receive an STK Push prompt for your PIN."
+                            } else {
+                                "Optional: add ${entitlement.planDays} days to your store term now using Safaricom STK Push."
+                            },
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

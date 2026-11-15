@@ -198,9 +198,42 @@ fun OwnerSettingsScreen(
                     description = "Manage Daraja M-Pesa renewals and store entitlement.",
                     icon = Icons.Default.CreditCard
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val entitlement = state.subscriptionEntitlement
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (entitlement != null) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (entitlement.isEntitled) {
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                                } else {
+                                    MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Text(
+                                        text = entitlement.statusLabel,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (entitlement.isEntitled) {
+                                            MaterialTheme.colorScheme.onPrimaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.onErrorContainer
+                                        }
+                                    )
+                                    Text(
+                                        text = "Valid until ${entitlement.expiryFormatted} · KSh ${entitlement.amountDueKsh} / ${entitlement.planDays} days",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
                         Text(
-                            "One subscription covers all counters, staff devices, and counters in this shop.",
+                            "One subscription covers all counters, staff, and devices in this shop.",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
