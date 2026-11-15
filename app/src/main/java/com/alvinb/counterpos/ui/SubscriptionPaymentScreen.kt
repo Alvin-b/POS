@@ -504,7 +504,7 @@ fun SubscriptionPaymentScreen(
                             text = when {
                                 state.isStkNeedsAttention -> "Payment verification needs attention"
                                 state.stkCheckoutRequestId.isNullOrBlank() -> "Checking M-Pesa request"
-                                else -> "Safaricom accepted the STK request"
+                                else -> "M-Pesa request in progress"
                             },
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,

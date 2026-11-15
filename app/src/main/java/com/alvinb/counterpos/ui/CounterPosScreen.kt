@@ -854,7 +854,7 @@ fun CounterPosWorkspace(
             diningTables = diningTables,
             products = products.filter { it.inMyStock && it.stockQuantity > 0 },
             initialWaiter = session.email,
-            initialTableId = state.selectedTableId,
+            initialTableId = state.activeTableIdForSale(),
             supportsTables = supportsTables,
             error = state.actionError,
             onDismiss = viewModel::dismissRecordDispensation,
@@ -877,7 +877,7 @@ fun CounterPosWorkspace(
     // Modal: Sell Product with Units of Sale (e.g. Bottle, Glass, Cup)
     state.selectedSaleCode?.let { code ->
         products.firstOrNull { it.catalogCode == code }?.let { product ->
-            val selectedTable = diningTables.firstOrNull { it.id == state.selectedTableId }
+            val selectedTable = diningTables.firstOrNull { it.id == state.activeTableIdForSale() }
             ModalBottomSheet(
                 onDismissRequest = viewModel::dismissSale,
                 sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)

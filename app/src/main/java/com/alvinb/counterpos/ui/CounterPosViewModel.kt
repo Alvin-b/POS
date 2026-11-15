@@ -213,6 +213,9 @@ data class CounterPosUiState(
     val isSavingPlatformBillingSettings: Boolean = false
 )
 
+internal fun CounterPosUiState.activeTableIdForSale(): String? =
+    selectedTableId.takeIf { tab == PosTab.TABLES }
+
 class CounterPosViewModel(
     private val repository: CounterPosRepository,
     private val connectivityManager: ConnectivityManager,
@@ -2434,7 +2437,7 @@ class CounterPosViewModel(
 
         viewModelScope.launch {
             try {
-                val tableId = state.selectedTableId.takeIf { state.tab == PosTab.TABLES }
+                val tableId = state.activeTableIdForSale()
                 val success = if (tableId != null) {
                     repository.sellToTable(
                         tableId = tableId,
