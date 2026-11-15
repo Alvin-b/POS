@@ -898,6 +898,10 @@ class CounterPosRepository(
             )
             saveOfflineAccount(account!!, currentActive.shopId)
             publishAccount()
+            if (SubscriptionManager.evaluate(updatedMembership, isOnline = true).isEntitled) {
+                dao.unblockOutboxForShop(currentActive.shopId)
+                triggerBackgroundSync()
+            }
         } catch (_: Exception) {
             session.value
         }
@@ -2125,6 +2129,19 @@ class CounterPosRepository(
                         throw java.io.IOException("Authentication is required to sync queued POS changes.", error)
                     }
                     if (error is SupabaseHttpException && !isRetryable(error)) {
+                        val message = error.message.orEmpty()
+                        val entitlementDenied = message.contains("subscription_expired", ignoreCase = true) ||
+                            message.contains("subscription expired", ignoreCase = true) ||
+                            message.contains("payment lock", ignoreCase = true) ||
+                            message.contains("payment_locked", ignoreCase = true) ||
+                            activeBusiness?.let { !SubscriptionManager.evaluate(it, isOnline = true).isEntitled } == true
+                        if (entitlementDenied) {
+                            dao.recordOutboxAttempt(item.operationId, error.message)
+                            _session.value = _session.value.copy(
+                                message = "Subscription access is required to sync saved POS changes. Your local queue is preserved; it will retry after access is restored."
+                            )
+                            break
+                        }
                         dao.blockOutboxItem(item.operationId, error.message ?: "The server rejected this saved change.")
                         _session.value = _session.value.copy(message = "A saved POS change needs attention before it can sync: ${error.message.orEmpty()}")
                         break

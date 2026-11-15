@@ -76,6 +76,8 @@ interface CounterPosDao {
     suspend fun outboxOperationCount(operationId: String): Int
     @Query("SELECT * FROM sync_outbox WHERE shopId = :shopId AND blocked = 1 ORDER BY createdAt ASC")
     suspend fun blockedOutbox(shopId: String): List<OutboxEntity>
+    @Query("UPDATE sync_outbox SET blocked = 0, lastError = NULL WHERE shopId = :shopId")
+    suspend fun unblockOutboxForShop(shopId: String): Int
     @Query("UPDATE sync_outbox SET blocked = 0, lastError = NULL WHERE operationId = :operationId")
     suspend fun unblockOutboxItem(operationId: String): Int
     @Query("SELECT COUNT(*) FROM sync_outbox")
