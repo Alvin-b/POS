@@ -19,6 +19,7 @@ import com.alvinb.counterpos.data.SessionSnapshot
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.DiningTableEntity
+import com.alvinb.counterpos.data.local.entity.OfflineTransactionLogEntity
 import com.alvinb.counterpos.data.local.entity.OutboxEntity
 import com.alvinb.counterpos.data.local.entity.SaleUnit
 import com.alvinb.counterpos.data.local.entity.resolveSaleUnits
@@ -98,6 +99,7 @@ data class CounterPosUiState(
     val tab: PosTab = PosTab.SCAN,
     val previousTab: PosTab? = null,
     val isOnline: Boolean = true,
+    val isConnectionStable: Boolean = true,
     val stockMode: StockMode = StockMode.MY_STOCK,
     val searchQuery: String = "",
     val isSearchActive: Boolean = false,
@@ -188,6 +190,7 @@ data class CounterPosUiState(
     val startupError: String? = null,
     val pendingSyncCount: Int = 0,
     val blockedOutbox: List<OutboxEntity> = emptyList(),
+    val transactionLogs: List<OfflineTransactionLogEntity> = emptyList(),
     val isSyncRecoveryOpen: Boolean = false,
     val syncRecoveryError: String? = null,
     val retryingOperationId: String? = null,
@@ -219,6 +222,7 @@ class CounterPosViewModel(
     private val _adminBusinesses = MutableStateFlow<List<AdminBusiness>>(repository.getCachedAdminBusinesses())
     val adminBusinesses = _adminBusinesses.asStateFlow()
     val products = repository.products.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val lowStockProducts = repository.lowStockProducts.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val sales = repository.sales.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val diningTables = repository.diningTables.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val tableOrders = repository.tableOrders.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -229,58 +233,101 @@ class CounterPosViewModel(
     private var mutationInProgress = false
     private var reconnectSyncJob: Job? = null
     private var tableSettlementOutboxJob: Job? = null
+    private var transactionLogsJob: Job? = null
     private var counterStockJob: Job? = null
     private var loginQrJob: Job? = null
     private var lastSessionKeepAliveAt = 0L
-    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
-        override fun onAvailable(network: Network) {
-            _uiState.update { it.copy(isOnline = true) }
-            refreshSubscriptionEntitlement()
+
+    private fun handleStableConnectivityDetected(wasStable: Boolean) {
+        refreshSubscriptionEntitlement()
+        refreshCurrentBusinessSubscription()
+        repository.reconnectRealtimeIfNeeded()
+        repository.enqueueOutboxSync(triggerSource = "stable_network_detected")
+        if (!wasStable) {
             reconnectSyncJob?.cancel()
             reconnectSyncJob = viewModelScope.launch {
                 delay(150)
-                runCatching {
-                    repository.keepSessionAlive()
-                    repository.synchronizeWhenOnline()
+                runCatching { repository.keepSessionAlive() }
+                if (_uiState.value.pendingSyncCount > 0) {
+                    _uiState.update {
+                        it.copy(notice = "Stable connection detected. Syncing offline transaction queue in background.")
+                    }
                 }
-                    .onSuccess { _uiState.update { it.copy(notice = "Internet connected. Real-time data synchronized.") } }
-                    .onFailure { _uiState.update { it.copy(notice = "Syncing in background…") } }
+            }
+        }
+    }
+
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            val caps = runCatching { connectivityManager.getNetworkCapabilities(network) }.getOrNull()
+            val hasInternet = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+            val isValidated = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+            val wasStable = _uiState.value.isConnectionStable
+            val isStable = hasInternet && isValidated
+            _uiState.update { it.copy(isOnline = true, isConnectionStable = isStable) }
+            if (isStable) {
+                handleStableConnectivityDetected(wasStable)
+            }
+        }
+
+        override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+            val hasInternet = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            val isValidated = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            val isStable = hasInternet && isValidated
+            val wasStable = _uiState.value.isConnectionStable
+            _uiState.update { it.copy(isOnline = hasInternet, isConnectionStable = isStable) }
+            if (isStable && !wasStable) {
+                handleStableConnectivityDetected(wasStable = false)
             }
         }
 
         override fun onLost(network: Network) {
+            val activeCaps = runCatching {
+                connectivityManager.activeNetwork?.let(connectivityManager::getNetworkCapabilities)
+            }.getOrNull()
+            val stillOnline = activeCaps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+            val stillStable = stillOnline && activeCaps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
             _uiState.update {
                 it.copy(
-                    isOnline = false,
-                    notice = "Offline mode. Sales and tables are stored locally."
+                    isOnline = stillOnline,
+                    isConnectionStable = stillStable,
+                    notice = if (!stillOnline) "Offline mode. Transactions are logged locally for auto-sync." else it.notice
                 )
             }
             refreshSubscriptionEntitlement()
         }
     }
 
+    private var businessHoursJob: Job? = null
+    private var lastLoadedHoursShopId: String? = null
+
     init {
         runCatching {
             val net = connectivityManager.activeNetwork
             val caps = connectivityManager.getNetworkCapabilities(net)
             val isOnline = caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            _uiState.update { it.copy(isOnline = isOnline) }
+            val isStable = isOnline && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            _uiState.update { it.copy(isOnline = isOnline, isConnectionStable = isStable) }
         }
         runCatching { connectivityManager.registerDefaultNetworkCallback(networkCallback) }
         viewModelScope.launch {
             repository.session.collect { sess ->
                 refreshSubscriptionEntitlement(sess)
                 tableSettlementOutboxJob?.cancel()
+                transactionLogsJob?.cancel()
                 if (sess.isPlatformAdmin) {
                     loadAdminBusinesses()
                     loadAdminAuditEvents()
                 }
                 if (sess.activeBusiness == null) {
                     counterStockJob?.cancel()
+                    businessHoursJob?.cancel()
+                    lastLoadedHoursShopId = null
                     _uiState.update {
                         it.copy(
                             businessHours = BusinessHours.Unrestricted,
                             blockedOutbox = emptyList(),
+                            transactionLogs = emptyList(),
                             pendingTableSettlementIds = emptySet(),
                             blockedTableSettlementIds = emptySet(),
                             counterStockByProduct = emptyMap()
@@ -289,6 +336,11 @@ class CounterPosViewModel(
                 } else {
                     val shopId = sess.activeBusiness.shopId
                     observeSelectedCounterStock(shopId, _uiState.value.selectedCounterId)
+                    transactionLogsJob = viewModelScope.launch {
+                        repository.observeTransactionLogs(shopId).collect { logs ->
+                            _uiState.update { it.copy(transactionLogs = logs) }
+                        }
+                    }
                     tableSettlementOutboxJob = viewModelScope.launch {
                         repository.observeTableSettlementOutbox(shopId).collect { items ->
                             val pendingIds = items.asSequence()
@@ -309,13 +361,21 @@ class CounterPosViewModel(
                             }
                         }
                     }
-                    runCatching { repository.loadBusinessHours() }
-                        .onSuccess { hours -> _uiState.update { it.copy(businessHours = hours) } }
-                        .onFailure {
-                            _uiState.update { it.copy(businessHours = BusinessHours.Unrestricted) }
-                        }
-                    runCatching { repository.blockedOutboxItems() }
-                        .onSuccess { items -> _uiState.update { it.copy(blockedOutbox = items) } }
+                    businessHoursJob?.cancel()
+                    businessHoursJob = viewModelScope.launch {
+                        runCatching { repository.blockedOutboxItems() }
+                            .onSuccess { items -> _uiState.update { it.copy(blockedOutbox = items) } }
+                        runCatching { repository.loadBusinessHours() }
+                            .onSuccess { hours ->
+                                lastLoadedHoursShopId = shopId
+                                _uiState.update { it.copy(businessHours = hours) }
+                            }
+                            .onFailure {
+                                if (lastLoadedHoursShopId != shopId) {
+                                    _uiState.update { it.copy(businessHours = BusinessHours.Unrestricted) }
+                                }
+                            }
+                    }
                 }
             }
         }
@@ -341,15 +401,42 @@ class CounterPosViewModel(
         }
         viewModelScope.launch {
             while (isActive) {
-                // Realtime invalidation is the primary refresh path. This remains
-                // a conservative fallback for background disconnects and missed events.
+                delay(5_000)
+                val sess = repository.session.value
+                if (sess.isAuthenticated && sess.activeBusiness != null && !sess.isPlatformAdmin && _uiState.value.isOnline) {
+                    runCatching {
+                        val wasEntitled = _uiState.value.isSubscriptionEntitled
+                        val refreshed = repository.refreshActiveBusinessSubscription()
+                        refreshSubscriptionEntitlement(refreshed, online = _uiState.value.isOnline)
+                        if (!wasEntitled && _uiState.value.isSubscriptionEntitled) {
+                            subscriptionPollingJob?.cancel()
+                            _uiState.update {
+                                it.copy(
+                                    isSubscriptionModalOpen = false,
+                                    isPollingStkPayment = false,
+                                    isInitiatingStkPush = false,
+                                    subscriptionPaymentError = null
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        viewModelScope.launch {
+            while (isActive) {
+                // Realtime invalidation + WorkManager are the primary sync paths. This conservative
+                // 30s fallback only enqueues a WorkManager flush when pending items wait on a stable link.
                 delay(30_000)
                 refreshSubscriptionEntitlement()
                 if (repository.session.value.isAuthenticated) {
                     val now = System.currentTimeMillis()
-                    if (repository.session.value.activeBusiness != null) {
-                        runCatching { repository.synchronizeWhenOnline() }
-                    } else if (now - lastSessionKeepAliveAt >= 5 * 60 * 1_000L) {
+                    if (repository.session.value.activeBusiness != null && _uiState.value.isConnectionStable) {
+                        if (_uiState.value.pendingSyncCount > 0) {
+                            repository.enqueueOutboxSync(triggerSource = "fallback_poll")
+                        }
+                    }
+                    if (now - lastSessionKeepAliveAt >= 5 * 60 * 1_000L && _uiState.value.isOnline) {
                         lastSessionKeepAliveAt = now
                         runCatching { repository.keepSessionAlive() }
                     }
@@ -395,6 +482,8 @@ class CounterPosViewModel(
         reconnectSyncJob?.cancel()
         counterStockJob?.cancel()
         tableSettlementOutboxJob?.cancel()
+        transactionLogsJob?.cancel()
+        businessHoursJob?.cancel()
         super.onCleared()
     }
 
@@ -1314,6 +1403,7 @@ class CounterPosViewModel(
                 isSubscriptionPaymentSuccess = false
             )
         }
+        refreshCurrentBusinessSubscription()
     }
 
     fun refreshCurrentBusinessSubscription() {
@@ -1603,10 +1693,17 @@ class CounterPosViewModel(
         }
     }
 
+    fun adminSetCustomTrial(shopId: String, daysFromNow: Int) {
+        val safeDays = daysFromNow.coerceIn(1, 365)
+        val newTime = System.currentTimeMillis() + (safeDays * 86_400_000L)
+        val iso = java.time.Instant.ofEpochMilli(newTime).toString()
+        adminUpdateShopSubscription(shopId = shopId, trialEndsAtIso = iso, status = "trial")
+    }
+
     fun adminExtendTrial(shopId: String, daysToAdd: Int = 14) {
         val target = _adminBusinesses.value.firstOrNull { it.shopId == shopId }
         val baseTime = target?.trialEndsAt?.let { com.alvinb.counterpos.data.SubscriptionManager.parseTimestamp(it) } ?: System.currentTimeMillis()
-        val newTime = maxOf(baseTime, System.currentTimeMillis()) + (daysToAdd * 86400000L)
+        val newTime = maxOf(baseTime, System.currentTimeMillis()) + (daysToAdd * 86_400_000L)
         val iso = java.time.Instant.ofEpochMilli(newTime).toString()
         adminUpdateShopSubscription(shopId = shopId, trialEndsAtIso = iso, status = "trial")
     }
@@ -1614,7 +1711,7 @@ class CounterPosViewModel(
     fun adminActivatePaidTerm(shopId: String, daysToAdd: Int = 30, priceKsh: Int? = null) {
         val target = _adminBusinesses.value.firstOrNull { it.shopId == shopId }
         val baseTime = target?.subscriptionEndsAt?.let { com.alvinb.counterpos.data.SubscriptionManager.parseTimestamp(it) } ?: System.currentTimeMillis()
-        val newTime = maxOf(baseTime, System.currentTimeMillis()) + (daysToAdd * 86400000L)
+        val newTime = maxOf(baseTime, System.currentTimeMillis()) + (daysToAdd * 86_400_000L)
         val iso = java.time.Instant.ofEpochMilli(newTime).toString()
         adminUpdateShopSubscription(shopId = shopId, endsAtIso = iso, status = "active", planDays = daysToAdd, priceKsh = priceKsh)
     }
@@ -2056,6 +2153,11 @@ class CounterPosViewModel(
     }
 
     fun closeSyncRecovery() = _uiState.update { it.copy(isSyncRecoveryOpen = false, syncRecoveryError = null) }
+
+    fun flushOfflineQueueNow() {
+        repository.enqueueOutboxSync(triggerSource = "user_manual_flush")
+        synchronizeData(showNotice = true)
+    }
 
     fun retryBlockedOutbox(operationId: String) {
         if (_uiState.value.retryingOperationId != null) return

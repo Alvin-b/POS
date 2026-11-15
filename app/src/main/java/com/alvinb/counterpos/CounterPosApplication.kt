@@ -4,6 +4,10 @@ import android.app.Application
 import com.alvinb.counterpos.data.CounterPosRepository
 import com.alvinb.counterpos.data.local.AppDatabase
 import com.alvinb.counterpos.data.remote.SupabaseRestClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Application-scoped composition root for the POS data layer.
@@ -12,6 +16,8 @@ import com.alvinb.counterpos.data.remote.SupabaseRestClient
  * its dependencies are shared by activities and WorkManager workers.
  */
 class CounterPosApplication : Application() {
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     private val database: AppDatabase by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         AppDatabase.getInstance(this)
     }
@@ -31,12 +37,16 @@ class CounterPosApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        // Initialize the shared repository before a worker can be created and
-        // ensure any outbox entries left by a previous process are considered.
+        // Rehydrate shared repository and only trigger immediate outbox worker if
+        // unacknowledged local mutations actually exist from a prior process.
         repository
-        runCatching {
-            OfflineOutboxWorker.enqueue(this)
-            OfflineOutboxWorker.enqueuePeriodic(this)
+        appScope.launch {
+            runCatching {
+                OfflineOutboxWorker.enqueuePeriodic(applicationContext)
+                if (repository.hasPendingOutboxAll()) {
+                    OfflineOutboxWorker.enqueue(applicationContext)
+                }
+            }
         }
     }
 }

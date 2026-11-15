@@ -14,6 +14,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -56,6 +57,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -70,7 +72,10 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.TableRestaurant
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -136,6 +141,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.alvinb.counterpos.data.local.entity.DiningTableEntity
+import com.alvinb.counterpos.data.local.entity.OfflineTransactionLogEntity
+import com.alvinb.counterpos.data.local.entity.OfflineTransactionStatus
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.OutboxEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
@@ -164,6 +171,7 @@ fun CounterPosWorkspace(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val session by viewModel.session.collectAsStateWithLifecycle()
     val cachedProducts by viewModel.products.collectAsStateWithLifecycle()
+    val roomLowStockProducts by viewModel.lowStockProducts.collectAsStateWithLifecycle()
     val sales by viewModel.sales.collectAsStateWithLifecycle()
     val diningTables by viewModel.diningTables.collectAsStateWithLifecycle()
     val tableOrders by viewModel.tableOrders.collectAsStateWithLifecycle()
@@ -179,6 +187,14 @@ fun CounterPosWorkspace(
                 } else product
             }
         } else cachedProducts
+    }
+    val lowStockCatalogCodes = remember(products, roomLowStockProducts, session.activeBusiness?.counterInventoryMode) {
+        val isPerCounter = session.activeBusiness?.counterInventoryMode == "per_counter"
+        val source = if (isPerCounter) products else roomLowStockProducts
+        source.asSequence()
+            .filter { isLowOrOutOfStock(it) }
+            .map { it.catalogCode }
+            .toSet()
     }
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -340,14 +356,47 @@ fun CounterPosWorkspace(
                     Surface(color = MaterialTheme.colorScheme.tertiaryContainer) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                "Offline mode · Transactions logged locally for auto-sync when stable connection returns.",
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(
+                                onClick = viewModel::openSyncRecovery,
+                                modifier = Modifier.testTag("open_transaction_log_button")
+                            ) {
+                                Text("Log (${state.pendingSyncCount})", color = MaterialTheme.colorScheme.onTertiaryContainer, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                } else if (state.pendingSyncCount > 0 && state.blockedOutbox.isEmpty()) {
+                    Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 2.dp, bottom = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                "Offline mode · All sales and tables saved locally. Will sync immediately when online.",
-                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                if (state.isConnectionStable) {
+                                    "${state.pendingSyncCount} queued transaction${if (state.pendingSyncCount == 1) "" else "s"} syncing in background"
+                                } else {
+                                    "${state.pendingSyncCount} queued transaction${if (state.pendingSyncCount == 1) "" else "s"} waiting for stable connection"
+                                },
+                                modifier = Modifier.weight(1f),
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Medium
                             )
+                            TextButton(
+                                onClick = viewModel::openSyncRecovery,
+                                modifier = Modifier.testTag("open_pending_queue_button")
+                            ) {
+                                Text("Queue", color = MaterialTheme.colorScheme.onSecondaryContainer, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
@@ -417,7 +466,27 @@ fun CounterPosWorkspace(
                         NavigationBarItem(
                             selected = state.tab == PosTab.STOCK,
                             onClick = { viewModel.selectTab(PosTab.STOCK) },
-                            icon = { Icon(Icons.Default.Inventory2, contentDescription = "Stock", modifier = Modifier.size(21.dp)) },
+                            icon = {
+                                BadgedBox(
+                                    badge = {
+                                        if (lowStockCatalogCodes.isNotEmpty()) {
+                                            Badge(
+                                                containerColor = MaterialTheme.colorScheme.secondary,
+                                                contentColor = MaterialTheme.colorScheme.onSecondary,
+                                                modifier = Modifier.testTag("nav_stock_low_badge")
+                                            ) {
+                                                Text(
+                                                    if (lowStockCatalogCodes.size > 99) "99+" else lowStockCatalogCodes.size.toString(),
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+                                ) {
+                                    Icon(Icons.Default.Inventory2, contentDescription = "Stock", modifier = Modifier.size(21.dp))
+                                }
+                            },
                             label = { Text("Stock (${products.count { it.inMyStock }})", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.STOCK) FontWeight.Bold else FontWeight.Normal) },
                             colors = posNavigationItemColors(),
                             modifier = Modifier.testTag("nav_stock")
@@ -479,6 +548,7 @@ fun CounterPosWorkspace(
                             .padding(padding),
                         state = state,
                         products = products,
+                        lowStockCatalogCodes = lowStockCatalogCodes,
                         onModeChange = viewModel::setStockMode,
                         onCategoryChange = viewModel::setLibraryCategory,
                         onAddStockClick = viewModel::openAddStock,
@@ -590,39 +660,182 @@ fun CounterPosWorkspace(
     }
 
     if (state.isSyncRecoveryOpen) {
+        val timeFmt = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+        val queuedLogsCount = remember(state.transactionLogs) {
+            state.transactionLogs.count {
+                it.status in setOf(
+                    OfflineTransactionStatus.QUEUED,
+                    OfflineTransactionStatus.SYNCING,
+                    OfflineTransactionStatus.RETRY_WAITING,
+                    OfflineTransactionStatus.BLOCKED
+                )
+            }
+        }
+        val syncedLogsCount = remember(state.transactionLogs) {
+            state.transactionLogs.count { it.status == OfflineTransactionStatus.SYNCED }
+        }
         AlertDialog(
             onDismissRequest = viewModel::closeSyncRecovery,
-            title = { Text("Saved changes need attention") },
+            modifier = Modifier.testTag("transaction_log_dialog"),
+            title = { Text("Offline Transaction Log") },
             text = {
-                Column(Modifier.height(340.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Retry sends the same saved operation ID, so a previously accepted sale is not duplicated.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(
+                    Modifier
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        when {
+                            !state.isOnline -> "Offline · Transactions stay queued in Room and flush automatically via WorkManager when stable internet returns."
+                            state.isConnectionStable -> "Stable connection detected · WorkManager flushes queued transactions in background without slowing POS."
+                            else -> "Limited connectivity · Waiting for validated internet before flushing to Supabase."
+                        },
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Text(
+                                "Queued: $queuedLogsCount",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                "Synced: $syncedLogsCount",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                        Spacer(Modifier.weight(1f))
+                        if (state.pendingSyncCount > 0 && state.isOnline) {
+                            TextButton(
+                                onClick = viewModel::flushOfflineQueueNow,
+                                enabled = !state.isSyncingData,
+                                modifier = Modifier.testTag("flush_queue_button")
+                            ) {
+                                Text(if (state.isSyncingData) "Flushing…" else "Flush Now", fontSize = 12.sp)
+                            }
+                        }
+                    }
                     if (!state.syncRecoveryError.isNullOrBlank()) {
                         Text(state.syncRecoveryError.orEmpty(), color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                     }
-                    if (state.blockedOutbox.isEmpty()) {
-                        Text("No blocked changes for this business.", fontSize = 13.sp)
-                    }
-                    state.blockedOutbox.forEach { item ->
-                        val label = when (item.operationType) {
-                            "sale" -> "Sale"
-                            "table_sale" -> "Table sale"
-                            "create_dining_table" -> "Create table"
-                            "add_catalog_product" -> "Add product to stock"
-                            "register_product" -> "Register product"
-                            "add_stock" -> "Receive stock"
-                            "transfer_stock" -> "Transfer stock"
-                            else -> item.operationType.replace('_', ' ').replaceFirstChar { it.uppercase() }
+                    if (state.blockedOutbox.isNotEmpty()) {
+                        Text("Needs Attention", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                        state.blockedOutbox.forEach { item ->
+                            val label = when (item.operationType) {
+                                "sale" -> "Sale"
+                                "table_sale" -> "Table sale"
+                                "create_dining_table" -> "Create table"
+                                "add_catalog_product" -> "Add product to stock"
+                                "register_product" -> "Register product"
+                                "receive_stock" -> "Receive stock"
+                                "transfer_stock" -> "Transfer stock"
+                                else -> item.operationType.replace('_', ' ').replaceFirstChar { it.uppercase() }
+                            }
+                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f))) {
+                                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(label, fontWeight = FontWeight.SemiBold)
+                                    Text(item.lastError ?: "The server could not accept this saved change.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    TextButton(
+                                        onClick = { viewModel.retryBlockedOutbox(item.operationId) },
+                                        enabled = state.retryingOperationId == null
+                                    ) {
+                                        if (state.retryingOperationId == item.operationId) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                        else Text("Retry")
+                                    }
+                                }
+                            }
                         }
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(label, fontWeight = FontWeight.SemiBold)
-                                Text(item.lastError ?: "The server could not accept this saved change.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                TextButton(
-                                    onClick = { viewModel.retryBlockedOutbox(item.operationId) },
-                                    enabled = state.retryingOperationId == null
+                    }
+                    if (state.transactionLogs.isEmpty()) {
+                        Text("No local offline or queued transactions recorded yet.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        state.transactionLogs.take(40).forEach { log ->
+                            val (statusLabel, badgeColor, badgeTextColor) = when (log.status) {
+                                OfflineTransactionStatus.SYNCED -> Triple("Synced", MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer)
+                                OfflineTransactionStatus.SYNCING -> Triple("Syncing", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
+                                OfflineTransactionStatus.RETRY_WAITING -> Triple("Retrying", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
+                                OfflineTransactionStatus.BLOCKED -> Triple("Blocked", MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.onErrorContainer)
+                                OfflineTransactionStatus.CANCELLED -> Triple("Cancelled", MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant)
+                                else -> Triple("Queued", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
+                            }
+                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))) {
+                                Column(
+                                    Modifier.fillMaxWidth().padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
-                                    if (state.retryingOperationId == item.operationId) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                                    else Text("Retry")
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            log.summary,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 12.sp,
+                                            modifier = Modifier.weight(1f),
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Surface(shape = RoundedCornerShape(6.dp), color = badgeColor) {
+                                            Text(
+                                                statusLabel,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = badgeTextColor
+                                            )
+                                        }
+                                    }
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        val origin = if (log.recordedOffline) "Offline · " else ""
+                                        val attemptsSuffix = if (log.attempts > 0) " · ${log.attempts} retries" else ""
+                                        Text(
+                                            "$origin${timeFmt.format(Date(log.createdAt))}$attemptsSuffix",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        if (log.amountKsh > 0L) {
+                                            Text(
+                                                "KSh " + NumberFormat.getIntegerInstance(Locale.US).format(log.amountKsh),
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                    if (!log.lastError.isNullOrBlank()) {
+                                        Text(
+                                            log.lastError,
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.error,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1326,6 +1539,7 @@ private fun FullscreenStockScreen(
     modifier: Modifier,
     state: CounterPosUiState,
     products: List<ProductEntity>,
+    lowStockCatalogCodes: Set<String> = emptySet(),
     onModeChange: (StockMode) -> Unit,
     onCategoryChange: (String) -> Unit,
     onAddStockClick: (ProductEntity) -> Unit,
@@ -1338,12 +1552,21 @@ private fun FullscreenStockScreen(
     onTransferStock: (ProductEntity) -> Unit,
     onChangePhoto: (ProductEntity) -> Unit
 ) {
+    var showLowStockOnly by remember { mutableStateOf(false) }
     val mine = remember(products) { products.filter { it.inMyStock } }
     val library = remember(products) { products.filter { !it.inMyStock } }
+    val lowStockMine = remember(mine, lowStockCatalogCodes) {
+        mine.filter { it.catalogCode in lowStockCatalogCodes || isLowOrOutOfStock(it) }
+    }
+    val outOfStockCount = remember(lowStockMine) { lowStockMine.count { it.stockQuantity <= 0 } }
+    val atThresholdCount = remember(lowStockMine) { lowStockMine.size - outOfStockCount }
 
-    val visible = remember(mine, library, state.stockMode, state.searchQuery, state.libraryCategory) {
+    val visible = remember(mine, library, state.stockMode, state.searchQuery, state.libraryCategory, showLowStockOnly, lowStockCatalogCodes) {
         if (state.stockMode == StockMode.MY_STOCK) {
-            mine.filter { it.matches(state.searchQuery) }
+            mine.filter { product ->
+                product.matches(state.searchQuery) &&
+                    (!showLowStockOnly || product.catalogCode in lowStockCatalogCodes || isLowOrOutOfStock(product))
+            }
         } else {
             library.filter { (state.libraryCategory == "All" || it.category == state.libraryCategory) && it.matches(state.searchQuery) }
         }
@@ -1395,7 +1618,7 @@ private fun FullscreenStockScreen(
             }
         }
 
-        // Shelf summary pill
+        // Shelf summary & live Room low-stock alert controls
         if (state.stockMode == StockMode.MY_STOCK) {
             item {
                 Surface(
@@ -1411,7 +1634,7 @@ private fun FullscreenStockScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "Total: $totalBottles bottles on shelf",
+                            "Total: $totalBottles units on shelf",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1419,11 +1642,125 @@ private fun FullscreenStockScreen(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f)
                         )
-                        Text(
-                            "Add / Edit",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
+                        if (lowStockMine.isNotEmpty()) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (outOfStockCount > 0) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
+                            ) {
+                                Text(
+                                    "${lowStockMine.size} low",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (outOfStockCount > 0) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                        } else {
+                            Text(
+                                "All healthy",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (lowStockMine.isNotEmpty()) {
+                item {
+                    val hasOut = outOfStockCount > 0
+                    val bannerColor = if (hasOut) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
+                    val contentColor = if (hasOut) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer
+                    val borderColor = if (hasOut) MaterialTheme.colorScheme.error.copy(alpha = 0.5f) else MaterialTheme.colorScheme.secondary.copy(alpha = 0.6f)
+                    val breakdown = buildList {
+                        if (outOfStockCount > 0) add("$outOfStockCount out of stock")
+                        if (atThresholdCount > 0) add("$atThresholdCount at/below min")
+                    }.joinToString(" · ")
+
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = bannerColor.copy(alpha = 0.72f),
+                        border = BorderStroke(1.dp, borderColor),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("low_stock_alert_banner")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (hasOut) Icons.Default.ErrorOutline else Icons.Default.WarningAmber,
+                                contentDescription = "Low stock alert",
+                                tint = contentColor,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "${lowStockMine.size} ${if (lowStockMine.size == 1) "item needs" else "items need"} restocking",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = contentColor
+                                )
+                                Text(
+                                    text = breakdown,
+                                    fontSize = 11.sp,
+                                    color = contentColor.copy(alpha = 0.85f)
+                                )
+                            }
+                            TextButton(
+                                onClick = { showLowStockOnly = !showLowStockOnly },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                modifier = Modifier.testTag("low_stock_banner_toggle")
+                            ) {
+                                Text(
+                                    if (showLowStockOnly) "Show all" else "View",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = contentColor
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (mine.isNotEmpty()) {
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .testTag("stock_filter_row"),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = !showLowStockOnly,
+                            onClick = { showLowStockOnly = false },
+                            label = { Text("All (${mine.size})", fontSize = 11.sp) },
+                            modifier = Modifier.testTag("stock_all_filter_chip")
+                        )
+                        FilterChip(
+                            selected = showLowStockOnly,
+                            onClick = { showLowStockOnly = !showLowStockOnly },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = if (outOfStockCount > 0) Icons.Default.ErrorOutline else Icons.Default.WarningAmber,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            },
+                            label = { Text("Low Stock (${lowStockMine.size})", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = if (outOfStockCount > 0) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
+                                selectedLabelColor = if (outOfStockCount > 0) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                                selectedLeadingIconColor = if (outOfStockCount > 0) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer
+                            ),
+                            modifier = Modifier.testTag("stock_low_filter_chip")
                         )
                     }
                 }
@@ -1452,11 +1789,13 @@ private fun FullscreenStockScreen(
 
         if (visible.isEmpty()) {
             item {
-                if (state.stockMode == StockMode.MY_STOCK && state.searchQuery.isBlank()) {
+                if (state.stockMode == StockMode.MY_STOCK && state.searchQuery.isBlank() && !showLowStockOnly) {
                     ShelfEmptyState(
                         onBrowseCatalog = { onModeChange(StockMode.LIBRARY) },
                         onScan = onScanStockClick
                     )
+                } else if (state.stockMode == StockMode.MY_STOCK && showLowStockOnly) {
+                    EmptyStateMessage("No items are currently at or below their minimum stock threshold.")
                 } else {
                     EmptyStateMessage("No catalog items match '${state.searchQuery}'.")
                 }
@@ -1465,6 +1804,7 @@ private fun FullscreenStockScreen(
             items(visible, key = { it.catalogCode }) { product ->
                 StockProductCard(
                     product = product,
+                    isLowStockAlert = product.catalogCode in lowStockCatalogCodes || isLowOrOutOfStock(product),
                     canReceiveStock = canReceiveStock,
                     canEditProducts = canEditProducts,
                     canTransferStock = canTransferStock,
@@ -2456,6 +2796,7 @@ private fun ProductSellCard(
 @Composable
 private fun StockProductCard(
     product: ProductEntity,
+    isLowStockAlert: Boolean = isLowOrOutOfStock(product),
     canReceiveStock: Boolean,
     canEditProducts: Boolean,
     canTransferStock: Boolean,
@@ -2467,12 +2808,28 @@ private fun StockProductCard(
     val units = remember(product.salesUnitsJson, product.sellingPriceKsh, product.suggestedPriceKsh) {
         resolveSaleUnits(product)
     }
+    val isBulkOnly = remember(units) { units.isNotEmpty() && units.all { it.stockUnitsPerSale == 0 } }
+    val outOfStock = !isBulkOnly && product.stockQuantity <= 0
+    val lowStock = !isBulkOnly && !outOfStock && isLowStockAlert
+    val cardContainerColor = when {
+        outOfStock -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.24f)
+        lowStock -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.28f)
+        else -> MaterialTheme.colorScheme.surface
+    }
+    val cardBorder = when {
+        outOfStock -> BorderStroke(1.5.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.8f))
+        lowStock -> BorderStroke(1.5.dp, MaterialTheme.colorScheme.secondary)
+        else -> null
+    }
 
     Card(
         shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        modifier = Modifier.fillMaxWidth()
+        colors = CardDefaults.cardColors(containerColor = cardContainerColor),
+        border = cardBorder,
+        elevation = CardDefaults.cardElevation(defaultElevation = if (outOfStock || lowStock) 2.dp else 1.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("stock_product_card_${product.catalogCode}")
     ) {
         Row(
             Modifier
@@ -2505,13 +2862,78 @@ private fun StockProductCard(
             }
 
             Column(Modifier.weight(1f)) {
-                Text(
-                    product.name,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        product.name,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    if (isBulkOnly) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Text(
+                                "Bulk stock",
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                    } else {
+                        val badgeBg = when {
+                            outOfStock -> MaterialTheme.colorScheme.errorContainer
+                            lowStock -> MaterialTheme.colorScheme.secondaryContainer
+                            else -> MaterialTheme.colorScheme.primaryContainer
+                        }
+                        val badgeFg = when {
+                            outOfStock -> MaterialTheme.colorScheme.onErrorContainer
+                            lowStock -> MaterialTheme.colorScheme.onSecondaryContainer
+                            else -> MaterialTheme.colorScheme.onPrimaryContainer
+                        }
+                        val badgeText = when {
+                            outOfStock -> "OUT OF STOCK"
+                            lowStock -> "LOW · ${product.stockQuantity} left"
+                            else -> "${product.stockQuantity} in stock"
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = badgeBg,
+                            modifier = Modifier.testTag("stock_status_badge_${product.catalogCode}")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                if (outOfStock || lowStock) {
+                                    Icon(
+                                        imageVector = if (outOfStock) Icons.Default.ErrorOutline else Icons.Default.WarningAmber,
+                                        contentDescription = badgeText,
+                                        tint = badgeFg,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
+                                Text(
+                                    badgeText,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = badgeFg,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+                }
 
                 // Show units of sale configured (e.g. Bottle @ 300, Glass @ 70, Cup @ 35)
                 if (units.size > 1) {
@@ -2545,6 +2967,70 @@ private fun StockProductCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+
+                // Stock vs minimum threshold visual gauge for tracked items
+                if (!isBulkOnly) {
+                    val threshold = product.lowStockThreshold.coerceAtLeast(1)
+                    val meterRatio = (product.stockQuantity.toFloat() / (threshold * 2f)).coerceIn(0f, 1f)
+                    val meterColor = when {
+                        outOfStock -> MaterialTheme.colorScheme.error
+                        lowStock -> MaterialTheme.colorScheme.secondary
+                        else -> MaterialTheme.colorScheme.primary
+                    }
+                    val trackColor = when {
+                        outOfStock -> MaterialTheme.colorScheme.error.copy(alpha = 0.22f)
+                        lowStock -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.22f)
+                        else -> MaterialTheme.colorScheme.surfaceVariant
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                            .testTag("stock_threshold_bar_${product.catalogCode}"),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = when {
+                                    outOfStock -> "Restock needed immediately"
+                                    lowStock -> "At or below minimum stock"
+                                    else -> "Stock healthy"
+                                },
+                                fontSize = 10.sp,
+                                fontWeight = if (outOfStock || lowStock) FontWeight.Bold else FontWeight.Medium,
+                                color = if (outOfStock || lowStock) meterColor else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "Min: ${product.lowStockThreshold}",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (outOfStock || lowStock) meterColor else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(5.dp)
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(trackColor)
+                        ) {
+                            if (meterRatio > 0f) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(meterRatio)
+                                        .height(5.dp)
+                                        .clip(RoundedCornerShape(999.dp))
+                                        .background(meterColor)
+                                )
+                            }
+                        }
+                    }
+                }
 
                 // Clean Action Buttons: ONLY "+ Add" and "Edit" (No bulky +24 or +6 buttons!)
                 if (canReceiveStock || canEditProducts || canTransferStock) Row(
@@ -4243,6 +4729,14 @@ private fun EmptyStateMessage(message: String) {
         )
     }
 }
+
+private fun isBulkContainerProduct(product: ProductEntity): Boolean {
+    val units = resolveSaleUnits(product)
+    return units.isNotEmpty() && units.all { it.stockUnitsPerSale == 0 }
+}
+
+private fun isLowOrOutOfStock(product: ProductEntity): Boolean =
+    product.inMyStock && !isBulkContainerProduct(product) && product.stockQuantity <= product.lowStockThreshold
 
 private fun ProductEntity.matches(query: String): Boolean {
     if (query.isBlank()) return true

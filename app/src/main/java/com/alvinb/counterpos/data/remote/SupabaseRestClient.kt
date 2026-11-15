@@ -10,17 +10,21 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.ConnectionPool
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
-import java.nio.charset.StandardCharsets
 import java.net.ConnectException
 import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
-import java.net.URL
 import java.net.UnknownHostException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 open class SupabaseHttpException(val statusCode: Int, message: String) : IOException(message)
 
@@ -194,13 +198,29 @@ class SupabaseRestClient(context: Context) {
     private val installationId = sessionStore.installationId()
     private val refreshMutex = Mutex()
     private val signedPhotoUrlCache = ConcurrentHashMap<String, String>()
+    private val httpClient = OkHttpClient.Builder()
+        .connectionPool(ConnectionPool(8, 5, TimeUnit.MINUTES))
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .writeTimeout(20, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .build()
+    private val darajaHttpClient = httpClient.newBuilder()
+        .readTimeout(45, TimeUnit.SECONDS)
+        .build()
+    private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     @Volatile private var session: AuthSession? = loadSession()
+    @Volatile var onAccessTokenUpdated: ((String) -> Unit)? = null
 
     val hasSession: Boolean
         get() = session != null
 
     val currentUserId: String?
         get() = session?.userId
+
+    /** Returns the cached local session with zero network calls. */
+    fun cachedAuthSession(): AuthSession? =
+        session ?: loadSession()?.also { session = it }
 
     /** Token used only to authenticate the Realtime channel for the active tenant. */
     fun currentAccessToken(): String? = session?.accessToken
@@ -1460,23 +1480,18 @@ class SupabaseRestClient(context: Context) {
         retryOnUnauthorized: Boolean = true
     ): HttpResponse = withContext(Dispatchers.IO) {
         val requestSession = session ?: throw IOException("Not signed in")
-        val connection = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
-            requestMethod = method
-            connectTimeout = 15_000
-            readTimeout = 30_000
-            doInput = true
-            doOutput = true
-            setRequestProperty("apikey", publishableKey)
-            setRequestProperty("Accept", "application/json")
-            setRequestProperty("Content-Type", contentType)
-            extraHeaders.forEach { (key, value) -> setRequestProperty(key, value) }
-            setRequestProperty("Authorization", "Bearer ${requestSession.accessToken}")
-            outputStream.use { it.write(body) }
+        val mediaType = contentType.toMediaType()
+        val requestBuilder = Request.Builder()
+            .url(baseUrl + path)
+            .method(method, body.toRequestBody(mediaType))
+            .header("apikey", publishableKey)
+            .header("Accept", "application/json")
+            .header("Authorization", "Bearer ${requestSession.accessToken}")
+        extraHeaders.forEach { (key, value) -> requestBuilder.header(key, value) }
+
+        val (status, text) = httpClient.newCall(requestBuilder.build()).execute().use { response ->
+            response.code to (response.body?.string().orEmpty())
         }
-        val status = connection.responseCode
-        val stream = if (status in 200..299) connection.inputStream else connection.errorStream ?: runCatching { connection.inputStream }.getOrNull()
-        val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-        connection.disconnect()
         if (status == HttpURLConnection.HTTP_UNAUTHORIZED && retryOnUnauthorized) {
             when (refreshSession(requestSession.accessToken, requestSession.userId)) {
                 RefreshOutcome.REFRESHED -> return@withContext requestBinary(path, method, body, contentType, extraHeaders, false)
@@ -1496,33 +1511,29 @@ class SupabaseRestClient(context: Context) {
         retryOnUnauthorized: Boolean = true
     ): HttpResponse = withContext(Dispatchers.IO) {
         val requestSession = if (authenticated) session ?: throw IOException("Not signed in") else null
-        val connection = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
-            requestMethod = method
-            connectTimeout = 15_000
-            readTimeout = if (path.startsWith("/functions/v1/daraja-stk-")) 45_000 else 20_000
-            doInput = true
-            setRequestProperty("apikey", publishableKey)
-            setRequestProperty("Accept", "application/json")
-            setRequestProperty("Content-Type", "application/json")
-            if (path.startsWith("/rest/v1/") && !path.startsWith("/rest/v1/rpc/") && (method == "POST" || method == "PATCH")) {
-                setRequestProperty("Prefer", "return=representation")
-            }
-            if (authenticated) {
-                setRequestProperty("Authorization", "Bearer ${requestSession!!.accessToken}")
-            }
-            if (body != null) {
-                doOutput = true
-                outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
-            }
+        val requestBody = when {
+            body != null -> body.toRequestBody(jsonMediaType)
+            method.equals("POST", ignoreCase = true) ||
+                method.equals("PUT", ignoreCase = true) ||
+                method.equals("PATCH", ignoreCase = true) -> ByteArray(0).toRequestBody(jsonMediaType)
+            else -> null
         }
-        val status = connection.responseCode
-        val stream = if (status in 200..299) {
-            connection.inputStream
-        } else {
-            connection.errorStream ?: runCatching { connection.inputStream }.getOrNull()
+        val requestBuilder = Request.Builder()
+            .url(baseUrl + path)
+            .method(method.uppercase(), requestBody)
+            .header("apikey", publishableKey)
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+        if (path.startsWith("/rest/v1/") && !path.startsWith("/rest/v1/rpc/") && (method == "POST" || method == "PATCH")) {
+            requestBuilder.header("Prefer", "return=representation")
         }
-        val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-        connection.disconnect()
+        if (authenticated) {
+            requestBuilder.header("Authorization", "Bearer ${requestSession!!.accessToken}")
+        }
+        val client = if (path.startsWith("/functions/v1/daraja-stk-")) darajaHttpClient else httpClient
+        val (status, text) = client.newCall(requestBuilder.build()).execute().use { response ->
+            response.code to (response.body?.string().orEmpty())
+        }
         if (status == HttpURLConnection.HTTP_UNAUTHORIZED && authenticated && retryOnUnauthorized) {
             when (refreshSession(requestSession!!.accessToken, requestSession.userId)) {
                 RefreshOutcome.REFRESHED -> return@withContext requestRaw(path, method, body, authenticated, false)
@@ -1595,6 +1606,7 @@ class SupabaseRestClient(context: Context) {
 
     private fun saveSession(value: AuthSession) {
         session = value
+        onAccessTokenUpdated?.invoke(value.accessToken)
         sessionStore.save(
             JSONObject()
                 .put("access_token", value.accessToken)

@@ -1,6 +1,9 @@
 package com.alvinb.counterpos
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.Build
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -11,15 +14,16 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import java.io.IOException
-import java.util.concurrent.TimeoutException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import kotlinx.coroutines.CancellationException
 
 /**
- * WorkManager-based background sync worker.
- * Automatically pushes local Room database changes (sales, stock, tables) to Supabase
- * as soon as an internet connection is detected, guaranteeing data integrity during offline operations.
+ * WorkManager-based background sync worker that drains local Room outbox queues
+ * to Supabase when a stable internet connection is present, while keeping local
+ * Room UI reads and POS writes responsive.
  */
 class OfflineOutboxWorker(
     appContext: Context,
@@ -27,14 +31,24 @@ class OfflineOutboxWorker(
 ) : CoroutineWorker(appContext, workerParams) {
     override suspend fun doWork(): Result {
         return try {
-            // 1. Rehydrate session and tenant context in case worker runs in a clean process
-            counterPosApplication.repository.restoreSession()
+            if (!isStableInternetConnected(applicationContext)) {
+                return Result.retry()
+            }
 
-            // 2. Push all locally queued Room changes (outbox) to Supabase
-            counterPosApplication.repository.syncPendingOutbox(refreshSnapshot = false)
+            // 1. Rehydrate local session & active tenant context directly from Room without blocking UI.
+            val snapshot = counterPosApplication.repository.restoreSessionFromCacheOnly()
+            if (!snapshot.isAuthenticated || snapshot.activeBusiness == null) {
+                return Result.success()
+            }
 
-            // 3. Perform two-way reconciliation with Supabase when online
-            counterPosApplication.repository.synchronizeWhenOnline()
+            // 2. Execute the requested sync profile cleanly under repository serialization.
+            val mode = inputData.getString(KEY_SYNC_MODE) ?: MODE_FLUSH_OUTBOX
+            if (mode == MODE_FULL_SYNC) {
+                counterPosApplication.repository.keepSessionAlive()
+                counterPosApplication.repository.synchronizeWhenOnline(force = false)
+            } else {
+                counterPosApplication.repository.flushOutboxViaWorker()
+            }
 
             Result.success()
         } catch (exception: CancellationException) {
@@ -50,19 +64,52 @@ class OfflineOutboxWorker(
     companion object {
         const val WORK_NAME = "counter_pos_offline_outbox_sync"
         const val PERIODIC_WORK_NAME = "counter_pos_periodic_sync"
-        private const val INITIAL_BACKOFF_SECONDS = 30L
+        const val KEY_SYNC_MODE = "sync_mode"
+        const val KEY_TRIGGER_SOURCE = "trigger_source"
+        const val MODE_FLUSH_OUTBOX = "flush_outbox"
+        const val MODE_FULL_SYNC = "full_sync"
+        private const val INITIAL_BACKOFF_SECONDS = 15L
+
+        @Volatile
+        internal var stabilityCheckOverride: ((Context) -> Boolean)? = null
 
         /**
-         * Enqueues an immediate one-time sync task constrained to run when an internet
-         * connection is detected.
+         * Verifies that the active network provides both internet transport and
+         * validated upstream reachability (excluding captive or stalled links).
          */
-        fun enqueue(context: Context) {
+        fun isStableInternetConnected(context: Context): Boolean {
+            stabilityCheckOverride?.let { return it(context) }
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return false
+            val network = cm.activeNetwork ?: return false
+            val capabilities = cm.getNetworkCapabilities(network) ?: return false
+            val hasInternet = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            val isValidated = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            val notSuspended = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED)
+            } else {
+                true
+            }
+            return hasInternet && isValidated && notSuspended
+        }
+
+        /**
+         * Enqueues a constrained outbox flush task. Uses APPEND_OR_REPLACE so an
+         * active upload is never aborted mid-flight when rapid POS writes arrive.
+         */
+        fun enqueueOutboxFlush(context: Context, triggerSource: String = "mutation") {
             try {
                 val constraints = Constraints.Builder()
                     .setRequiredNetworkType(NetworkType.CONNECTED)
                     .build()
                 val request = OneTimeWorkRequestBuilder<OfflineOutboxWorker>()
                     .setConstraints(constraints)
+                    .setInputData(
+                        workDataOf(
+                            KEY_SYNC_MODE to MODE_FLUSH_OUTBOX,
+                            KEY_TRIGGER_SOURCE to triggerSource
+                        )
+                    )
                     .setBackoffCriteria(
                         BackoffPolicy.EXPONENTIAL,
                         INITIAL_BACKOFF_SECONDS,
@@ -72,27 +119,40 @@ class OfflineOutboxWorker(
 
                 WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
                     WORK_NAME,
-                    ExistingWorkPolicy.REPLACE,
+                    ExistingWorkPolicy.APPEND_OR_REPLACE,
                     request
                 )
             } catch (_: Exception) {
-                // WorkManager may be uninitialized in unit test runners.
+                // WorkManager may be uninitialized in standalone JVM unit test runners.
             }
         }
 
+        /** Backwards-compatible alias for [enqueueOutboxFlush]. */
+        fun enqueue(context: Context) {
+            enqueueOutboxFlush(context, triggerSource = "enqueue")
+        }
+
         /**
-         * Enqueues a periodic background sync every 15 minutes that only executes
-         * when the device has an active internet connection.
+         * Enqueues a periodic background reconciliation job every 15 minutes with
+         * storage and battery constraints that prioritize local Room responsiveness.
          */
         fun enqueuePeriodic(context: Context) {
             try {
                 val constraints = Constraints.Builder()
                     .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .setRequiresBatteryNotLow(true)
+                    .setRequiresStorageNotLow(true)
                     .build()
                 val periodicRequest = PeriodicWorkRequestBuilder<OfflineOutboxWorker>(
                     15, TimeUnit.MINUTES
                 )
                     .setConstraints(constraints)
+                    .setInputData(
+                        workDataOf(
+                            KEY_SYNC_MODE to MODE_FULL_SYNC,
+                            KEY_TRIGGER_SOURCE to "periodic"
+                        )
+                    )
                     .setBackoffCriteria(
                         BackoffPolicy.EXPONENTIAL,
                         INITIAL_BACKOFF_SECONDS,
@@ -106,7 +166,7 @@ class OfflineOutboxWorker(
                     periodicRequest
                 )
             } catch (_: Exception) {
-                // WorkManager may be uninitialized in unit test runners.
+                // WorkManager may be uninitialized in standalone JVM unit test runners.
             }
         }
 

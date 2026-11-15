@@ -14,6 +14,8 @@ import com.alvinb.counterpos.data.local.entity.TableOrderEntity
 import com.alvinb.counterpos.data.local.entity.parseSaleUnits
 import kotlinx.coroutines.flow.Flow
 import com.alvinb.counterpos.data.local.entity.OfflineSessionEntity
+import com.alvinb.counterpos.data.local.entity.OfflineTransactionLogEntity
+import com.alvinb.counterpos.data.local.entity.OfflineTransactionStatus
 import com.alvinb.counterpos.data.local.entity.OutboxEntity
 @Dao
 interface CounterPosDao {
@@ -54,12 +56,19 @@ interface CounterPosDao {
     @Query("UPDATE counter_stock SET quantity = quantity + :quantity WHERE counterId = :counterId AND catalogCode = :catalogCode")
     suspend fun incrementCounterStock(counterId: String, catalogCode: String, quantity: Int): Int
     @Transaction
-    suspend fun queueCounterTransfer(outbox: OutboxEntity, sourceCounterId: String, targetBalance: CounterStockEntity, quantity: Int): Boolean {
+    suspend fun queueCounterTransfer(
+        outbox: OutboxEntity,
+        sourceCounterId: String,
+        targetBalance: CounterStockEntity,
+        quantity: Int,
+        log: OfflineTransactionLogEntity? = null
+    ): Boolean {
         if (quantity < 1) return false
         val available = getCounterStockQuantity(sourceCounterId, targetBalance.catalogCode) ?: return false
         if (available < quantity || decrementCounterStock(sourceCounterId, targetBalance.catalogCode, quantity) != 1) return false
         insertCounterStock(listOf(targetBalance))
         enqueueOutbox(outbox)
+        if (log != null) insertTransactionLog(log)
         return true
     }
     @Query("SELECT * FROM sync_outbox WHERE shopId = :shopId AND blocked = 0 ORDER BY createdAt ASC, operationId ASC")
@@ -98,6 +107,123 @@ interface CounterPosDao {
     suspend fun outboxForSale(saleId: Long): OutboxEntity?
     @Query("DELETE FROM sync_outbox WHERE localSaleId = :saleId")
     suspend fun cancelOutboxForSale(saleId: Long): Int
+
+    // ---- Offline Transaction Log Queries & Lifecycle ----
+    @Query("SELECT * FROM offline_transaction_logs WHERE shopId = :shopId ORDER BY createdAt DESC LIMIT :limit")
+    fun observeTransactionLogs(shopId: String, limit: Int = 120): Flow<List<OfflineTransactionLogEntity>>
+
+    @Query(
+        "SELECT COUNT(*) FROM offline_transaction_logs " +
+            "WHERE shopId = :shopId AND status IN ('QUEUED', 'SYNCING', 'RETRY_WAITING', 'BLOCKED')"
+    )
+    fun observePendingTransactionLogCount(shopId: String): Flow<Int>
+
+    @Query("SELECT * FROM offline_transaction_logs WHERE shopId = :shopId ORDER BY createdAt DESC LIMIT :limit")
+    suspend fun getTransactionLogsForShop(shopId: String, limit: Int = 120): List<OfflineTransactionLogEntity>
+
+    @Query("SELECT * FROM offline_transaction_logs WHERE operationId = :operationId LIMIT 1")
+    suspend fun getTransactionLog(operationId: String): OfflineTransactionLogEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTransactionLog(log: OfflineTransactionLogEntity)
+
+    @Query("UPDATE offline_transaction_logs SET status = 'SYNCING', updatedAt = :updatedAt WHERE operationId = :operationId")
+    suspend fun markTransactionLogSyncing(operationId: String, updatedAt: Long)
+
+    @Query(
+        "UPDATE offline_transaction_logs SET status = 'SYNCED', lastError = NULL, syncedAt = :syncedAt, updatedAt = :syncedAt " +
+            "WHERE operationId = :operationId"
+    )
+    suspend fun markTransactionLogSynced(operationId: String, syncedAt: Long)
+
+    @Query(
+        "UPDATE offline_transaction_logs SET status = 'RETRY_WAITING', attempts = attempts + 1, lastError = :error, updatedAt = :updatedAt " +
+            "WHERE operationId = :operationId"
+    )
+    suspend fun markTransactionLogRetryWaiting(operationId: String, error: String?, updatedAt: Long)
+
+    @Query(
+        "UPDATE offline_transaction_logs SET status = 'BLOCKED', attempts = attempts + 1, lastError = :error, updatedAt = :updatedAt " +
+            "WHERE operationId = :operationId"
+    )
+    suspend fun markTransactionLogBlocked(operationId: String, error: String, updatedAt: Long)
+
+    @Query(
+        "UPDATE offline_transaction_logs SET status = 'CANCELLED', lastError = NULL, updatedAt = :updatedAt " +
+            "WHERE localSaleId = :saleId AND status <> 'SYNCED'"
+    )
+    suspend fun markTransactionLogCancelledBySale(saleId: Long, updatedAt: Long)
+
+    @Query(
+        "UPDATE offline_transaction_logs SET status = 'QUEUED', lastError = NULL, updatedAt = :updatedAt " +
+            "WHERE shopId = :shopId AND status IN ('BLOCKED', 'RETRY_WAITING')"
+    )
+    suspend fun unblockTransactionLogsForShop(shopId: String, updatedAt: Long)
+
+    @Query(
+        "UPDATE offline_transaction_logs SET status = 'QUEUED', lastError = NULL, updatedAt = :updatedAt " +
+            "WHERE operationId = :operationId"
+    )
+    suspend fun unblockTransactionLog(operationId: String, updatedAt: Long)
+
+    @Query(
+        "UPDATE offline_transaction_logs SET status = 'QUEUED', updatedAt = :updatedAt " +
+            "WHERE shopId = :shopId AND status = 'SYNCING'"
+    )
+    suspend fun resetStaleSyncingTransactionLogs(shopId: String, updatedAt: Long)
+
+    @Query(
+        "DELETE FROM offline_transaction_logs WHERE shopId = :shopId AND status IN ('SYNCED', 'CANCELLED') " +
+            "AND operationId NOT IN (" +
+            "SELECT operationId FROM offline_transaction_logs WHERE shopId = :shopId AND status IN ('SYNCED', 'CANCELLED') " +
+            "ORDER BY createdAt DESC LIMIT :keepCount" +
+            ")"
+    )
+    suspend fun pruneOldSyncedTransactionLogs(shopId: String, keepCount: Int = 150)
+
+    @Transaction
+    suspend fun enqueueOutboxAndLog(item: OutboxEntity, log: OfflineTransactionLogEntity) {
+        enqueueOutbox(item)
+        insertTransactionLog(log)
+    }
+
+    @Transaction
+    suspend fun completeOutboxSync(operationId: String, syncedAt: Long = System.currentTimeMillis()) {
+        acknowledgeOutboxItem(operationId)
+        markTransactionLogSynced(operationId, syncedAt)
+    }
+
+    @Transaction
+    suspend fun recordOutboxFailureRetry(
+        operationId: String,
+        error: String?,
+        updatedAt: Long = System.currentTimeMillis()
+    ) {
+        recordOutboxAttempt(operationId, error)
+        markTransactionLogRetryWaiting(operationId, error, updatedAt)
+    }
+
+    @Transaction
+    suspend fun blockOutboxAndLog(
+        operationId: String,
+        error: String,
+        updatedAt: Long = System.currentTimeMillis()
+    ) {
+        blockOutboxItem(operationId, error)
+        markTransactionLogBlocked(operationId, error, updatedAt)
+    }
+
+    @Transaction
+    suspend fun unblockShopOutboxAndLogs(shopId: String, updatedAt: Long = System.currentTimeMillis()): Int {
+        unblockTransactionLogsForShop(shopId, updatedAt)
+        return unblockOutboxForShop(shopId)
+    }
+
+    @Transaction
+    suspend fun unblockSingleOutboxAndLog(operationId: String, updatedAt: Long = System.currentTimeMillis()): Int {
+        unblockTransactionLog(operationId, updatedAt)
+        return unblockOutboxItem(operationId)
+    }
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveOfflineSession(session: OfflineSessionEntity)
     @Query("SELECT * FROM offline_session WHERE `key` = 'account' LIMIT 1")
@@ -117,9 +243,14 @@ interface CounterPosDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertDiningTable(table: DiningTableEntity)
     @Transaction
-    suspend fun queueDiningTable(table: DiningTableEntity, outbox: OutboxEntity) {
+    suspend fun queueDiningTable(
+        table: DiningTableEntity,
+        outbox: OutboxEntity,
+        log: OfflineTransactionLogEntity? = null
+    ) {
         insertDiningTable(table)
         enqueueOutbox(outbox)
+        if (log != null) insertTransactionLog(log)
     }
     @Query("UPDATE dining_tables SET remoteId = :remoteId WHERE id = :localId")
     suspend fun setDiningTableRemoteId(localId: String, remoteId: String): Int
@@ -145,6 +276,12 @@ interface CounterPosDao {
 
     @Query("SELECT * FROM products ORDER BY name COLLATE NOCASE ASC")
     fun observeProducts(): Flow<List<ProductEntity>>
+
+    @Query("SELECT * FROM products WHERE inMyStock = 1 AND stockQuantity <= lowStockThreshold ORDER BY stockQuantity ASC, name COLLATE NOCASE ASC")
+    fun observeLowStockProducts(): Flow<List<ProductEntity>>
+
+    @Query("SELECT COUNT(*) FROM products WHERE inMyStock = 1 AND stockQuantity <= lowStockThreshold")
+    fun observeLowStockCount(): Flow<Int>
 
     @Query("SELECT * FROM sales ORDER BY createdAt DESC, id DESC")
     fun observeSales(): Flow<List<SaleEntity>>
@@ -246,16 +383,28 @@ interface CounterPosDao {
     suspend fun insertProduct(product: ProductEntity): Long
 
     @Transaction
-    suspend fun queueProductChange(product: ProductEntity, outbox: OutboxEntity, counterStock: CounterStockEntity? = null) {
+    suspend fun queueProductChange(
+        product: ProductEntity,
+        outbox: OutboxEntity,
+        counterStock: CounterStockEntity? = null,
+        log: OfflineTransactionLogEntity? = null
+    ) {
         insertProduct(product)
         if (counterStock != null) insertCounterStock(listOf(counterStock))
         enqueueOutbox(outbox)
+        if (log != null) insertTransactionLog(log)
     }
     @Transaction
-    suspend fun queueProductChanges(product: ProductEntity, outboxItems: List<OutboxEntity>, counterStock: CounterStockEntity? = null) {
+    suspend fun queueProductChanges(
+        product: ProductEntity,
+        outboxItems: List<OutboxEntity>,
+        counterStock: CounterStockEntity? = null,
+        logs: List<OfflineTransactionLogEntity> = emptyList()
+    ) {
         insertProduct(product)
         if (counterStock != null) insertCounterStock(listOf(counterStock))
         outboxItems.forEach { enqueueOutbox(it) }
+        logs.forEach { insertTransactionLog(it) }
     }
 
     @Query("UPDATE products SET remoteId = :remoteId WHERE catalogCode = :code")
@@ -318,7 +467,8 @@ interface CounterPosDao {
         outbox: OutboxEntity,
         counterId: String,
         stockToDecrement: Int,
-        perCounter: Boolean
+        perCounter: Boolean,
+        log: OfflineTransactionLogEntity? = null
     ): Long? {
         if (stockToDecrement < 0) return null
         val product = getProductByCode(sale.catalogCode) ?: return null
@@ -333,6 +483,7 @@ interface CounterPosDao {
         }
         val localId = insertSale(sale)
         enqueueOutbox(outbox.copy(localSaleId = localId))
+        if (log != null) insertTransactionLog(log.copy(localSaleId = localId))
         return localId
     }
 
@@ -342,7 +493,8 @@ interface CounterPosDao {
         productCode: String,
         counterId: String,
         stockToDecrement: Int,
-        perCounter: Boolean
+        perCounter: Boolean,
+        log: OfflineTransactionLogEntity? = null
     ): Boolean {
         if (stockToDecrement < 1) return false
         val product = getProductByCode(productCode) ?: return false
@@ -354,6 +506,7 @@ interface CounterPosDao {
             if (product.stockQuantity < stockToDecrement || decrementStock(productCode, stockToDecrement) != 1) return false
         }
         enqueueOutbox(outbox)
+        if (log != null) insertTransactionLog(log)
         return true
     }
 
@@ -377,7 +530,8 @@ interface CounterPosDao {
         outbox: OutboxEntity,
         counterId: String,
         stockToDecrement: Int,
-        perCounter: Boolean
+        perCounter: Boolean,
+        log: OfflineTransactionLogEntity? = null
     ): Long? {
         if (stockToDecrement < 0 || getDiningTable(order.tableId) == null) return null
         val product = getProductByCode(sale.catalogCode) ?: return null
@@ -394,6 +548,7 @@ interface CounterPosDao {
         if (localSaleId <= 0L) return null
         insertTableOrder(order.copy(saleId = localSaleId))
         enqueueOutbox(outbox.copy(localSaleId = localSaleId))
+        if (log != null) insertTransactionLog(log.copy(localSaleId = localSaleId))
         return localSaleId
     }
 
@@ -424,12 +579,18 @@ interface CounterPosDao {
         } else restoreStock(sale.catalogCode, restore) == 1
         if (!restored) return false
         cancelOutboxForSale(sale.id)
+        markTransactionLogCancelledBySale(sale.id, System.currentTimeMillis())
         deleteTableOrderBySaleId(sale.id)
         return markSaleUndone(sale.id) == 1
     }
 
     @Transaction
-    suspend fun queueUndoSale(sale: SaleEntity, outbox: OutboxEntity, perCounter: Boolean): Boolean {
+    suspend fun queueUndoSale(
+        sale: SaleEntity,
+        outbox: OutboxEntity,
+        perCounter: Boolean,
+        log: OfflineTransactionLogEntity? = null
+    ): Boolean {
         if (sale.undone || sale.remoteId.isNullOrBlank()) return false
         val product = getProductByCode(sale.catalogCode)
         val unitsPerSale = product?.let { current ->
@@ -446,6 +607,7 @@ interface CounterPosDao {
         deleteTableOrderBySaleId(sale.id)
         if (markSaleUndone(sale.id) != 1) return false
         enqueueOutbox(outbox.copy(localSaleId = sale.id))
+        if (log != null) insertTransactionLog(log.copy(localSaleId = sale.id))
         return true
     }
 

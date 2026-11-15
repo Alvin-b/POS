@@ -8,6 +8,8 @@ import com.alvinb.counterpos.BuildConfig
 import com.alvinb.counterpos.data.local.dao.CounterPosDao
 import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.OfflineSessionEntity
+import com.alvinb.counterpos.data.local.entity.OfflineTransactionLogEntity
+import com.alvinb.counterpos.data.local.entity.OfflineTransactionStatus
 import com.alvinb.counterpos.data.local.entity.OutboxEntity
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
@@ -45,6 +47,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -53,7 +56,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 
@@ -93,10 +95,15 @@ class CounterPosRepository(
     data class ApprovedAccess(val session: SessionSnapshot, val businessId: String?)
 
     val products: Flow<List<ProductEntity>> = dao.observeProducts()
+    val lowStockProducts: Flow<List<ProductEntity>> = dao.observeLowStockProducts()
     val sales: Flow<List<SaleEntity>> = dao.observeSales()
     val diningTables: Flow<List<DiningTableEntity>> = dao.observeDiningTables()
     val tableOrders: Flow<List<TableOrderEntity>> = dao.observeTableOrders()
     val pendingSyncCount: Flow<Int> = dao.observePendingOutboxCount()
+    fun observeTransactionLogs(shopId: String): Flow<List<OfflineTransactionLogEntity>> =
+        dao.observeTransactionLogs(shopId)
+    fun observePendingTransactionLogCount(shopId: String): Flow<Int> =
+        dao.observePendingTransactionLogCount(shopId)
     fun observeTableSettlementOutbox(shopId: String): Flow<List<OutboxEntity>> =
         dao.observeTableSettlementOutbox(shopId)
     fun observeCounterStock(shopId: String, counterId: String): Flow<Map<String, Int>> =
@@ -118,28 +125,95 @@ class CounterPosRepository(
     private val syncMutex = Mutex()
     private val outboxClock = AtomicLong(0L)
     private val lastSyncCompletedAt = AtomicLong(0L)
-    private val backgroundSyncQueued = AtomicBoolean(false)
-    @Volatile private var backgroundSyncJob: Job? = null
+    private val lastOutboxPushAt = AtomicLong(0L)
+    @Volatile private var startupSyncJob: Job? = null
     @Volatile private var cachedCatalogRows: JSONArray? = null
     @Volatile private var cachedBundledMetadata: Pair<Map<String, BundledProductMetadata>, Map<String, BundledProductMetadata>>? = null
     private val realtimeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var realtimeRefreshJob: Job? = null
+    private var realtimeShopRefreshJob: Job? = null
     private val realtime = SupabaseRealtimeClient(
         baseUrl = BuildConfig.SUPABASE_URL,
         publishableKey = BuildConfig.SUPABASE_PUBLISHABLE_KEY,
         accessToken = remote::currentAccessToken,
-        onDataChanged = ::scheduleRealtimeRefresh
+        onDataChanged = ::scheduleRealtimeRefresh,
+        onShopChanged = ::scheduleShopSubscriptionRefresh
     )
+
+    init {
+        remote.onAccessTokenUpdated = { token ->
+            realtime.updateAccessToken(token)
+        }
+    }
 
     private fun startRealtimeFor(membership: BusinessMembership) {
         realtime.start(membership.shopId)
     }
 
+    fun reconnectRealtimeIfNeeded() {
+        if (activeBusiness != null) realtime.reconnectIfNeeded()
+    }
+
+    suspend fun hasPendingOutboxAll(): Boolean = withContext(Dispatchers.IO) {
+        dao.outboxCountAll() > 0
+    }
+
+    private fun scheduleShopSubscriptionRefresh() {
+        val activeShop = activeBusiness ?: return
+        realtimeShopRefreshJob?.cancel()
+        realtimeShopRefreshJob = realtimeScope.launch {
+            delay(150L)
+            if (activeBusiness?.shopId == activeShop.shopId) {
+                refreshActiveBusinessSubscription()
+            }
+        }
+    }
+
     private fun scheduleRealtimeRefresh() {
+        val activeShop = activeBusiness ?: return
+        val recentSelfPush = (System.currentTimeMillis() - lastOutboxPushAt.get()) < 1_500L
         realtimeRefreshJob?.cancel()
         realtimeRefreshJob = realtimeScope.launch {
-            delay(350)
-            if (activeBusiness != null) runCatching { syncPendingOutbox(refreshSnapshot = true) }
+            delay(if (recentSelfPush) 900L else 250L)
+            if (activeBusiness?.shopId == activeShop.shopId) {
+                if (dao.outboxCount(activeShop.shopId) > 0) {
+                    OfflineOutboxWorker.enqueueOutboxFlush(context, triggerSource = "realtime")
+                } else {
+                    runCatching {
+                        syncPendingOutbox(
+                            refreshSnapshot = true,
+                            includeCatalog = false
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun enqueueOutboxSync(triggerSource: String = "manual_enqueue") {
+        OfflineOutboxWorker.enqueueOutboxFlush(context, triggerSource = triggerSource)
+    }
+
+    suspend fun flushOutboxViaWorker() = withContext(Dispatchers.IO) {
+        val shop = activeBusiness ?: return@withContext
+        if (remote.cachedAuthSession() == null) return@withContext
+        val pendingCount = dao.outboxCount(shop.shopId)
+        if (pendingCount > 0) {
+            val stale = (System.currentTimeMillis() - lastSyncCompletedAt.get()) >= 15_000L
+            syncPendingOutbox(
+                refreshSnapshot = stale,
+                includeCatalog = false
+            )
+        } else {
+            val stale = (System.currentTimeMillis() - lastSyncCompletedAt.get()) >= 60_000L
+            if (stale) {
+                runCatching {
+                    syncPendingOutbox(
+                        refreshSnapshot = true,
+                        includeCatalog = (cachedCatalogRows == null)
+                    )
+                }
+            }
         }
     }
 
@@ -154,7 +228,7 @@ class CounterPosRepository(
         val item = dao.blockedOutbox(shop.shopId).firstOrNull { it.operationId == operationId }
             ?: throw IllegalStateException("This saved change is no longer waiting for attention.")
         check(item.actorUserId == userId || shop.role == "owner") { "Sign in with the account that created this change before retrying it." }
-        check(dao.unblockOutboxItem(operationId) == 1) { "Could not retry this saved change." }
+        check(dao.unblockSingleOutboxAndLog(operationId) == 1) { "Could not retry this saved change." }
         syncPendingOutbox()
         val stillBlocked = dao.blockedOutbox(shop.shopId).firstOrNull { it.operationId == operationId }
         if (stillBlocked != null) {
@@ -162,33 +236,83 @@ class CounterPosRepository(
         }
     }
 
-    suspend fun restoreSession(): SessionSnapshot = withContext(Dispatchers.IO) {
-        // Step 1: Immediately restore cached local session from Room database so user stays logged in
+    suspend fun restoreSessionFromCacheOnly(): SessionSnapshot = withContext(Dispatchers.IO) {
+        if (_session.value.isAuthenticated && activeBusiness != null) {
+            return@withContext _session.value
+        }
         val saved = dao.loadOfflineSession()
         if (saved != null) {
             val cached = runCatching { parseOfflineAccount(saved) }.getOrNull()
             if (cached != null) {
                 account = cached
                 activeBusiness = cached.memberships.firstOrNull { it.shopId == saved.activeShopId }
-                    ?: cached.memberships.firstOrNull { it.status !in setOf("suspended", "terminated", "closed") }
-                activeBusiness?.let { restoreCachedCounters(it.shopId) }
-                _session.value = publishAccount()
+                    ?.takeIf {
+                        it.status !in setOf("suspended", "terminated", "closed") &&
+                            it.employmentStatus !in setOf("suspended", "terminated", "locked")
+                    }
+                    ?: cached.memberships.firstOrNull {
+                        it.status !in setOf("suspended", "terminated", "closed") &&
+                            it.employmentStatus !in setOf("suspended", "terminated", "locked")
+                    }
+                activeBusiness?.let { shop ->
+                    restoreCachedCounters(shop.shopId)
+                }
+                seedCatalogIfEmpty()
+                publishAccount()
+            }
+        }
+        return@withContext _session.value
+    }
+
+    suspend fun restoreSession(): SessionSnapshot = withContext(Dispatchers.IO) {
+        // Step 1: Immediately restore cached local session from Room so cold start never blocks on network.
+        val cachedAuth = remote.cachedAuthSession()
+        val saved = dao.loadOfflineSession()
+        if (saved != null) {
+            val cached = runCatching { parseOfflineAccount(saved) }.getOrNull()
+            if (cached != null) {
+                account = cached
+                activeBusiness = cached.memberships.firstOrNull { it.shopId == saved.activeShopId }
+                    ?.takeIf {
+                        it.status !in setOf("suspended", "terminated", "closed") &&
+                            it.employmentStatus !in setOf("suspended", "terminated", "locked")
+                    }
+                    ?: cached.memberships.firstOrNull {
+                        it.status !in setOf("suspended", "terminated", "closed") &&
+                            it.employmentStatus !in setOf("suspended", "terminated", "locked")
+                    }
+                activeBusiness?.let { shop ->
+                    restoreCachedCounters(shop.shopId)
+                    startRealtimeFor(shop)
+                }
+                seedCatalogIfEmpty()
+                publishAccount()
             }
         }
 
-        // Step 2: Attempt remote restore and account refresh in background
-        val remoteSession = runCatching { remote.restoreSession() }.getOrNull()
-        if (remoteSession != null || _session.value.isAuthenticated) {
+        // Step 2: If a local authenticated snapshot is ready, return immediately and
+        // delegate outbox flushing to constrained WorkManager while refreshing session metadata cleanly.
+        if (_session.value.isAuthenticated) {
+            if (cachedAuth != null && startupSyncJob?.isActive != true) {
+                startupSyncJob = realtimeScope.launch {
+                    val shopId = activeBusiness?.shopId
+                    if (shopId != null && dao.outboxCount(shopId) > 0) {
+                        OfflineOutboxWorker.enqueueOutboxFlush(context, triggerSource = "startup")
+                    }
+                    runCatching { loadAccount(autoSelectSingleBusiness = true) }
+                }
+            }
+            return@withContext _session.value
+        }
+
+        // Step 3: Fresh session with encrypted auth token but no Room snapshot yet.
+        if (cachedAuth != null) {
             runCatching {
+                remote.restoreSession()
                 loadAccount(autoSelectSingleBusiness = true)
             }.onSuccess { refreshed ->
                 return@withContext refreshed
             }
-        }
-
-        // Step 3: Never wipe local session on startup if authenticated locally
-        if (_session.value.isAuthenticated) {
-            return@withContext _session.value
         }
 
         return@withContext _session.value
@@ -495,21 +619,65 @@ class CounterPosRepository(
     }
 
     suspend fun synchronizeWhenOnline(force: Boolean = false): SessionSnapshot = withContext(Dispatchers.IO) {
-        if (remote.restoreSession() == null || activeBusiness == null) return@withContext _session.value
-        val shop = activeBusiness
-        val hasPending = shop != null && dao.outboxCount(shop.shopId) > 0
+        if (remote.cachedAuthSession() == null || activeBusiness == null) return@withContext _session.value
+        val shop = activeBusiness ?: return@withContext _session.value
+        val hasPending = dao.outboxCount(shop.shopId) > 0
         val stale = (System.currentTimeMillis() - lastSyncCompletedAt.get()) >= 4_000L
         if (!force && !hasPending && !stale) return@withContext _session.value
-        runCatching { syncPendingOutbox(refreshSnapshot = false) }
         if (force) cachedCatalogRows = null
-        runCatching { loadAccount(autoSelectSingleBusiness = false) }
+        runCatching {
+            syncPendingOutbox(
+                refreshSnapshot = true,
+                includeCatalog = force || (cachedCatalogRows == null)
+            )
+        }
+        runCatching {
+            val freshAccount = remote.account()
+            val refreshedMembership = freshAccount.memberships.firstOrNull { it.shopId == shop.shopId }
+            val resolvedAccount = if (refreshedMembership != null) {
+                val authoritativeStatus = runCatching { remote.checkDarajaStkStatus(shop.shopId) }.getOrNull()
+                val mergedMembership = if (authoritativeStatus != null) {
+                    SubscriptionManager.mergeServerSubscriptionStatus(
+                        membership = refreshedMembership,
+                        status = authoritativeStatus,
+                        verifiedAtMillis = System.currentTimeMillis()
+                    )
+                } else {
+                    refreshedMembership
+                }
+                freshAccount.copy(
+                    memberships = freshAccount.memberships.map {
+                        if (it.shopId == shop.shopId) mergedMembership else it
+                    }
+                )
+            } else {
+                freshAccount
+            }
+            val latestMembership = resolvedAccount.memberships.firstOrNull { it.shopId == shop.shopId }
+            account = resolvedAccount
+            if (latestMembership != null) {
+                if (latestMembership.status in setOf("suspended", "terminated", "closed") ||
+                    latestMembership.employmentStatus in setOf("suspended", "terminated", "locked")
+                ) {
+                    activeBusiness = resolvedAccount.memberships.firstOrNull {
+                        it.status !in setOf("suspended", "terminated", "closed") &&
+                            it.employmentStatus !in setOf("suspended", "terminated", "locked")
+                    }
+                } else {
+                    activeBusiness = latestMembership
+                }
+            }
+            saveOfflineAccount(resolvedAccount, activeBusiness?.shopId)
+            publishAccount()
+        }
         _session.value
     }
 
     /** Silently refreshes the persisted auth session in the background. */
     suspend fun keepSessionAlive(): Boolean = withContext(Dispatchers.IO) {
+        if (remote.cachedAuthSession() == null) return@withContext false
         runCatching {
-            remote.silentRefreshIfNeeded() || remote.restoreSession() != null
+            remote.silentRefreshIfNeeded() || remote.cachedAuthSession() != null
         }.getOrDefault(true)
     }
 
@@ -772,7 +940,12 @@ class CounterPosRepository(
                 .put("to_counter_id", toCounter)
                 .put("quantity", quantity)
                 .put("reason", "Counter transfer from mobile app")
-            val queued = dao.queueCounterTransfer(newOutbox("transfer_stock", payload), fromCounter, target, quantity)
+            val outbox = newOutbox("transfer_stock", payload)
+            val log = newTransactionLog(
+                outbox = outbox,
+                summary = "Transfer ${quantity}x ${product.name}"
+            )
+            val queued = dao.queueCounterTransfer(outbox, fromCounter, target, quantity, log)
             if (!queued) throw IllegalStateException("Not enough saved stock at the source counter to transfer.")
             check(source >= quantity)
             triggerBackgroundSync()
@@ -885,6 +1058,7 @@ class CounterPosRepository(
 
     suspend fun refreshActiveBusinessSubscription(): SessionSnapshot = withContext(Dispatchers.IO) {
         val currentActive = activeBusiness ?: return@withContext session.value
+        val currentAccount = account ?: return@withContext session.value
         try {
             val statusResult = remote.checkDarajaStkStatus(currentActive.shopId)
             val updatedMembership = SubscriptionManager.mergeServerSubscriptionStatus(
@@ -892,16 +1066,20 @@ class CounterPosRepository(
                 status = statusResult,
                 verifiedAtMillis = System.currentTimeMillis()
             )
-            activeBusiness = updatedMembership
-            account = account?.copy(
-                memberships = account!!.memberships.map { if (it.shopId == currentActive.shopId) updatedMembership else it }
+            val updatedAccount = currentAccount.copy(
+                memberships = currentAccount.memberships.map {
+                    if (it.shopId == currentActive.shopId) updatedMembership else it
+                }
             )
-            saveOfflineAccount(account!!, currentActive.shopId)
-            publishAccount()
+            activeBusiness = updatedMembership
+            account = updatedAccount
+            saveOfflineAccount(updatedAccount, currentActive.shopId)
+            val snapshot = publishAccount()
             if (SubscriptionManager.evaluate(updatedMembership, isOnline = true).isEntitled) {
-                dao.unblockOutboxForShop(currentActive.shopId)
-                triggerBackgroundSync()
+                dao.unblockShopOutboxAndLogs(currentActive.shopId)
+                OfflineOutboxWorker.enqueueOutboxFlush(context, triggerSource = "subscription_restored")
             }
+            snapshot
         } catch (_: Exception) {
             session.value
         }
@@ -935,7 +1113,11 @@ class CounterPosRepository(
             lastPaymentAt = business.lastPaymentAt,
             lastPaymentReceipt = business.lastPaymentReceipt,
             lastPaymentPhone = business.lastPaymentPhone,
-            lastVerifiedEntitlementAt = System.currentTimeMillis()
+            lastVerifiedEntitlementAt = System.currentTimeMillis(),
+            paymentLockActive = business.paymentLockActive,
+            paymentLockAmountKsh = business.paymentLockAmountKsh,
+            paymentLockReason = business.paymentLockReason,
+            paymentLockStartedAt = business.paymentLockStartedAt
         )
     }
 
@@ -1038,7 +1220,9 @@ class CounterPosRepository(
                 _session.value = publishAccount().copy(message = offlineMessage())
                 restoreCachedCounters(selected.shopId)
             }
-            if (dao.outboxCount(selected.shopId) > 0) scheduleAndAttemptSync()
+            if (dao.outboxCount(selected.shopId) > 0) {
+                OfflineOutboxWorker.enqueueOutboxFlush(context, triggerSource = "account_load")
+            }
         }
         saveOfflineAccount(account!!, activeBusiness?.shopId ?: savedShopId)
         return publishAccount()
@@ -1180,7 +1364,10 @@ class CounterPosRepository(
         return (byCode.toMap() to byName.toMap()).also { cachedBundledMetadata = it }
     }
 
-    private suspend fun syncBusiness(membership: BusinessMembership) {
+    private suspend fun syncBusiness(
+        membership: BusinessMembership,
+        includeCatalog: Boolean = (cachedCatalogRows == null)
+    ) {
         if (dao.outboxCount(membership.shopId) > 0) {
             restoreCachedCounters(membership.shopId)
             runCatching { syncPendingOutbox(refreshSnapshot = false) }
@@ -1189,16 +1376,21 @@ class CounterPosRepository(
         seedCatalogIfEmpty()
         val existingProductsList = dao.getAllProducts()
         val existingProductsByCode = existingProductsList.associateBy { it.catalogCode }
-        val bundledCatalogFallbacks = existingProductsList.filter { it.remoteId == null && !it.inMyStock }
+        val preservedCatalogItems = existingProductsList.filter { !it.inMyStock }
         val existingTables = dao.getDiningTables()
 
         runCatching { uploadPendingLocalSales() }
         val hasPendingSales = dao.getPendingRemoteSales().isNotEmpty()
 
+        val shouldFetchCatalog = includeCatalog || (cachedCatalogRows == null && existingProductsList.none { !it.inMyStock && it.remoteId != null })
         val (counters, catalogRows, productRows, saleRows, tableRows, tableOrderRows) = coroutineScope {
             val countersDeferred = async { remote.serviceCounters(membership.shopId) }
             val catalogDeferred = async {
-                cachedCatalogRows ?: remote.catalog().also { cachedCatalogRows = it }
+                when {
+                    cachedCatalogRows != null -> cachedCatalogRows!!
+                    shouldFetchCatalog -> remote.catalog().also { cachedCatalogRows = it }
+                    else -> JSONArray()
+                }
             }
             val productsDeferred = async { remote.products(membership.shopId) }
             val salesDeferred = async { remote.sales(membership.shopId) }
@@ -1410,7 +1602,7 @@ class CounterPosRepository(
             }
         }
         val mergedProducts = linkedMapOf<String, ProductEntity>().apply {
-            bundledCatalogFallbacks.forEach { put(it.catalogCode, it) }
+            preservedCatalogItems.forEach { put(it.catalogCode, it) }
             catalogProducts.forEach { put(it.catalogCode, it) }
             products.forEach { put(it.catalogCode, it) }
         }.values.toList()
@@ -1504,9 +1696,11 @@ class CounterPosRepository(
                 createdAt = System.currentTimeMillis(),
                 remoteId = null
             )
+            val outbox = newOutbox("create_dining_table", JSONObject().put("local_table_id", table.id).put("name", cleanName))
             dao.queueDiningTable(
                 table,
-                newOutbox("create_dining_table", JSONObject().put("local_table_id", table.id).put("name", cleanName))
+                outbox,
+                newTransactionLog(outbox, "Open table $cleanName")
             )
             triggerBackgroundSync()
             table
@@ -1526,7 +1720,8 @@ class CounterPosRepository(
         dao.deleteDiningTable(tableId)
         if (!remoteId.isNullOrBlank()) {
             val payload = JSONObject().put("table_id", remoteId).put("local_table_id", tableId)
-            dao.enqueueOutbox(newOutbox("delete_dining_table", payload))
+            val outbox = newOutbox("delete_dining_table", payload)
+            dao.enqueueOutboxAndLog(outbox, newTransactionLog(outbox, "Delete table ${table.name}"))
             triggerBackgroundSync()
         }
         true
@@ -1549,7 +1744,10 @@ class CounterPosRepository(
             "settle_table_bill",
             JSONObject().put("table_local_id", table.id).put("payment_method", method)
         )
-        dao.enqueueOutbox(operation)
+        dao.enqueueOutboxAndLog(
+            operation,
+            newTransactionLog(operation, "Settle ${table.name} (${method.uppercase(Locale.ROOT)})", amountKsh = amount)
+        )
         val syncedResults = scheduleAndAttemptSync(refreshSnapshot = false)
         val stillPending = dao.outboxOperationCount(operation.operationId) > 0
         val serverAmount = syncedResults[operation.operationId]?.optLong("amount", amount) ?: amount
@@ -1628,9 +1826,17 @@ class CounterPosRepository(
                 if (resolvedCounterName != null) put("counter_name", resolvedCounterName)
                 if (resolvedWaiterName != null) put("waiter_name", resolvedWaiterName)
             }
+        val tableOutbox = newOutbox("table_sale", payload)
+        val tableLabel = sale.tableName?.takeIf(String::isNotBlank) ?: "Table"
+        val tableLog = newTransactionLog(
+            outbox = tableOutbox,
+            summary = "$tableLabel · ${quantity}x ${product.name} ($unitName)",
+            amountKsh = sale.totalKsh.toLong()
+        )
         val queued = dao.queueTableSaleAtCounter(
-            order, sale, newOutbox("table_sale", payload), counterId, stockToDecrement,
-            activeBusiness!!.counterInventoryMode == "per_counter"
+            order, sale, tableOutbox, counterId, stockToDecrement,
+            activeBusiness!!.counterInventoryMode == "per_counter",
+            tableLog
         ) ?: throw IllegalStateException("Not enough cached counter stock to complete this sale offline.")
         check(queued > 0L)
         triggerBackgroundSync()
@@ -1683,9 +1889,16 @@ class CounterPosRepository(
                 .put("unit_name", unitName)
                 .put("unit_price", unitPriceKsh)
                 .put("payment_method", paymentMethod)
+            val saleOutbox = newOutbox("sale", payload)
+            val saleLog = newTransactionLog(
+                outbox = saleOutbox,
+                summary = "${quantity}x ${product.name} ($unitName) · ${paymentMethod.uppercase(Locale.ROOT)}",
+                amountKsh = sale.totalKsh.toLong()
+            )
             val queued = dao.queueSaleAtCounter(
-                sale, newOutbox("sale", payload), counterId, stockToDecrement,
-                activeBusiness!!.counterInventoryMode == "per_counter"
+                sale, saleOutbox, counterId, stockToDecrement,
+                activeBusiness!!.counterInventoryMode == "per_counter",
+                saleLog
             ) ?: throw IllegalStateException("Not enough cached counter stock to complete this sale offline.")
             check(queued > 0L)
             triggerBackgroundSync()
@@ -1733,7 +1946,17 @@ class CounterPosRepository(
                 .put("price", priceKsh)
                 .put("unit_cost", unitCostKsh)
                 .put("catalog_id", catalogId)
-            dao.queueProductChange(updated, newOutbox("add_catalog_product", payload), balance)
+            val addCatalogOutbox = newOutbox("add_catalog_product", payload)
+            dao.queueProductChange(
+                updated,
+                addCatalogOutbox,
+                balance,
+                newTransactionLog(
+                    outbox = addCatalogOutbox,
+                    summary = "Add ${product.name} ($quantity units)",
+                    amountKsh = priceKsh.toLong() * quantity
+                )
+            )
             triggerBackgroundSync()
             true
         }
@@ -1761,7 +1984,17 @@ class CounterPosRepository(
                 .put("counter_id", counterId)
                 .put("quantity", quantity)
                 .put("unit_cost", unitCostKsh)
-            dao.queueProductChange(updated, newOutbox("receive_stock", payload), balance)
+            val restockOutbox = newOutbox("receive_stock", payload)
+            dao.queueProductChange(
+                updated,
+                restockOutbox,
+                balance,
+                newTransactionLog(
+                    outbox = restockOutbox,
+                    summary = "Restock +$quantity ${product.name}",
+                    amountKsh = unitCostKsh.toLong() * quantity
+                )
+            )
             triggerBackgroundSync()
             true
         }
@@ -1783,7 +2016,13 @@ class CounterPosRepository(
                 .put("counter_id", counterId)
                 .put("new_stock", newStock)
                 .put("reason", "Stock count edited in mobile app")
-            dao.queueProductChange(updated, newOutbox("adjust_stock", payload), balance)
+            val adjustOutbox = newOutbox("adjust_stock", payload)
+            dao.queueProductChange(
+                updated,
+                adjustOutbox,
+                balance,
+                newTransactionLog(adjustOutbox, "Adjust ${product.name} stock to $newStock")
+            )
             triggerBackgroundSync()
             true
         }
@@ -1826,9 +2065,11 @@ class CounterPosRepository(
                 .put("category", product.category)
                 .put("sale_units", JSONArray(serializeSaleUnits(parseSaleUnits(product.salesUnitsJson, product.sellingPriceKsh))))
             if (!product.verifiedBarcode.isNullOrBlank()) fields.put("barcode", product.verifiedBarcode)
-            val operations = mutableListOf(newOutbox("update_product", fields))
+            val updateOp = newOutbox("update_product", fields)
+            val operations = mutableListOf(updateOp)
+            val logs = mutableListOf(newTransactionLog(updateOp, "Update ${product.name}"))
             if (stockChanged) {
-                operations += newOutbox(
+                val stockOp = newOutbox(
                     "adjust_stock",
                     JSONObject()
                         .put("product_code", product.catalogCode)
@@ -1836,9 +2077,11 @@ class CounterPosRepository(
                         .put("new_stock", targetCount)
                         .put("reason", "Product edit stock count")
                 )
+                operations += stockOp
+                logs += newTransactionLog(stockOp, "Adjust ${product.name} stock to $targetCount")
             }
             val balance = if (perCounter && stockChanged) makeCounterBalance(current, counterId, targetCount) else null
-            dao.queueProductChanges(localProduct, operations, balance)
+            dao.queueProductChanges(localProduct, operations, balance, logs)
             triggerBackgroundSync()
             true
         }
@@ -1854,7 +2097,13 @@ class CounterPosRepository(
             .put("sale_id", sale.remoteId)
             .put("product_code", sale.catalogCode)
             .put("counter_id", sale.sourceCounterId)
-        if (!dao.queueUndoSale(sale, newOutbox("undo_sale", payload), perCounter)) {
+        val undoOutbox = newOutbox("undo_sale", payload)
+        val undoLog = newTransactionLog(
+            outbox = undoOutbox,
+            summary = "Undo ${sale.quantity}x ${sale.productName}",
+            amountKsh = sale.totalKsh.toLong()
+        )
+        if (!dao.queueUndoSale(sale, undoOutbox, perCounter, undoLog)) {
             throw IllegalStateException("The sale could not be undone using the saved stock state.")
         }
         triggerBackgroundSync()
@@ -1945,9 +2194,11 @@ class CounterPosRepository(
             val clean = barcode.trim()
             require(clean.isNotBlank()) { "Enter a barcode." }
             val updated = product.copy(verifiedBarcode = clean)
+            val barcodeOutbox = newOutbox("update_product", JSONObject().put("product_code", code).put("barcode", clean))
             dao.queueProductChange(
                 updated,
-                newOutbox("update_product", JSONObject().put("product_code", code).put("barcode", clean))
+                barcodeOutbox,
+                log = newTransactionLog(barcodeOutbox, "Assign barcode to ${product.name}")
             )
             triggerBackgroundSync()
             true
@@ -2020,7 +2271,17 @@ class CounterPosRepository(
             .put("sale_units", JSONArray(serializeSaleUnits(salesUnits)))
             .put("counter_id", counterId)
         val balance = if (perCounter) makeCounterBalance(product, counterId, initialStock) else null
-        dao.queueProductChange(product, newOutbox("register_product", payload), balance)
+        val registerOutbox = newOutbox("register_product", payload)
+        dao.queueProductChange(
+            product,
+            registerOutbox,
+            balance,
+            newTransactionLog(
+                outbox = registerOutbox,
+                summary = "Register ${product.name} ($initialStock units)",
+                amountKsh = priceKsh.toLong() * initialStock
+            )
+        )
         triggerBackgroundSync()
         true
     }
@@ -2053,12 +2314,17 @@ class CounterPosRepository(
             .put("quantity", quantity)
             .put("unit_name", unitName)
             .put("note", note)
+        val dispensationOutbox = newOutbox("dispensation", payload)
         val queued = dao.queueDispensationAtCounter(
-            newOutbox("dispensation", payload),
+            dispensationOutbox,
             product.catalogCode,
             counterId,
             stockToDecrement,
-            activeBusiness!!.counterInventoryMode == "per_counter"
+            activeBusiness!!.counterInventoryMode == "per_counter",
+            newTransactionLog(
+                outbox = dispensationOutbox,
+                summary = "Dispense ${quantity}x ${product.name} ($unitName)"
+            )
         )
         check(queued) { "Not enough stock is available at this counter." }
         triggerBackgroundSync()
@@ -2085,13 +2351,20 @@ class CounterPosRepository(
         }
     }
 
-    suspend fun syncPendingOutbox(refreshSnapshot: Boolean = true): Map<String, JSONObject> = withContext(Dispatchers.IO) {
+    suspend fun syncPendingOutbox(
+        refreshSnapshot: Boolean = true,
+        includeCatalog: Boolean = (cachedCatalogRows == null)
+    ): Map<String, JSONObject> = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: return@withContext emptyMap()
         val userId = account?.userId?.takeIf(String::isNotBlank) ?: return@withContext emptyMap()
         syncMutex.withLock {
             val syncedResults = mutableMapOf<String, JSONObject>()
+            dao.resetStaleSyncingTransactionLogs(shop.shopId, System.currentTimeMillis())
             while (true) {
+                // Yield between queued operations so Room WAL UI reads and POS writes execute first.
+                yield()
                 val item = dao.nextPendingOutbox(shop.shopId) ?: break
+                dao.markTransactionLogSyncing(item.operationId, System.currentTimeMillis())
                 try {
                     val payload = prepareOutboxPayload(item)
                     val result = when (item.operationType) {
@@ -2120,11 +2393,14 @@ class CounterPosRepository(
                         else -> remote.applyPosOperation(item.shopId, item.operationId, item.operationType, payload)
                     }
                     reconcileOutboxResult(item, JSONObject(item.payloadJson), result)
-                    dao.acknowledgeOutboxItem(item.operationId)
+                    val now = System.currentTimeMillis()
+                    dao.completeOutboxSync(item.operationId, now)
+                    lastOutboxPushAt.set(now)
                     syncedResults[item.operationId] = result
                 } catch (error: Exception) {
+                    val now = System.currentTimeMillis()
                     if (error is SupabaseUnauthorizedException) {
-                        dao.recordOutboxAttempt(item.operationId, error.message)
+                        dao.recordOutboxFailureRetry(item.operationId, error.message, now)
                         _session.value = _session.value.copy(message = "Saved POS changes are waiting for this account to reconnect securely.")
                         throw java.io.IOException("Authentication is required to sync queued POS changes.", error)
                     }
@@ -2136,23 +2412,27 @@ class CounterPosRepository(
                             message.contains("payment_locked", ignoreCase = true) ||
                             activeBusiness?.let { !SubscriptionManager.evaluate(it, isOnline = true).isEntitled } == true
                         if (entitlementDenied) {
-                            dao.recordOutboxAttempt(item.operationId, error.message)
+                            dao.recordOutboxFailureRetry(item.operationId, error.message, now)
                             _session.value = _session.value.copy(
                                 message = "Subscription access is required to sync saved POS changes. Your local queue is preserved; it will retry after access is restored."
                             )
                             break
                         }
-                        dao.blockOutboxItem(item.operationId, error.message ?: "The server rejected this saved change.")
+                        dao.blockOutboxAndLog(item.operationId, error.message ?: "The server rejected this saved change.", now)
                         _session.value = _session.value.copy(message = "A saved POS change needs attention before it can sync: ${error.message.orEmpty()}")
                         break
                     }
-                    dao.recordOutboxAttempt(item.operationId, error.message)
+                    dao.recordOutboxFailureRetry(item.operationId, error.message, now)
                     if (error is java.io.IOException) throw error
                     throw java.io.IOException("Could not sync a saved POS change.", error)
                 }
             }
+            if (syncedResults.isNotEmpty()) {
+                runCatching { dao.pruneOldSyncedTransactionLogs(shop.shopId) }
+            }
             if (refreshSnapshot && dao.outboxCount(shop.shopId) == 0) {
-                runCatching { syncBusiness(shop) }
+                yield()
+                runCatching { syncBusiness(shop, includeCatalog = includeCatalog) }
                     .onFailure { error -> if (isRetryable(error)) _session.value = _session.value.copy(message = offlineMessage()) }
             }
             syncedResults
@@ -2319,25 +2599,36 @@ class CounterPosRepository(
         )
     }
 
-    private fun triggerBackgroundSync(refreshSnapshotAfterDrain: Boolean = false) {
-        OfflineOutboxWorker.enqueue(context)
-        backgroundSyncQueued.set(true)
-        if (backgroundSyncJob?.isActive == true) return
-        backgroundSyncJob = realtimeScope.launch {
-            try {
-                while (backgroundSyncQueued.getAndSet(false)) {
-                    runCatching { syncPendingOutbox(refreshSnapshot = refreshSnapshotAfterDrain) }
-                }
-            } finally {
-                if (backgroundSyncQueued.get()) {
-                    triggerBackgroundSync(refreshSnapshotAfterDrain)
-                }
-            }
-        }
+    private fun newTransactionLog(
+        outbox: OutboxEntity,
+        summary: String,
+        amountKsh: Long = 0L,
+        localSaleId: Long? = outbox.localSaleId
+    ): OfflineTransactionLogEntity = OfflineTransactionLogEntity(
+        operationId = outbox.operationId,
+        shopId = outbox.shopId,
+        actorUserId = outbox.actorUserId,
+        operationType = outbox.operationType,
+        summary = summary,
+        amountKsh = amountKsh,
+        status = OfflineTransactionStatus.QUEUED,
+        recordedOffline = !OfflineOutboxWorker.isStableInternetConnected(context),
+        attempts = 0,
+        lastError = null,
+        localSaleId = localSaleId,
+        createdAt = outbox.createdAt,
+        updatedAt = outbox.createdAt,
+        syncedAt = null
+    )
+
+    private fun triggerBackgroundSync(triggerSource: String = "pos_mutation") {
+        // Delegate background queue flushing exclusively to constrained WorkManager so UI
+        // writes and Room reads stay instant without spawning competing foreground sync jobs.
+        OfflineOutboxWorker.enqueueOutboxFlush(context, triggerSource = triggerSource)
     }
 
     private suspend fun scheduleAndAttemptSync(refreshSnapshot: Boolean = false): Map<String, JSONObject> {
-        OfflineOutboxWorker.enqueue(context)
+        OfflineOutboxWorker.enqueueOutboxFlush(context, triggerSource = "settle_table_bill")
         try {
             return syncPendingOutbox(refreshSnapshot = refreshSnapshot)
         } catch (error: Exception) {
@@ -2349,7 +2640,7 @@ class CounterPosRepository(
     private suspend fun clearLocalSession() {
         realtime.stop()
         realtimeRefreshJob?.cancel()
-        backgroundSyncJob?.cancel()
+        startupSyncJob?.cancel()
         cachedCatalogRows = null
         lastSyncCompletedAt.set(0L)
         check(dao.outboxCountAll() == 0) { "Cannot clear local POS data while changes are waiting to sync." }
