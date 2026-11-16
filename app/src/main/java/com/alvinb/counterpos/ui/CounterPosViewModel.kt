@@ -208,6 +208,10 @@ data class CounterPosUiState(
     val subscriptionEntitlement: SubscriptionEntitlement? = null,
     val adminSelectedSubscriptionBusiness: AdminBusiness? = null,
     val isUpdatingSubscription: Boolean = false,
+    val isDeletingAdminBusiness: Boolean = false,
+    val isUpdatingAdminPhone: Boolean = false,
+    val isUpdatingAdminBusinessType: Boolean = false,
+    val isManagingCounters: Boolean = false,
     val platformBillingSettings: PlatformBillingSettings? = null,
     val isLoadingPlatformBillingSettings: Boolean = false,
     val isSavingPlatformBillingSettings: Boolean = false
@@ -1740,6 +1744,91 @@ class CounterPosViewModel(
         }
     }
 
+    fun adminUpdateBusinessPhone(shopId: String, phone: String) {
+        if (_uiState.value.isUpdatingAdminPhone) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isUpdatingAdminPhone = true, startupError = null) }
+            runCatching { repository.adminUpdateBusinessPhone(shopId, phone) }
+                .onSuccess { updated ->
+                    _adminBusinesses.value = updated
+                    _uiState.update { state ->
+                        state.copy(
+                            isUpdatingAdminPhone = false,
+                            adminSelectedSubscriptionBusiness = state.adminSelectedSubscriptionBusiness
+                                ?.takeIf { it.shopId == shopId }
+                                ?.let { updated.firstOrNull { b -> b.shopId == shopId } }
+                                ?: state.adminSelectedSubscriptionBusiness,
+                            notice = "Client phone number saved"
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update { it.copy(isUpdatingAdminPhone = false, startupError = error.message ?: "Could not update client phone number") }
+                }
+        }
+    }
+
+    fun adminDeleteBusiness(shopId: String, shopName: String) {
+        if (_uiState.value.isDeletingAdminBusiness) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isDeletingAdminBusiness = true, startupError = null) }
+            runCatching { repository.adminDeleteBusiness(shopId) }
+                .onSuccess { updated ->
+                    _adminBusinesses.value = updated
+                    _uiState.update { state ->
+                        state.copy(
+                            isDeletingAdminBusiness = false,
+                            adminSelectedBusinessId = if (state.adminSelectedBusinessId == shopId) null else state.adminSelectedBusinessId,
+                            adminSelectedSubscriptionBusiness = if (state.adminSelectedSubscriptionBusiness?.shopId == shopId) null else state.adminSelectedSubscriptionBusiness,
+                            adminEnrollmentCredential = if (state.adminEnrollmentCredential?.businessId == shopId) null else state.adminEnrollmentCredential,
+                            notice = "$shopName permanently deleted"
+                        )
+                    }
+                    loadAdminAuditEvents()
+                }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            isDeletingAdminBusiness = false,
+                            startupError = error.message ?: "Could not delete business"
+                        )
+                    }
+                }
+        }
+    }
+
+    fun adminElevateToClub(shopId: String) {
+        if (_uiState.value.isUpdatingAdminBusinessType) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isUpdatingAdminBusinessType = true, startupError = null) }
+            runCatching { repository.adminSetBusinessType(shopId, "big_club") }
+                .onSuccess { updated ->
+                    _adminBusinesses.value = updated
+                    val updatedBusiness = updated.firstOrNull { it.shopId == shopId }
+                    _uiState.update { state ->
+                        state.copy(
+                            isUpdatingAdminBusinessType = false,
+                            adminSelectedSubscriptionBusiness = if (state.adminSelectedSubscriptionBusiness?.shopId == shopId) {
+                                updatedBusiness ?: state.adminSelectedSubscriptionBusiness
+                            } else {
+                                state.adminSelectedSubscriptionBusiness
+                            },
+                            notice = "${updatedBusiness?.shopName ?: "Business"} elevated to Club — Tables, Multi-Counter & Analytics enabled."
+                        )
+                    }
+                    loadAdminAuditEvents()
+                }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            isUpdatingAdminBusinessType = false,
+                            startupError = error.message ?: "Could not elevate business to Club"
+                        )
+                    }
+                }
+        }
+    }
+
     fun openAdminEnrollmentScanner(shopId: String, role: String) {
         val business = _adminBusinesses.value.firstOrNull { it.shopId == shopId }
         if (!session.value.isPlatformAdmin) {
@@ -1928,15 +2017,78 @@ class CounterPosViewModel(
     }
 
     fun createServiceCounter(name: String) = viewModelScope.launch {
+        if (_uiState.value.isManagingCounters) return@launch
+        _uiState.update { it.copy(isManagingCounters = true, actionError = null) }
         runCatching { repository.createServiceCounter(name) }
-            .onSuccess { counter -> _uiState.update { it.copy(notice = "Added ${counter.name}.", actionError = null) } }
-            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not add counter") } }
+            .onSuccess { counter ->
+                _uiState.update { state ->
+                    state.copy(
+                        isManagingCounters = false,
+                        selectedCounterId = state.selectedCounterId ?: counter.id,
+                        notice = "Added ${counter.name}.",
+                        actionError = null
+                    )
+                }
+            }
+            .onFailure { error ->
+                _uiState.update {
+                    it.copy(isManagingCounters = false, actionError = error.message ?: "Could not add counter")
+                }
+            }
     }
 
     fun renameServiceCounter(counterId: String, name: String) = viewModelScope.launch {
+        if (_uiState.value.isManagingCounters) return@launch
+        _uiState.update { it.copy(isManagingCounters = true, actionError = null) }
         runCatching { repository.renameServiceCounter(counterId, name) }
-            .onSuccess { _uiState.update { it.copy(notice = "Counter name updated.", actionError = null) } }
-            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not rename counter") } }
+            .onSuccess {
+                _uiState.update {
+                    it.copy(isManagingCounters = false, notice = "Counter name updated.", actionError = null)
+                }
+            }
+            .onFailure { error ->
+                _uiState.update {
+                    it.copy(isManagingCounters = false, actionError = error.message ?: "Could not rename counter")
+                }
+            }
+    }
+
+    fun deleteServiceCounter(counterId: String) = viewModelScope.launch {
+        if (_uiState.value.isManagingCounters) return@launch
+        _uiState.update { it.copy(isManagingCounters = true, actionError = null) }
+        runCatching { repository.deleteServiceCounter(counterId) }
+            .onSuccess { remaining ->
+                val fallbackId = remaining.firstOrNull()?.id
+                val fallbackName = remaining.firstOrNull()?.name
+                var needsStockRefresh = false
+                _uiState.update { state ->
+                    val nextSelectedId = if (state.selectedCounterId == counterId) {
+                        needsStockRefresh = true
+                        fallbackId
+                    } else {
+                        state.selectedCounterId
+                    }
+                    val nextServingId = if (state.selectedServingCounterId == counterId) fallbackId else state.selectedServingCounterId
+                    val nextServingName = if (state.selectedServingCounterId == counterId) fallbackName else state.selectedServingCounterName
+                    state.copy(
+                        isManagingCounters = false,
+                        selectedCounterId = nextSelectedId,
+                        selectedServingCounterId = nextServingId,
+                        selectedServingCounterName = nextServingName,
+                        notice = "Service counter removed.",
+                        actionError = null
+                    )
+                }
+                if (needsStockRefresh && fallbackId != null) {
+                    observeSelectedCounterStock(session.value.activeBusiness?.shopId, fallbackId)
+                    refreshCounterStock(fallbackId)
+                }
+            }
+            .onFailure { error ->
+                _uiState.update {
+                    it.copy(isManagingCounters = false, actionError = error.message ?: "Could not delete counter")
+                }
+            }
     }
 
     fun transferCounterStock(productCode: String, destinationCounterId: String, quantity: Int) = viewModelScope.launch {

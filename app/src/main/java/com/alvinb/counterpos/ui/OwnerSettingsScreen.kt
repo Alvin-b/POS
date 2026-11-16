@@ -63,6 +63,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -87,16 +88,19 @@ fun OwnerSettingsScreen(
     onLoadMembers: () -> Unit,
     onCounterCreate: (String) -> Unit,
     onCounterRename: (String, String) -> Unit,
+    onCounterDelete: (String) -> Unit = {},
     onOpenStaffManagement: () -> Unit = {},
     onOpenSubscription: () -> Unit = {}
 ) {
     BackHandler(onBack = onClose)
     val ownerCanEdit = role.equals("owner", ignoreCase = true)
-    val isLiquorStore = businessType.equals("counter_seller", ignoreCase = true)
+    val isLiquorStore = businessType.equals("counter_seller", ignoreCase = true) ||
+        businessType.equals("liquor_store", ignoreCase = true)
     var businessNameDraft by remember(businessName) { mutableStateOf(businessName) }
     var newCounterName by remember { mutableStateOf("") }
     var editingCounterId by remember { mutableStateOf<String?>(null) }
     var editingCounterName by remember { mutableStateOf("") }
+    var counterPendingDeletion by remember { mutableStateOf<ServiceCounter?>(null) }
 
     // The roster is intentionally derived only from actual member rows. There are no sample names,
     // placeholder emails, or local fallback accounts in this screen.
@@ -292,70 +296,80 @@ fun OwnerSettingsScreen(
                 }
 
                 SettingsSection(
-                    title = if (isLiquorStore) "Service counter" else "Service counters",
-                    description = if (isLiquorStore) "Your checkout point." else "Manage checkout points.",
+                    title = "Service counters",
+                    description = if (isLiquorStore) "Add, rename, or remove checkout counters." else "Add, rename, or remove service counters.",
                     icon = Icons.Default.Tune
                 ) {
-                    if (isLiquorStore) {
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(
-                                    text = registeredCounters.firstOrNull()?.name ?: "Main Counter",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
-                                )
-                                Text(
-                                    text = "Single checkout with shared stock.",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
+                    if (isLiquorStore && registeredCounters.size <= 1) {
+                        Text(
+                            text = "Liquor Store default is 1 counter. Add more counters below whenever needed.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (registeredCounters.isEmpty()) {
+                        Text(
+                            "No registered counters yet. Add your first counter below.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     } else {
-                        if (registeredCounters.isEmpty()) {
-                            Text("No registered counters were returned by the business service.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        } else {
-                            registeredCounters.forEach { counter ->
-                                CounterSettingsRow(
-                                    counter = counter,
-                                    ownerCanEdit = ownerCanEdit,
-                                    editing = editingCounterId == counter.id,
-                                    editingName = editingCounterName,
-                                    onStartEditing = {
-                                        editingCounterId = counter.id
-                                        editingCounterName = counter.name
-                                    },
-                                    onEditingNameChange = { editingCounterName = it.take(60) },
-                                    onRename = {
-                                        onCounterRename(counter.id, editingCounterName.trim())
-                                        editingCounterId = null
-                                    }
-                                )
-                            }
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                            OutlinedTextField(
-                                value = newCounterName,
-                                onValueChange = { newCounterName = it.take(60) },
-                                label = { Text("New counter name") },
-                                placeholder = {
-                                    Text(if (registeredCounters.isEmpty()) "Main Counter" else "Counter ${registeredCounters.size + 1}")
+                        registeredCounters.forEach { counter ->
+                            CounterSettingsRow(
+                                counter = counter,
+                                ownerCanEdit = ownerCanEdit && !state.isManagingCounters,
+                                canDelete = registeredCounters.size > 1,
+                                editing = editingCounterId == counter.id,
+                                editingName = editingCounterName,
+                                onStartEditing = {
+                                    editingCounterId = counter.id
+                                    editingCounterName = counter.name
                                 },
-                                singleLine = true,
-                                enabled = ownerCanEdit,
-                                modifier = Modifier.weight(1f)
+                                onEditingNameChange = { editingCounterName = it.take(60) },
+                                onRename = {
+                                    onCounterRename(counter.id, editingCounterName.trim())
+                                    editingCounterId = null
+                                },
+                                onRequestDelete = { counterPendingDeletion = counter }
                             )
-                            Button(
-                                onClick = {
-                                    onCounterCreate(newCounterName.trim())
-                                    newCounterName = ""
-                                },
-                                enabled = ownerCanEdit && newCounterName.trim().isNotBlank()
-                            ) {
+                        }
+                        if (registeredCounters.size == 1) {
+                            Text(
+                                text = "At least 1 active service counter is required. Add another counter before removing this one.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        OutlinedTextField(
+                            value = newCounterName,
+                            onValueChange = { newCounterName = it.take(60) },
+                            label = { Text("New counter name") },
+                            placeholder = {
+                                Text(if (registeredCounters.isEmpty()) "Main Counter" else "Counter ${registeredCounters.size + 1}")
+                            },
+                            singleLine = true,
+                            enabled = ownerCanEdit && !state.isManagingCounters,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("new_counter_name_input")
+                        )
+                        Button(
+                            onClick = {
+                                onCounterCreate(newCounterName.trim())
+                                newCounterName = ""
+                            },
+                            enabled = ownerCanEdit && !state.isManagingCounters && newCounterName.trim().isNotBlank(),
+                            modifier = Modifier.testTag("add_counter_button")
+                        ) {
+                            if (state.isManagingCounters) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            } else {
                                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(17.dp))
                                 Spacer(Modifier.width(4.dp))
                                 Text("Add")
@@ -368,6 +382,54 @@ fun OwnerSettingsScreen(
                 Spacer(Modifier.size(6.dp))
             }
         }
+    }
+
+    val targetCounter = counterPendingDeletion
+    if (targetCounter != null) {
+        AlertDialog(
+            onDismissRequest = { if (!state.isManagingCounters) counterPendingDeletion = null },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error
+                )
+            },
+            title = {
+                Text("Delete ${targetCounter.name}?", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Text(
+                    "This counter will be removed from checkout and bar selectors. Historical sales and reports remain preserved.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onCounterDelete(targetCounter.id)
+                        counterPendingDeletion = null
+                    },
+                    enabled = !state.isManagingCounters,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    ),
+                    modifier = Modifier.testTag("confirm_delete_counter_button")
+                ) {
+                    Text("Delete Counter", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { counterPendingDeletion = null },
+                    enabled = !state.isManagingCounters
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
 }
@@ -427,11 +489,13 @@ private fun ReadOnlyHint() {
 private fun CounterSettingsRow(
     counter: ServiceCounter,
     ownerCanEdit: Boolean,
+    canDelete: Boolean,
     editing: Boolean,
     editingName: String,
     onStartEditing: () -> Unit,
     onEditingNameChange: (String) -> Unit,
-    onRename: () -> Unit
+    onRename: () -> Unit,
+    onRequestDelete: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.fillMaxWidth()) {
         if (editing) {
@@ -447,13 +511,39 @@ private fun CounterSettingsRow(
                 Button(onClick = onRename, enabled = ownerCanEdit && editingName.trim().isNotBlank()) { Text("Save") }
             }
         } else {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(counter.name, fontWeight = FontWeight.SemiBold)
-                    if (!counter.active) Text("Inactive", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                }
-                IconButton(onClick = onStartEditing, enabled = ownerCanEdit) {
-                    Icon(Icons.Default.Edit, contentDescription = "Rename ${counter.name}")
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(counter.name, fontWeight = FontWeight.SemiBold)
+                        if (!counter.active) Text("Inactive", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    }
+                    IconButton(
+                        onClick = onStartEditing,
+                        enabled = ownerCanEdit,
+                        modifier = Modifier.testTag("rename_counter_${counter.id}")
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = "Rename ${counter.name}")
+                    }
+                    IconButton(
+                        onClick = onRequestDelete,
+                        enabled = ownerCanEdit && canDelete,
+                        modifier = Modifier.testTag("delete_counter_${counter.id}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Delete ${counter.name}",
+                            tint = if (ownerCanEdit && canDelete) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                        )
+                    }
                 }
             }
         }

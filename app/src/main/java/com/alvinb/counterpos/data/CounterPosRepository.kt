@@ -724,7 +724,8 @@ class CounterPosRepository(
                                 paymentLockActive = obj.optBoolean("payment_lock_active", false),
                                 paymentLockAmountKsh = obj.optInt("payment_lock_amount_ksh", 0),
                                 paymentLockReason = obj.optString("payment_lock_reason").takeIf(String::isNotBlank),
-                                paymentLockStartedAt = obj.optString("payment_lock_started_at").takeIf(String::isNotBlank)
+                                paymentLockStartedAt = obj.optString("payment_lock_started_at").takeIf(String::isNotBlank),
+                                ownerPhone = obj.optString("owner_phone").takeIf(String::isNotBlank)
                             )
                         )
                     }
@@ -770,6 +771,7 @@ class CounterPosRepository(
                         .put("payment_lock_amount_ksh", b.paymentLockAmountKsh)
                         .put("payment_lock_reason", b.paymentLockReason ?: "")
                         .put("payment_lock_started_at", b.paymentLockStartedAt ?: "")
+                        .put("owner_phone", b.ownerPhone ?: "")
                 )
             }
             adminCachePrefs.edit().putString("admin_businesses", array.toString()).apply()
@@ -885,7 +887,21 @@ class CounterPosRepository(
     }
 
     suspend fun createServiceCounter(name: String): ServiceCounter = withActiveBusiness {
-        remote.createServiceCounter(activeBusiness!!.shopId, name).also { _serviceCounters.value = _serviceCounters.value + it }
+        val shopId = activeBusiness!!.shopId
+        remote.createServiceCounter(shopId, name).also { created ->
+            dao.insertServiceCounters(
+                listOf(
+                    com.alvinb.counterpos.data.local.entity.ServiceCounterEntity(
+                        id = created.id,
+                        shopId = shopId,
+                        name = created.name,
+                        active = created.active
+                    )
+                )
+            )
+            _serviceCounters.value = (_serviceCounters.value.filterNot { it.id == created.id } + created)
+                .sortedBy { it.name.lowercase(Locale.ROOT) }
+        }
     }
 
     suspend fun loadCounterStock(counterId: String): Map<String, Int> = withActiveBusiness {
@@ -921,8 +937,54 @@ class CounterPosRepository(
     }
 
     suspend fun renameServiceCounter(counterId: String, name: String): List<ServiceCounter> = withActiveBusiness {
-        remote.renameServiceCounter(activeBusiness!!.shopId, counterId, name)
-        remote.serviceCounters(activeBusiness!!.shopId).also { _serviceCounters.value = it }
+        val shopId = activeBusiness!!.shopId
+        remote.renameServiceCounter(shopId, counterId, name)
+        val updated = remote.serviceCounters(shopId)
+        dao.insertServiceCounters(
+            updated.map {
+                com.alvinb.counterpos.data.local.entity.ServiceCounterEntity(
+                    id = it.id,
+                    shopId = shopId,
+                    name = it.name,
+                    active = it.active
+                )
+            }
+        )
+        _serviceCounters.value = updated
+        updated
+    }
+
+    suspend fun deleteServiceCounter(counterId: String): List<ServiceCounter> = withActiveBusiness {
+        val business = activeBusiness!!
+        require(business.role in setOf("owner", "manager")) {
+            "Only an owner or manager can delete service counters."
+        }
+        val currentCounters = _serviceCounters.value
+        require(currentCounters.size > 1) {
+            "Keep at least 1 active service counter for this business."
+        }
+        remote.deleteServiceCounter(business.shopId, counterId)
+        dao.deleteServiceCounter(business.shopId, counterId)
+        val refreshed = runCatching {
+            remote.serviceCounters(business.shopId).filterNot { it.id == counterId }
+        }.getOrElse {
+            currentCounters.filterNot { it.id == counterId }
+        }
+        if (refreshed.isNotEmpty()) {
+            dao.insertServiceCounters(
+                refreshed.map {
+                    com.alvinb.counterpos.data.local.entity.ServiceCounterEntity(
+                        id = it.id,
+                        shopId = business.shopId,
+                        name = it.name,
+                        active = it.active
+                    )
+                }
+            )
+            dao.deleteServiceCountersNotIn(business.shopId, refreshed.map { it.id })
+        }
+        _serviceCounters.value = refreshed
+        refreshed
     }
 
     suspend fun transferCounterStock(productCode: String, fromCounter: String, toCounter: String, quantity: Int): Boolean =
@@ -954,7 +1016,9 @@ class CounterPosRepository(
 
     suspend fun adminSetBusinessStatus(shopId: String, status: String, reason: String?): List<AdminBusiness> {
         remote.adminSetBusinessStatus(shopId, status, reason)
-        return remote.adminBusinesses()
+        val fresh = remote.adminBusinesses()
+        saveCachedAdminBusinesses(fresh)
+        return fresh
     }
 
     suspend fun adminCreateBusiness(
@@ -972,13 +1036,17 @@ class CounterPosRepository(
         val createdShopId = createdRow.optString("id").takeIf(String::isNotBlank)
             ?: throw IllegalStateException("Business was created but no business ID was returned.")
         remote.setOwnerBusinessPhone(createdShopId, normalizedOwnerPhone)
-        return AdminBusinessCreationResult(createdShopId, remote.adminBusinesses())
+        val fresh = remote.adminBusinesses()
+        saveCachedAdminBusinesses(fresh)
+        return AdminBusinessCreationResult(createdShopId, fresh)
     }
 
     suspend fun addMemberByEmail(shopId: String, email: String, role: String): List<AdminBusiness> {
         require(role in setOf("manager", "inventory_clerk", "cashier")) { "Choose a valid staff role." }
         remote.addMemberByEmail(shopId, email, role)
-        return remote.adminBusinesses()
+        val fresh = remote.adminBusinesses()
+        saveCachedAdminBusinesses(fresh)
+        return fresh
     }
 
     suspend fun adminOpenBusiness(shopId: String): SessionSnapshot = withContext(Dispatchers.IO) {
@@ -1031,6 +1099,51 @@ class CounterPosRepository(
         remote.adminSetShopPaymentLock(shopId, locked, amountKsh, reason)
         val fresh = remote.adminBusinesses()
         saveCachedAdminBusinesses(fresh)
+        fresh
+    }
+
+    suspend fun adminUpdateBusinessPhone(shopId: String, phone: String): List<AdminBusiness> = withContext(Dispatchers.IO) {
+        require(account?.isPlatformAdmin == true) { "Only a platform administrator can update client phone numbers." }
+        val normalized = SubscriptionManager.normalizeKenyanPhone(phone)
+            ?: throw IllegalArgumentException("Enter a valid Kenyan mobile number (e.g. 0712 345 678).")
+        remote.setOwnerBusinessPhone(shopId, normalized)
+        val fresh = remote.adminBusinesses()
+        saveCachedAdminBusinesses(fresh)
+        fresh
+    }
+
+    suspend fun adminDeleteBusiness(shopId: String): List<AdminBusiness> = withContext(Dispatchers.IO) {
+        require(account?.isPlatformAdmin == true) { "Only a platform administrator can delete a business." }
+        remote.adminDeleteBusiness(shopId)
+        val updated = runCatching { remote.adminBusinesses() }
+            .getOrElse { getCachedAdminBusinesses().filterNot { it.shopId == shopId } }
+        saveCachedAdminBusinesses(updated)
+        updated
+    }
+
+    suspend fun adminSetBusinessType(shopId: String, businessType: String): List<AdminBusiness> = withContext(Dispatchers.IO) {
+        require(account?.isPlatformAdmin == true) { "Only a platform administrator can elevate a business." }
+        remote.adminSetBusinessType(shopId, businessType)
+        val fresh = remote.adminBusinesses()
+        saveCachedAdminBusinesses(fresh)
+        fresh.firstOrNull { it.shopId == shopId }?.let { updatedAdminBiz ->
+            val currentActive = activeBusiness
+            if (currentActive != null && currentActive.shopId == shopId) {
+                val upgradedMembership = createAdminBusinessMembership(updatedAdminBiz).copy(
+                    role = currentActive.role,
+                    status = currentActive.status,
+                    employmentStatus = currentActive.employmentStatus
+                )
+                activeBusiness = upgradedMembership
+                account = account?.let { acc ->
+                    acc.copy(memberships = acc.memberships.map {
+                        if (it.shopId == shopId) upgradedMembership else it
+                    })
+                }
+                account?.let { saveOfflineAccount(it, shopId) }
+                publishAccount()
+            }
+        }
         fresh
     }
 
@@ -1114,6 +1227,7 @@ class CounterPosRepository(
             lastPaymentReceipt = business.lastPaymentReceipt,
             lastPaymentPhone = business.lastPaymentPhone,
             lastVerifiedEntitlementAt = System.currentTimeMillis(),
+            ownerPhone = business.ownerPhone,
             paymentLockActive = business.paymentLockActive,
             paymentLockAmountKsh = business.paymentLockAmountKsh,
             paymentLockReason = business.paymentLockReason,

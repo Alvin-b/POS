@@ -18,10 +18,14 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.TableRestaurant
+import androidx.compose.material.icons.filled.Upgrade
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -59,6 +63,8 @@ import com.alvinb.counterpos.data.remote.AdminBusiness
 internal fun AdminClientBillingSheet(
     business: AdminBusiness,
     isUpdating: Boolean,
+    isUpdatingPhone: Boolean = false,
+    isUpdatingBusinessType: Boolean = false,
     onDismiss: () -> Unit,
     onSave: (
         price: Int?,
@@ -71,7 +77,10 @@ internal fun AdminClientBillingSheet(
     onSetCustomTrial: (days: Int) -> Unit,
     onExtendTrial: (days: Int) -> Unit,
     onActivatePaid: (days: Int) -> Unit,
-    onSetPaymentLock: (locked: Boolean, amountKsh: Int?, reason: String?) -> Unit
+    onSetPaymentLock: (locked: Boolean, amountKsh: Int?, reason: String?) -> Unit,
+    onUpdatePhone: (phone: String) -> Unit = {},
+    onElevateToClub: () -> Unit = {},
+    onRequestDeleteBusiness: () -> Unit = {}
 ) {
     var priceText by remember(business.shopId, business.subscriptionPriceKsh) {
         mutableStateOf(business.subscriptionPriceKsh.toString())
@@ -105,6 +114,10 @@ internal fun AdminClientBillingSheet(
     var lockReasonText by remember(business.shopId, business.paymentLockReason) {
         mutableStateOf(business.paymentLockReason.orEmpty())
     }
+    var phoneText by remember(business.shopId, business.ownerPhone, business.lastPaymentPhone) {
+        mutableStateOf(business.ownerPhone ?: business.lastPaymentPhone.orEmpty())
+    }
+    val phoneValid = com.alvinb.counterpos.data.SubscriptionManager.normalizeKenyanPhone(phoneText) != null
 
     val billingState = business.billingState()
     val stateAccent = adminStateColor(billingState)
@@ -168,6 +181,10 @@ internal fun AdminClientBillingSheet(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         AdminStatusPill(billingState.label, stateAccent)
+                        AdminStatusPill(
+                            label = business.businessTypeLabel(),
+                            color = if (business.isLiquorStoreBusiness()) Color(0xFFFBBF24) else Color(0xFF38BDF8)
+                        )
                         Text(
                             text = "KSh ${business.subscriptionPriceKsh} / ${business.subscriptionPlanDays}d",
                             fontSize = 12.sp,
@@ -180,6 +197,133 @@ internal fun AdminClientBillingSheet(
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Phone,
+                            contentDescription = "Client phone",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = business.displayPhoneLabel(),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+
+            // Client Contact Phone Editor
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Client Contact Phone",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = phoneText,
+                            onValueChange = { phoneText = it },
+                            label = { Text("Owner phone (e.g. 0712 345 678)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("admin_client_phone_input")
+                        )
+                        Button(
+                            onClick = { onUpdatePhone(phoneText) },
+                            enabled = phoneValid && !isUpdatingPhone && !isUpdating,
+                            modifier = Modifier
+                                .height(52.dp)
+                                .testTag("admin_save_client_phone_button"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            if (isUpdatingPhone) {
+                                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                            } else {
+                                Text("Save", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (business.isLiquorStoreBusiness()) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color(0xFF0E2920),
+                    border = BorderStroke(1.dp, Color(0xFF5EE6B0).copy(alpha = 0.4f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.TableRestaurant,
+                                contentDescription = null,
+                                tint = Color(0xFF5EE6B0),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = "Store Tier · Liquor Store",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        Text(
+                            text = "Elevate ${business.shopName} to a Club to unlock Floor Tables, Multi-Counter Management, Working Hours, and Sales Analytics.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Button(
+                            onClick = onElevateToClub,
+                            enabled = !isUpdating && !isUpdatingBusinessType,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF5EE6B0),
+                                contentColor = Color(0xFF022619)
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("admin_sheet_elevate_to_club_button")
+                        ) {
+                            if (isUpdatingBusinessType) {
+                                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Color(0xFF022619))
+                                Spacer(Modifier.width(8.dp))
+                            } else {
+                                Icon(Icons.Default.Upgrade, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            Text("Elevate to Club", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
                 }
             }
 
@@ -578,6 +722,33 @@ internal fun AdminClientBillingSheet(
                         Text("Save Client Billing", fontWeight = FontWeight.Bold)
                     }
                 }
+            }
+
+            HorizontalDivider()
+
+            OutlinedButton(
+                onClick = onRequestDeleteBusiness,
+                enabled = !isUpdating && !isUpdatingPhone,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("admin_sheet_delete_business_button"),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f))
+            ) {
+                Icon(
+                    imageVector = Icons.Default.DeleteForever,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "Delete Business Permanently",
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp
+                )
             }
         }
     }

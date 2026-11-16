@@ -8,9 +8,46 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.alvinb.counterpos.R
+
+val SpaceGroteskFontFamily = FontFamily(
+    Font(R.font.space_grotesk, FontWeight.Medium),
+    Font(R.font.space_grotesk, FontWeight.SemiBold),
+    Font(R.font.space_grotesk, FontWeight.Bold)
+)
+
+val InterFontFamily = FontFamily(
+    Font(R.font.inter, FontWeight.Normal),
+    Font(R.font.inter, FontWeight.Medium),
+    Font(R.font.inter, FontWeight.SemiBold),
+    Font(R.font.inter, FontWeight.Bold)
+)
+
+object SerenityTokens {
+    val CanvasDark = Color(0xFF0B1210)
+    val GlowDark = Color(0xFF14392D)
+    val GlowNodeInner = Color(0xFF1F5A48)
+    val FloorSurfaceDark = Color(0xFF0F1814)
+    val CardSurfaceDark = Color(0xFF121C18)
+    val NavSurfaceDark = Color(0xFF13201B)
+    val ActiveChipFillDark = Color(0xFF1B3A30)
+    val FreePillDark = Color(0xFF1D2A24)
+    val MintPrimary = Color(0xFF5EE6B0)
+    val OnMintPrimary = Color(0xFF06231A)
+    val AmberAccent = Color(0xFFE8A04A)
+    val OnAmberAccent = Color(0xFF2B1500)
+    val SubtleBorderDark = Color(0xFF22302A)
+    val StrongBorderDark = Color(0xFF2E4A3F)
+    val DashedFreeBorderDark = Color(0xFF3A5A4C)
+    val MutedTextDark = Color(0xFF8FA39A)
+    val PrimaryTextDark = Color(0xFFE8F1EC)
+    val ThumbnailFrame = Color(0xFFFFFFFF)
+}
 
 private val CounterPosLightColors = lightColorScheme(
     primary = Color(0xFF087F5B),
@@ -39,51 +76,93 @@ private val CounterPosLightColors = lightColorScheme(
 )
 
 private val CounterPosDarkColors = darkColorScheme(
-    primary = Color(0xFF5BE6AF),
-    onPrimary = Color(0xFF002117),
-    primaryContainer = Color(0xFF124C39),
-    onPrimaryContainer = Color(0xFF9FF5CD),
-    secondary = Color(0xFFFFB86B),
-    onSecondary = Color(0xFF482300),
-    secondaryContainer = Color(0xFF5A3517),
+    primary = SerenityTokens.MintPrimary,
+    onPrimary = SerenityTokens.OnMintPrimary,
+    primaryContainer = SerenityTokens.ActiveChipFillDark,
+    onPrimaryContainer = Color(0xFFBFFAE1),
+    secondary = SerenityTokens.AmberAccent,
+    onSecondary = SerenityTokens.OnAmberAccent,
+    secondaryContainer = Color(0xFF3D2912),
     onSecondaryContainer = Color(0xFFFFDDB8),
     tertiary = Color(0xFF8ED8E2),
     onTertiary = Color(0xFF00363C),
     tertiaryContainer = Color(0xFF164E55),
     onTertiaryContainer = Color(0xFFA9EFF5),
-    error = Color(0xFFFFB4AB),
-    onError = Color(0xFF690005),
-    errorContainer = Color(0xFF93000A),
-    onErrorContainer = Color(0xFFFFDAD6),
-    background = Color(0xFF0B1110),
-    onBackground = Color(0xFFE8F2ED),
-    surface = Color(0xFF121B18),
-    onSurface = Color(0xFFE8F2ED),
-    surfaceVariant = Color(0xFF1C2924),
-    onSurfaceVariant = Color(0xFFAABDB4),
-    outline = Color(0xFF40564C),
-    outlineVariant = Color(0xFF293A33)
+    error = Color(0xFFFB7185),
+    onError = Color(0xFF3D0611),
+    errorContainer = Color(0xFF4C111E),
+    onErrorContainer = Color(0xFFFFD5DC),
+    background = SerenityTokens.CanvasDark,
+    onBackground = SerenityTokens.PrimaryTextDark,
+    surface = SerenityTokens.CardSurfaceDark,
+    onSurface = SerenityTokens.PrimaryTextDark,
+    surfaceVariant = SerenityTokens.FloorSurfaceDark,
+    onSurfaceVariant = SerenityTokens.MutedTextDark,
+    outline = SerenityTokens.StrongBorderDark,
+    outlineVariant = SerenityTokens.SubtleBorderDark
 )
 
 private val CounterPosTypography = Typography().run {
     copy(
-        displaySmall = displaySmall.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp),
-        headlineSmall = headlineSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.2).sp),
-        titleLarge = titleLarge.copy(fontWeight = FontWeight.Bold),
-        titleMedium = titleMedium.copy(fontWeight = FontWeight.SemiBold),
-        titleSmall = titleSmall.copy(fontWeight = FontWeight.SemiBold),
-        bodyLarge = bodyLarge.copy(lineHeight = 22.sp),
-        bodyMedium = bodyMedium.copy(lineHeight = 21.sp),
-        labelLarge = labelLarge.copy(fontWeight = FontWeight.Bold)
+        displaySmall = displaySmall.copy(
+            fontFamily = SpaceGroteskFontFamily,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = (-0.5).sp
+        ),
+        headlineMedium = headlineMedium.copy(
+            fontFamily = SpaceGroteskFontFamily,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = (-0.3).sp
+        ),
+        headlineSmall = headlineSmall.copy(
+            fontFamily = SpaceGroteskFontFamily,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = (-0.2).sp
+        ),
+        titleLarge = titleLarge.copy(
+            fontFamily = SpaceGroteskFontFamily,
+            fontWeight = FontWeight.Bold
+        ),
+        titleMedium = titleMedium.copy(
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.SemiBold
+        ),
+        titleSmall = titleSmall.copy(
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.SemiBold
+        ),
+        bodyLarge = bodyLarge.copy(
+            fontFamily = InterFontFamily,
+            lineHeight = 22.sp
+        ),
+        bodyMedium = bodyMedium.copy(
+            fontFamily = InterFontFamily,
+            lineHeight = 21.sp
+        ),
+        bodySmall = bodySmall.copy(
+            fontFamily = InterFontFamily
+        ),
+        labelLarge = labelLarge.copy(
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.Bold
+        ),
+        labelMedium = labelMedium.copy(
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.SemiBold
+        ),
+        labelSmall = labelSmall.copy(
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.Medium
+        )
     )
 }
 
 private val CounterPosShapes = Shapes(
-    extraSmall = RoundedCornerShape(8.dp),
-    small = RoundedCornerShape(12.dp),
-    medium = RoundedCornerShape(16.dp),
-    large = RoundedCornerShape(20.dp),
-    extraLarge = RoundedCornerShape(28.dp)
+    extraSmall = RoundedCornerShape(10.dp),
+    small = RoundedCornerShape(14.dp),
+    medium = RoundedCornerShape(18.dp),
+    large = RoundedCornerShape(24.dp),
+    extraLarge = RoundedCornerShape(30.dp)
 )
 
 @Composable

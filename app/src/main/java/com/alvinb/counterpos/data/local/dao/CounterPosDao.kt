@@ -33,6 +33,8 @@ interface CounterPosDao {
     suspend fun getServiceCounters(shopId: String): List<ServiceCounterEntity>
     @Query("DELETE FROM service_counters WHERE shopId = :shopId")
     suspend fun clearServiceCounters(shopId: String)
+    @Query("DELETE FROM service_counters WHERE shopId = :shopId AND id = :counterId")
+    suspend fun deleteServiceCounter(shopId: String, counterId: String): Int
     @Query("DELETE FROM service_counters")
     suspend fun clearAllServiceCounters()
     @Insert(onConflict = OnConflictStrategy.REPLACE)
