@@ -395,17 +395,30 @@ fun CounterPosWorkspace(
                             }
                         }
                     }
-                } else if (state.pendingSyncCount > 0 && state.blockedOutbox.isEmpty()) {
+                } else if ((state.pendingSyncCount > 0 || state.isBackgroundOutboxSyncing) && state.blockedOutbox.isEmpty()) {
                     Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 2.dp, bottom = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            if (state.isBackgroundOutboxSyncing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(13.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                                Spacer(Modifier.width(8.dp))
+                            }
                             Text(
-                                if (state.isConnectionStable) {
-                                    "${state.pendingSyncCount} queued transaction${if (state.pendingSyncCount == 1) "" else "s"} syncing in background"
-                                } else {
-                                    "${state.pendingSyncCount} queued transaction${if (state.pendingSyncCount == 1) "" else "s"} waiting for stable connection"
+                                when {
+                                    state.isBackgroundOutboxSyncing && state.pendingSyncCount > 0 ->
+                                        "Syncing ${state.pendingSyncCount} queued transaction${if (state.pendingSyncCount == 1) "" else "s"} to Supabase…"
+                                    state.isBackgroundOutboxSyncing ->
+                                        "Syncing POS updates in background…"
+                                    state.isConnectionStable ->
+                                        "${state.pendingSyncCount} queued transaction${if (state.pendingSyncCount == 1) "" else "s"} queued for background sync"
+                                    else ->
+                                        "${state.pendingSyncCount} queued transaction${if (state.pendingSyncCount == 1) "" else "s"} waiting for stable connection"
                                 },
                                 modifier = Modifier.weight(1f),
                                 color = MaterialTheme.colorScheme.onSecondaryContainer,
@@ -517,17 +530,29 @@ fun CounterPosWorkspace(
                         Text("You do not have permission to adjust stock.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                PosTab.SALES -> FullscreenSalesScreen(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
-                    sales = sales,
-                    products = products,
-                    counters = serviceCounters,
-                    todaySummary = summary,
-                    searchQuery = state.searchQuery,
-                    onClearSearch = viewModel::clearSearch,
-                    onUndo = viewModel::undoLastSale,
+                PosTab.SALES -> {
+                    val syncStatusBySaleId = remember(state.transactionLogs) {
+                        buildMap {
+                            state.transactionLogs.forEach { log ->
+                                val saleId = log.localSaleId
+                                if (saleId != null && !containsKey(saleId)) {
+                                    put(saleId, log.status)
+                                }
+                            }
+                        }
+                    }
+                    FullscreenSalesScreen(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(padding),
+                        sales = sales,
+                        products = products,
+                        counters = serviceCounters,
+                        todaySummary = summary,
+                        syncStatusBySaleId = syncStatusBySaleId,
+                        searchQuery = state.searchQuery,
+                        onClearSearch = viewModel::clearSearch,
+                        onUndo = viewModel::undoLastSale,
                     onExportPdf = { start, end ->
                         val filtered = sales.filter { !it.undone && it.createdAt in start..end }
                         pendingSalesPdf = buildBrandedReportPdf(
@@ -560,6 +585,7 @@ fun CounterPosWorkspace(
                         )
                     }
                 )
+                }
                 PosTab.REPORTS -> CounterReportScreen(
                     modifier = Modifier.fillMaxSize().padding(padding),
                     businessName = session.activeBusiness?.shopName ?: "Counter POS",
@@ -751,10 +777,13 @@ fun CounterPosWorkspace(
                         if (state.pendingSyncCount > 0 && state.isOnline) {
                             TextButton(
                                 onClick = viewModel::flushOfflineQueueNow,
-                                enabled = !state.isSyncingData,
+                                enabled = !state.isSyncingData && !state.isBackgroundOutboxSyncing,
                                 modifier = Modifier.testTag("flush_queue_button")
                             ) {
-                                Text(if (state.isSyncingData) "Flushing…" else "Flush Now", fontSize = 12.sp)
+                                Text(
+                                    if (state.isSyncingData || state.isBackgroundOutboxSyncing) "Syncing…" else "Flush Now",
+                                    fontSize = 12.sp
+                                )
                             }
                         }
                     }
@@ -762,7 +791,22 @@ fun CounterPosWorkspace(
                         Text(state.syncRecoveryError.orEmpty(), color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                     }
                     if (state.blockedOutbox.isNotEmpty()) {
-                        Text("Needs Attention", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Needs Attention", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                            if (state.blockedOutbox.size > 1 && state.isOnline) {
+                                TextButton(
+                                    onClick = viewModel::retryAllBlockedOutbox,
+                                    enabled = state.retryingOperationId == null,
+                                    modifier = Modifier.testTag("retry_all_blocked_button")
+                                ) {
+                                    Text("Retry All", fontSize = 12.sp)
+                                }
+                            }
+                        }
                         state.blockedOutbox.forEach { item ->
                             val label = when (item.operationType) {
                                 "sale" -> "Sale"

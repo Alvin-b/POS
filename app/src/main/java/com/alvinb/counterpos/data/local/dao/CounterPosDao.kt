@@ -79,14 +79,20 @@ interface CounterPosDao {
     fun observeTableSettlementOutbox(shopId: String): Flow<List<OutboxEntity>>
     @Query("SELECT * FROM sync_outbox WHERE shopId = :shopId AND blocked = 0 ORDER BY createdAt ASC, operationId ASC LIMIT 1")
     suspend fun nextPendingOutbox(shopId: String): OutboxEntity?
+    @Query("SELECT * FROM sync_outbox WHERE operationId = :operationId LIMIT 1")
+    suspend fun getOutboxItem(operationId: String): OutboxEntity?
     @Query("SELECT COUNT(*) FROM sync_outbox")
     fun observePendingOutboxCount(): Flow<Int>
+    @Query("SELECT COUNT(*) FROM sync_outbox WHERE shopId = :shopId")
+    fun observePendingOutboxCountForShop(shopId: String): Flow<Int>
     @Query("SELECT COUNT(*) FROM sync_outbox WHERE shopId = :shopId")
     suspend fun outboxCount(shopId: String): Int
     @Query("SELECT COUNT(*) FROM sync_outbox WHERE operationId = :operationId")
     suspend fun outboxOperationCount(operationId: String): Int
     @Query("SELECT * FROM sync_outbox WHERE shopId = :shopId AND blocked = 1 ORDER BY createdAt ASC")
     suspend fun blockedOutbox(shopId: String): List<OutboxEntity>
+    @Query("SELECT * FROM sync_outbox WHERE shopId = :shopId AND blocked = 1 ORDER BY createdAt ASC")
+    fun observeBlockedOutbox(shopId: String): Flow<List<OutboxEntity>>
     @Query("UPDATE sync_outbox SET blocked = 0, lastError = NULL WHERE shopId = :shopId")
     suspend fun unblockOutboxForShop(shopId: String): Int
     @Query("UPDATE sync_outbox SET blocked = 0, lastError = NULL WHERE operationId = :operationId")
@@ -187,6 +193,19 @@ interface CounterPosDao {
     suspend fun enqueueOutboxAndLog(item: OutboxEntity, log: OfflineTransactionLogEntity) {
         enqueueOutbox(item)
         insertTransactionLog(log)
+    }
+
+    @Transaction
+    suspend fun claimPendingOutboxForSync(
+        operationId: String,
+        updatedAt: Long = System.currentTimeMillis()
+    ): OutboxEntity? {
+        val current = getOutboxItem(operationId) ?: return null
+        if (current.blocked) return null
+        val log = getTransactionLog(operationId)
+        if (log?.status == OfflineTransactionStatus.CANCELLED) return null
+        markTransactionLogSyncing(operationId, updatedAt)
+        return current
     }
 
     @Transaction
@@ -326,8 +345,20 @@ interface CounterPosDao {
     @Query("DELETE FROM dining_tables WHERE id NOT IN (:ids)")
     suspend fun deleteDiningTablesNotIn(ids: List<String>)
 
+    @Query("DELETE FROM dining_tables WHERE remoteId IS NOT NULL AND id NOT IN (:ids)")
+    suspend fun deleteSyncedDiningTablesNotIn(ids: List<String>)
+
+    @Query("DELETE FROM dining_tables WHERE remoteId IS NOT NULL")
+    suspend fun clearSyncedDiningTables()
+
     @Query("DELETE FROM table_orders WHERE saleId NOT IN (:saleIds)")
     suspend fun deleteTableOrdersNotIn(saleIds: List<Long>)
+
+    @Query("DELETE FROM table_orders WHERE saleId NOT IN (:saleIds) AND saleId NOT IN (SELECT id FROM sales WHERE remoteId IS NULL AND undone = 0)")
+    suspend fun deleteSyncedTableOrdersNotIn(saleIds: List<Long>)
+
+    @Query("DELETE FROM table_orders WHERE saleId NOT IN (SELECT id FROM sales WHERE remoteId IS NULL AND undone = 0)")
+    suspend fun clearSyncedTableOrders()
 
     @Query("DELETE FROM products WHERE catalogCode NOT IN (:codes)")
     suspend fun deleteProductsNotIn(codes: List<String>)
@@ -348,14 +379,26 @@ interface CounterPosDao {
     ) {
         if (tables.isNotEmpty()) {
             insertDiningTables(tables)
-            deleteDiningTablesNotIn(tables.map { it.id })
+            if (preservePendingSales) {
+                deleteSyncedDiningTablesNotIn(tables.map { it.id })
+            } else {
+                deleteDiningTablesNotIn(tables.map { it.id })
+            }
+        } else if (preservePendingSales) {
+            clearSyncedDiningTables()
         } else {
             clearDiningTables()
         }
 
         if (orders.isNotEmpty()) {
             insertTableOrders(orders)
-            deleteTableOrdersNotIn(orders.map { it.saleId })
+            if (preservePendingSales) {
+                deleteSyncedTableOrdersNotIn(orders.map { it.saleId })
+            } else {
+                deleteTableOrdersNotIn(orders.map { it.saleId })
+            }
+        } else if (preservePendingSales) {
+            clearSyncedTableOrders()
         } else {
             clearTableOrders()
         }
@@ -567,7 +610,10 @@ interface CounterPosDao {
 
     @Transaction
     suspend fun cancelUnsentSale(sale: SaleEntity, perCounter: Boolean): Boolean {
-        if (sale.undone || outboxForSale(sale.id) == null) return false
+        if (sale.undone) return false
+        val outbox = outboxForSale(sale.id) ?: return false
+        val log = getTransactionLog(outbox.operationId)
+        if (log?.status == OfflineTransactionStatus.SYNCING) return false
         val product = getProductByCode(sale.catalogCode)
         val unitsPerSale = product?.let { current ->
             parseSaleUnits(current.salesUnitsJson, current.sellingPriceKsh)

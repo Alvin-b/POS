@@ -189,6 +189,7 @@ data class CounterPosUiState(
     val isReady: Boolean = false,
     val startupError: String? = null,
     val pendingSyncCount: Int = 0,
+    val isBackgroundOutboxSyncing: Boolean = false,
     val blockedOutbox: List<OutboxEntity> = emptyList(),
     val transactionLogs: List<OfflineTransactionLogEntity> = emptyList(),
     val isSyncRecoveryOpen: Boolean = false,
@@ -241,9 +242,11 @@ class CounterPosViewModel(
     private var reconnectSyncJob: Job? = null
     private var tableSettlementOutboxJob: Job? = null
     private var transactionLogsJob: Job? = null
+    private var blockedOutboxJob: Job? = null
     private var counterStockJob: Job? = null
     private var loginQrJob: Job? = null
     private var lastSessionKeepAliveAt = 0L
+    private var previousPendingSyncCount = 0
 
     private fun handleStableConnectivityDetected(wasStable: Boolean) {
         refreshSubscriptionEntitlement()
@@ -318,10 +321,16 @@ class CounterPosViewModel(
         }
         runCatching { connectivityManager.registerDefaultNetworkCallback(networkCallback) }
         viewModelScope.launch {
+            repository.isOutboxSyncing.collect { syncing ->
+                _uiState.update { it.copy(isBackgroundOutboxSyncing = syncing) }
+            }
+        }
+        viewModelScope.launch {
             repository.session.collect { sess ->
                 refreshSubscriptionEntitlement(sess)
                 tableSettlementOutboxJob?.cancel()
                 transactionLogsJob?.cancel()
+                blockedOutboxJob?.cancel()
                 if (sess.isPlatformAdmin) {
                     loadAdminBusinesses()
                     loadAdminAuditEvents()
@@ -343,6 +352,11 @@ class CounterPosViewModel(
                 } else {
                     val shopId = sess.activeBusiness.shopId
                     observeSelectedCounterStock(shopId, _uiState.value.selectedCounterId)
+                    blockedOutboxJob = viewModelScope.launch {
+                        repository.observeBlockedOutbox(shopId).collect { items ->
+                            _uiState.update { it.copy(blockedOutbox = items) }
+                        }
+                    }
                     transactionLogsJob = viewModelScope.launch {
                         repository.observeTransactionLogs(shopId).collect { logs ->
                             _uiState.update { it.copy(transactionLogs = logs) }
@@ -370,8 +384,6 @@ class CounterPosViewModel(
                     }
                     businessHoursJob?.cancel()
                     businessHoursJob = viewModelScope.launch {
-                        runCatching { repository.blockedOutboxItems() }
-                            .onSuccess { items -> _uiState.update { it.copy(blockedOutbox = items) } }
                         runCatching { repository.loadBusinessHours() }
                             .onSuccess { hours ->
                                 lastLoadedHoursShopId = shopId
@@ -388,7 +400,17 @@ class CounterPosViewModel(
         }
         viewModelScope.launch {
             repository.pendingSyncCount.collect { count ->
-                _uiState.update { it.copy(pendingSyncCount = count) }
+                val syncedAllOffline = previousPendingSyncCount > 0 &&
+                    count == 0 &&
+                    _uiState.value.isOnline &&
+                    _uiState.value.blockedOutbox.isEmpty()
+                previousPendingSyncCount = count
+                _uiState.update {
+                    it.copy(
+                        pendingSyncCount = count,
+                        notice = if (syncedAllOffline) "All offline transactions synced to Supabase." else it.notice
+                    )
+                }
             }
         }
         viewModelScope.launch {
@@ -490,6 +512,7 @@ class CounterPosViewModel(
         counterStockJob?.cancel()
         tableSettlementOutboxJob?.cancel()
         transactionLogsJob?.cancel()
+        blockedOutboxJob?.cancel()
         businessHoursJob?.cancel()
         super.onCleared()
     }
@@ -2320,15 +2343,32 @@ class CounterPosViewModel(
         viewModelScope.launch {
             runCatching { repository.retryBlockedOutbox(operationId) }
                 .onSuccess {
-                    runCatching { repository.blockedOutboxItems() }
-                        .onSuccess { items -> _uiState.update { it.copy(blockedOutbox = items) } }
                     _uiState.update { it.copy(retryingOperationId = null, notice = "Saved POS change retried") }
                 }
                 .onFailure { error ->
-                    runCatching { repository.blockedOutboxItems() }
-                        .onSuccess { items -> _uiState.update { it.copy(blockedOutbox = items) } }
                     _uiState.update {
                         it.copy(retryingOperationId = null, syncRecoveryError = error.message ?: "Could not retry this saved change.")
+                    }
+                }
+        }
+    }
+
+    fun retryAllBlockedOutbox() {
+        if (_uiState.value.retryingOperationId != null) return
+        _uiState.update { it.copy(retryingOperationId = "__all__", syncRecoveryError = null) }
+        viewModelScope.launch {
+            runCatching { repository.retryAllBlockedOutbox() }
+                .onSuccess { count ->
+                    _uiState.update {
+                        it.copy(
+                            retryingOperationId = null,
+                            notice = if (count > 0) "Retried $count saved POS change${if (count == 1) "" else "s"}" else it.notice
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(retryingOperationId = null, syncRecoveryError = error.message ?: "Could not retry blocked changes.")
                     }
                 }
         }

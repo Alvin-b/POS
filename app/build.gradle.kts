@@ -116,6 +116,8 @@ dependencies {
   implementation(libs.mlkit.barcode.scanning)
   implementation(libs.zxing.core)
   implementation(libs.androidx.security.crypto)
+  implementation(libs.vico.compose)
+  implementation(libs.vico.compose.m3)
   "ksp"(libs.androidx.room.compiler)
 
   testImplementation(libs.androidx.compose.ui.test.junit4)

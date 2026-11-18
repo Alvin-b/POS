@@ -258,4 +258,84 @@ class ReportsAnalyticsTest {
         assertEquals(1500L, poolOnly.mpesaRevenueKsh)
         assertNull(poolOnly.profitMarginPercent)
     }
+
+    @Test
+    fun thirtyDayInsightsComputeDailyBarsRollingAvgMomentumAndActionableInsights() {
+        val now = Calendar.getInstance().apply {
+            set(2026, Calendar.NOVEMBER, 15, 20, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+        fun saleDaysAgo(id: Long, daysAgo: Int, amountKsh: Int, method: String = "mpesa", undone: Boolean = false): SaleEntity {
+            val ts = Calendar.getInstance().apply {
+                timeInMillis = now
+                add(Calendar.DAY_OF_YEAR, -daysAgo)
+            }.timeInMillis
+            return SaleEntity(
+                id = id,
+                catalogCode = "tusker",
+                productName = "Tusker Lager",
+                imageAssetName = "",
+                unitName = "Bottle",
+                quantity = 1,
+                unitPriceKsh = amountKsh,
+                totalKsh = amountKsh,
+                createdAt = ts,
+                undone = undone,
+                counterId = "c1",
+                counterName = "Main Bar",
+                paymentMethod = method
+            )
+        }
+
+        val sales = listOf(
+            // Older than 30 days (ignored in 30d window)
+            saleDaysAgo(1L, 35, 99_000),
+            // Prior 7-day window (daysAgo 7..13): total = 10,000
+            saleDaysAgo(2L, 10, 4_000, method = "cash"),
+            saleDaysAgo(3L, 8, 6_000, method = "mpesa"),
+            // Recent 7-day window (daysAgo 0..6): total = 20,000 (+100% momentum)
+            saleDaysAgo(4L, 4, 8_000, method = "mpesa"),
+            saleDaysAgo(5L, 1, 12_000, method = "mpesa"),
+            // Undone sale (excluded)
+            saleDaysAgo(6L, 0, 50_000, undone = true)
+        )
+
+        val snapshot30d = buildReportAnalyticsSnapshot(
+            sales = sales,
+            products = emptyList(),
+            counters = listOf(ServiceCounter(id = "c1", name = "Main Bar")),
+            remoteRows = emptyList(),
+            registeredWaiterEmails = emptySet(),
+            diningTables = emptyList(),
+            tableOrders = emptyList(),
+            reportFilter = "30d",
+            reportPaymentFilter = "all",
+            reportCounterFilter = "all",
+            nowMs = now
+        )
+
+        assertEquals(30, snapshot30d.trendBuckets.size)
+
+        val insights = snapshot30d.thirtyDayInsights
+        assertEquals(30, insights.days.size)
+        assertEquals(30_000L, insights.totalRevenueKsh)
+        assertEquals(1_000L, insights.dailyAverageKsh)
+        assertEquals(4, insights.activeDaysCount)
+        assertEquals(10_000L, insights.prior7DaysRevenueKsh)
+        assertEquals(20_000L, insights.last7DaysRevenueKsh)
+        assertNotNull(insights.weekOverWeekDeltaPercent)
+        assertEquals(100.0, insights.weekOverWeekDeltaPercent!!, 0.1)
+        assertEquals(12_000L, insights.bestDay?.revenueKsh)
+        assertTrue(insights.days.last().rolling7DayAvgKsh > 0L)
+        assertTrue(insights.actionableInsights.any { it.title.contains("Momentum Up") && it.tone == InsightTone.POSITIVE })
+        assertTrue(insights.actionableInsights.any { it.title.startsWith("Strongest Day:") })
+        assertTrue(insights.actionableInsights.any { it.title.startsWith("Peak Day") })
+
+        assertEquals("0", formatCompactKshAxis(0.0))
+        assertEquals("850", formatCompactKshAxis(850.0))
+        assertEquals("5K", formatCompactKshAxis(5_000.0))
+        assertEquals("12.5K", formatCompactKshAxis(12_500.0))
+        assertEquals("1.5M", formatCompactKshAxis(1_500_000.0))
+    }
 }

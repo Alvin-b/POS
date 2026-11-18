@@ -488,13 +488,39 @@ internal fun CounterReportScreen(
             }
         }
 
-        // 5. Interactive Revenue Trend Chart (Hourly for Today / Daily for 7D, 30D, All)
+        // 5. Last 30 Days Daily Sales Revenue Visualization (Vico) & Actionable Insights
         item {
-            RevenueTrendChartCard(
-                reportFilter = reportFilter,
-                buckets = snapshot.trendBuckets,
+            val counterScopeName = if (reportCounterFilter == "all") {
+                "All counters"
+            } else {
+                counters.firstOrNull { it.id == reportCounterFilter }?.name ?: "Counter"
+            }
+            val paymentScopeName = when (reportPaymentFilter) {
+                "cash" -> "Cash"
+                "mpesa" -> "M-Pesa"
+                else -> "All payments"
+            }
+            val scopeLabel = if (counters.size > 1 && reportCounterFilter != "all") {
+                "$counterScopeName · $paymentScopeName"
+            } else {
+                paymentScopeName
+            }
+            ThirtyDayRevenueVicoCard(
+                insights = snapshot.thirtyDayInsights,
+                scopeLabel = scopeLabel,
                 isDarkSurface = isDarkSurface
             )
+        }
+
+        // 6. Period-Specific Trend Breakdown (Hourly for Today / 7-Day View)
+        if (reportFilter != "30d") {
+            item {
+                RevenueTrendChartCard(
+                    reportFilter = reportFilter,
+                    buckets = snapshot.trendBuckets,
+                    isDarkSurface = isDarkSurface
+                )
+            }
         }
 
         // 6. Category Breakdown Card

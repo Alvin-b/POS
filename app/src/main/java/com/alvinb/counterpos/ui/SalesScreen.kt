@@ -146,6 +146,7 @@ internal fun FullscreenSalesScreen(
     products: List<ProductEntity> = emptyList(),
     counters: List<ServiceCounter> = emptyList(),
     todaySummary: Pair<Int, Int>,
+    syncStatusBySaleId: Map<Long, String> = emptyMap(),
     searchQuery: String = "",
     onClearSearch: () -> Unit = {},
     onUndo: () -> Unit,
@@ -733,7 +734,8 @@ internal fun FullscreenSalesScreen(
                 SerenitySaleReceiptRow(
                     sale = sale,
                     product = productsByCode[sale.catalogCode],
-                    counterName = sale.sourceCounterId?.let { countersById[it] } ?: sale.counterName
+                    counterName = sale.sourceCounterId?.let { countersById[it] } ?: sale.counterName,
+                    pendingSyncStatus = syncStatusBySaleId[sale.id]
                 )
             }
         }
@@ -787,7 +789,8 @@ private fun HeroMiniStat(
 private fun SerenitySaleReceiptRow(
     sale: SaleEntity,
     product: ProductEntity?,
-    counterName: String?
+    counterName: String?,
+    pendingSyncStatus: String? = null
 ) {
     val isMpesa = sale.paymentMethod.equals("mpesa", ignoreCase = true)
     val paymentColor = if (isMpesa) {
@@ -937,15 +940,37 @@ private fun SerenitySaleReceiptRow(
                             )
                         }
                     } else if (sale.remoteId == null) {
+                        val (syncLabel, syncBg, syncFg) = when (pendingSyncStatus) {
+                            "SYNCING" -> Triple(
+                                "Syncing…",
+                                MaterialTheme.colorScheme.tertiaryContainer,
+                                MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                            "RETRY_WAITING" -> Triple(
+                                "Retrying",
+                                MaterialTheme.colorScheme.secondaryContainer,
+                                MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            "BLOCKED" -> Triple(
+                                "Blocked",
+                                MaterialTheme.colorScheme.errorContainer,
+                                MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            else -> Triple(
+                                "Queued",
+                                MaterialTheme.colorScheme.secondaryContainer,
+                                MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
                         Surface(
                             shape = RoundedCornerShape(99.dp),
-                            color = MaterialTheme.colorScheme.secondaryContainer
+                            color = syncBg
                         ) {
                             Text(
-                                text = "Queued",
+                                text = syncLabel,
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                color = syncFg,
                                 modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                             )
                         }

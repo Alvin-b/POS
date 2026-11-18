@@ -11,17 +11,26 @@ import androidx.test.core.app.ApplicationProvider
 import com.alvinb.counterpos.data.CounterPosRepository
 import com.alvinb.counterpos.data.local.AppDatabase
 import com.alvinb.counterpos.data.local.entity.CounterStockEntity
+import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.OfflineSessionEntity
 import com.alvinb.counterpos.data.local.entity.OfflineTransactionLogEntity
 import com.alvinb.counterpos.data.local.entity.OfflineTransactionStatus
 import com.alvinb.counterpos.data.local.entity.OutboxEntity
 import com.alvinb.counterpos.data.local.entity.ProductEntity
+import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.ServiceCounterEntity
+import com.alvinb.counterpos.data.local.entity.TableOrderEntity
+import com.alvinb.counterpos.data.remote.SupabaseApiException
 import com.alvinb.counterpos.data.remote.SupabaseRestClient
+import com.alvinb.counterpos.data.remote.SupabaseUnauthorizedException
+import com.alvinb.counterpos.data.remote.shouldFallbackFromApplyPosOperation
+import androidx.work.ExistingWorkPolicy
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
+import java.net.SocketTimeoutException
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -413,5 +422,280 @@ class OfflineFirstSyncTest {
             context.packageName
         )
         assertTrue(iconResId != 0)
+    }
+
+    @Test
+    fun prepareOutboxPayloadPreservesMpesaPaymentMethodAndTimestampForSalesAndTableSales() = runBlocking {
+        val dao = database.counterPosDao()
+        val shopId = "shop-payload-1"
+        val counterId = "counter-1"
+        val tableId = "local-table-1"
+        OfflineOutboxWorker.stabilityCheckOverride = { false }
+
+        val sessionPayload = JSONObject()
+            .put("user_id", "user-1")
+            .put("email", "cashier@example.com")
+            .put("is_platform_admin", false)
+            .put(
+                "memberships",
+                JSONArray().put(
+                    JSONObject()
+                        .put("shop_id", shopId)
+                        .put("shop_name", "Serenity Club")
+                        .put("role", "cashier")
+                        .put("status", "active")
+                        .put("employment_status", "active")
+                        .put("business_type", "big_club")
+                        .put("business_size", "medium")
+                        .put("counter_inventory_mode", "shared")
+                        .put("counter_count", 1)
+                        .put("feature_flags", JSONArray(listOf("tables")))
+                        .put("currency", "KES")
+                        .put("low_stock_threshold", 5)
+                        .put("subscription_status", "active")
+                )
+            )
+            .toString()
+
+        dao.saveOfflineSession(OfflineSessionEntity(snapshotJson = sessionPayload, activeShopId = shopId))
+        dao.insertServiceCounters(listOf(ServiceCounterEntity(id = counterId, shopId = shopId, name = "VIP Bar", active = true)))
+        dao.insertProduct(
+            ProductEntity(
+                catalogCode = "KE-MPESA-1",
+                verifiedBarcode = null,
+                name = "Guinness Stout",
+                brand = "EABL",
+                size = "500 ml",
+                category = "Beer",
+                suggestedPriceKsh = 350,
+                sellingPriceKsh = 350,
+                stockQuantity = 20,
+                inMyStock = true,
+                lowStockThreshold = 5,
+                imageAssetName = "product_stock_001",
+                remoteId = "remote-prod-mpesa-1"
+            )
+        )
+        dao.insertDiningTable(
+            DiningTableEntity(
+                id = tableId,
+                name = "VIP 1",
+                createdAt = 1000L,
+                remoteId = "remote-table-1"
+            )
+        )
+
+        repository.restoreSession()
+
+        assertTrue(
+            repository.sellWithUnit(
+                code = "KE-MPESA-1",
+                quantity = 2,
+                unitName = "Bottle",
+                unitPriceKsh = 350,
+                selectedCounterId = counterId,
+                counterName = "VIP Bar",
+                waiterName = "Grace",
+                paymentMethod = "mpesa"
+            )
+        )
+        assertTrue(
+            repository.sellToTable(
+                tableId = tableId,
+                code = "KE-MPESA-1",
+                quantity = 1,
+                unitName = "Bottle",
+                unitPriceKsh = 350,
+                selectedCounterId = counterId,
+                counterName = "VIP Bar",
+                waiterName = "Grace",
+                paymentMethod = "mpesa"
+            )
+        )
+
+        val pending = dao.pendingOutbox(shopId)
+        assertEquals(2, pending.size)
+
+        val salePayload = repository.prepareOutboxPayload(pending[0])
+        assertEquals("remote-prod-mpesa-1", salePayload.getString("product_id"))
+        assertEquals(counterId, salePayload.getString("counter_id"))
+        assertEquals("mpesa", salePayload.getString("payment_method"))
+        assertEquals("VIP Bar", salePayload.getString("counter_name"))
+        assertEquals("Grace", salePayload.getString("waiter_name"))
+        assertTrue(salePayload.getLong("client_created_at") > 0L)
+
+        val tableSalePayload = repository.prepareOutboxPayload(pending[1])
+        assertEquals("remote-table-1", tableSalePayload.getString("table_id"))
+        assertEquals("mpesa", tableSalePayload.getString("payment_method"))
+        assertEquals(1, tableSalePayload.getInt("qty"))
+    }
+
+    @Test
+    fun cancelUnsentSaleBlocksWhileInFlightSyncingAndAllowsAfterRetry() = runBlocking {
+        val dao = database.counterPosDao()
+        val shopId = "shop-race-1"
+        dao.insertProduct(
+            ProductEntity(
+                catalogCode = "KE-RACE-1",
+                verifiedBarcode = null,
+                name = "Tusker Malt",
+                brand = "EABL",
+                size = "330 ml",
+                category = "Beer",
+                suggestedPriceKsh = 320,
+                sellingPriceKsh = 320,
+                stockQuantity = 10,
+                inMyStock = true,
+                lowStockThreshold = 3,
+                imageAssetName = "product_stock_001",
+                remoteId = "remote-race-1"
+            )
+        )
+        val outbox = OutboxEntity(
+            operationId = "op-race-1",
+            shopId = shopId,
+            actorUserId = "user-1",
+            operationType = "sale",
+            payloadJson = "{}",
+            createdAt = 5000L
+        )
+        val log = OfflineTransactionLogEntity(
+            operationId = "op-race-1",
+            shopId = shopId,
+            actorUserId = "user-1",
+            operationType = "sale",
+            summary = "2x Tusker Malt",
+            amountKsh = 640L,
+            status = OfflineTransactionStatus.QUEUED,
+            recordedOffline = true,
+            createdAt = 5000L,
+            updatedAt = 5000L
+        )
+        val saleId = dao.queueSaleAtCounter(
+            sale = SaleEntity(
+                catalogCode = "KE-RACE-1",
+                productName = "Tusker Malt",
+                imageAssetName = "product_stock_001",
+                unitName = "Bottle",
+                quantity = 2,
+                unitPriceKsh = 320,
+                totalKsh = 640,
+                createdAt = 5000L,
+                paymentMethod = "cash"
+            ),
+            outbox = outbox,
+            counterId = "c-1",
+            stockToDecrement = 2,
+            perCounter = false,
+            log = log
+        )!!
+        val savedSale = dao.getSaleById(saleId)!!
+
+        // Claim for active sync -> status becomes SYNCING
+        assertNotNull(dao.claimPendingOutboxForSync("op-race-1", 5100L))
+        assertFalse(dao.cancelUnsentSale(savedSale, perCounter = false))
+        assertEquals(8, dao.getProductByCode("KE-RACE-1")?.stockQuantity)
+
+        // If transient failure moves log back to RETRY_WAITING, cancellation succeeds safely
+        dao.recordOutboxFailureRetry("op-race-1", "Network timeout", 5200L)
+        assertTrue(dao.cancelUnsentSale(savedSale, perCounter = false))
+        assertEquals(10, dao.getProductByCode("KE-RACE-1")?.stockQuantity)
+        assertEquals(0, dao.outboxCount(shopId))
+        assertEquals(OfflineTransactionStatus.CANCELLED, dao.getTransactionLog("op-race-1")?.status)
+    }
+
+    @Test
+    fun fallbackAndWorkPolicyRespectIdempotencyAndImmediateNetworkRecovery() {
+        assertTrue(shouldFallbackFromApplyPosOperation(SupabaseApiException(404, "Could not find the function public.apply_pos_operation")))
+        assertTrue(shouldFallbackFromApplyPosOperation(SupabaseApiException(300, "Multiple choices")))
+        assertFalse(shouldFallbackFromApplyPosOperation(SocketTimeoutException("timeout")))
+        assertFalse(shouldFallbackFromApplyPosOperation(IOException("connection reset")))
+        assertFalse(shouldFallbackFromApplyPosOperation(SupabaseUnauthorizedException("expired")))
+        assertFalse(shouldFallbackFromApplyPosOperation(SupabaseApiException(400, "insufficient_stock")))
+        assertFalse(shouldFallbackFromApplyPosOperation(SupabaseApiException(500, "internal server error")))
+
+        assertEquals(
+            ExistingWorkPolicy.REPLACE,
+            OfflineOutboxWorker.selectUniqueWorkPolicy("stable_network_detected", workerCurrentlyRunning = false)
+        )
+        assertEquals(
+            ExistingWorkPolicy.REPLACE,
+            OfflineOutboxWorker.selectUniqueWorkPolicy("user_manual_flush", workerCurrentlyRunning = false)
+        )
+        assertEquals(
+            ExistingWorkPolicy.APPEND_OR_REPLACE,
+            OfflineOutboxWorker.selectUniqueWorkPolicy("stable_network_detected", workerCurrentlyRunning = true)
+        )
+        assertEquals(
+            ExistingWorkPolicy.APPEND_OR_REPLACE,
+            OfflineOutboxWorker.selectUniqueWorkPolicy("pos_mutation", workerCurrentlyRunning = false)
+        )
+    }
+
+    @Test
+    fun replaceBusinessSnapshotPreservesUnsyncedLocalTablesAndTableOrders() = runBlocking {
+        val dao = database.counterPosDao()
+        val shopId = "shop-snapshot-1"
+        dao.insertProduct(
+            ProductEntity(
+                catalogCode = "KE-SNAP-1",
+                verifiedBarcode = null,
+                name = "Pilsner",
+                brand = "EABL",
+                size = "500 ml",
+                category = "Beer",
+                suggestedPriceKsh = 300,
+                sellingPriceKsh = 300,
+                stockQuantity = 15,
+                inMyStock = true,
+                lowStockThreshold = 5,
+                imageAssetName = "product_stock_001",
+                remoteId = "remote-snap-1"
+            )
+        )
+        dao.insertDiningTable(DiningTableEntity(id = "local-t-1", name = "Patio 4", createdAt = 1000L, remoteId = null))
+        val localSaleId = dao.insertSale(
+            SaleEntity(
+                catalogCode = "KE-SNAP-1",
+                productName = "Pilsner",
+                imageAssetName = "product_stock_001",
+                unitName = "Bottle",
+                quantity = 2,
+                unitPriceKsh = 300,
+                totalKsh = 600,
+                createdAt = 1000L,
+                tableId = "local-t-1",
+                tableName = "Patio 4",
+                remoteId = null
+            )
+        )
+        dao.insertTableOrder(
+            TableOrderEntity(
+                tableId = "local-t-1",
+                saleId = localSaleId,
+                catalogCode = "KE-SNAP-1",
+                productName = "Pilsner",
+                unitName = "Bottle",
+                quantity = 2,
+                unitPriceKsh = 300,
+                totalKsh = 600,
+                servedAt = 1000L
+            )
+        )
+
+        dao.replaceBusinessSnapshot(
+            shopId = shopId,
+            products = dao.getAllProducts(),
+            sales = emptyList(),
+            tables = listOf(DiningTableEntity(id = "remote-t-2", name = "Booth 2", createdAt = 900L, remoteId = "remote-t-2")),
+            orders = emptyList(),
+            serviceCounters = emptyList(),
+            counterStock = emptyList(),
+            preservePendingSales = true
+        )
+
+        assertTrue(dao.getDiningTables().any { it.id == "local-t-1" })
+        assertTrue(dao.observeTableOrders().first().any { it.saleId == localSaleId })
+        assertTrue(dao.observeSales().first().any { it.id == localSaleId })
     }
 }

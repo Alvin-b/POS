@@ -67,6 +67,50 @@ internal data class ReportCategorySummary(
     val sharePercent: Double
 )
 
+internal data class DailyRevenuePoint(
+    val dateIso: String,
+    val shortLabel: String,
+    val axisLabel: String,
+    val dayOfWeekShort: String,
+    val dayOfWeekFull: String,
+    val revenueKsh: Long,
+    val cashKsh: Long,
+    val mpesaKsh: Long,
+    val salesCount: Int,
+    val unitsSold: Int,
+    val rolling7DayAvgKsh: Long
+)
+
+internal enum class InsightTone {
+    POSITIVE,
+    WARNING,
+    INFO
+}
+
+internal data class RevenueActionInsight(
+    val title: String,
+    val detail: String,
+    val tone: InsightTone
+)
+
+internal data class ThirtyDayRevenueInsights(
+    val days: List<DailyRevenuePoint>,
+    val totalRevenueKsh: Long,
+    val dailyAverageKsh: Long,
+    val activeDaysCount: Int,
+    val bestDay: DailyRevenuePoint?,
+    val bestWeekdayLabel: String?,
+    val bestWeekdayAvgKsh: Long,
+    val weakestWeekdayLabel: String?,
+    val weakestWeekdayAvgKsh: Long,
+    val last7DaysRevenueKsh: Long,
+    val prior7DaysRevenueKsh: Long,
+    val weekOverWeekDeltaPercent: Double?,
+    val cashSharePercent: Int,
+    val mpesaSharePercent: Int,
+    val actionableInsights: List<RevenueActionInsight>
+)
+
 internal data class ReportAnalyticsSnapshot(
     val periodLabel: String,
     val windowStartMs: Long,
@@ -97,6 +141,7 @@ internal data class ReportAnalyticsSnapshot(
     val activeTablesCount: Int,
     val openTabsTotalKsh: Long,
     val trendBuckets: List<ReportTrendBucket>,
+    val thirtyDayInsights: ThirtyDayRevenueInsights,
     val categoryBreakdown: List<ReportCategorySummary>,
     val topProducts: List<CounterProductSummary>,
     val counterReports: List<ServiceCounterReportData>,
@@ -105,6 +150,22 @@ internal data class ReportAnalyticsSnapshot(
 
 internal fun formatKshLong(value: Long): String =
     "KSh " + NumberFormat.getIntegerInstance(Locale.US).format(value)
+
+internal fun formatCompactKshAxis(value: Double): String {
+    val v = value.roundToInt().coerceAtLeast(0)
+    return when {
+        v >= 1_000_000 -> {
+            val m = value / 1_000_000.0
+            if (m >= 10.0) "${m.roundToInt()}M" else String.format(Locale.US, "%.1fM", m)
+        }
+        v >= 1_000 -> {
+            val k = value / 1_000.0
+            if (k >= 100.0 || (k * 10.0).roundToInt() % 10 == 0) "${k.roundToInt()}K"
+            else String.format(Locale.US, "%.1fK", k)
+        }
+        else -> v.toString()
+    }
+}
 
 internal fun startOfReportDayMs(time: Long): Long = Calendar.getInstance().apply {
     timeInMillis = time
@@ -461,6 +522,15 @@ internal fun buildReportAnalyticsSnapshot(
     )
     val peakBucket = trendBuckets.maxByOrNull { it.revenueKsh }?.takeIf { it.revenueKsh > 0L }
 
+    // Always build full 30-day daily revenue visualization + actionable business insights
+    val thirtyDayInsights = buildThirtyDayRevenueInsights(
+        sales = sales,
+        counters = counters,
+        reportPaymentFilter = reportPaymentFilter,
+        selectedCounter = selectedCounter,
+        nowMs = nowMs
+    )
+
     // Live inventory valuation & health
     val stockedProducts = products.filter { it.inMyStock }
     var inventoryRetailValueKsh = 0L
@@ -522,6 +592,7 @@ internal fun buildReportAnalyticsSnapshot(
         activeTablesCount = activeTablesCount,
         openTabsTotalKsh = openTabsTotalKsh,
         trendBuckets = trendBuckets,
+        thirtyDayInsights = thirtyDayInsights,
         categoryBreakdown = categoryBreakdown,
         topProducts = topProducts,
         counterReports = counterReports,
@@ -573,10 +644,10 @@ private fun buildTrendBuckets(
 
     val daysCount = when (reportFilter) {
         "7d" -> 7
-        "30d" -> 14 // group last 14 days cleanly or show last 14 days for crisp legibility on mobile
+        "30d" -> 30
         else -> {
             val spanDays = (((endOfReportDayMs(nowMs) - windowStartMs) / 86_400_000L) + 1L).toInt()
-            spanDays.coerceIn(7, 14)
+            spanDays.coerceIn(7, 30)
         }
     }
 
@@ -605,6 +676,206 @@ private fun buildTrendBuckets(
             unitsSold = group.sumOf { it.quantity }
         )
     }
+}
+
+internal fun buildThirtyDayRevenueInsights(
+    sales: List<SaleEntity>,
+    counters: List<ServiceCounter>,
+    reportPaymentFilter: String,
+    selectedCounter: ServiceCounter?,
+    nowMs: Long = System.currentTimeMillis()
+): ThirtyDayRevenueInsights {
+    val endDayStart = startOfReportDayMs(nowMs)
+    val endDayEnd = endOfReportDayMs(nowMs)
+    val startDay = Calendar.getInstance().apply {
+        timeInMillis = endDayStart
+        add(Calendar.DAY_OF_YEAR, -29)
+    }.timeInMillis
+
+    val scopedSales = sales.filter { sale ->
+        !sale.undone &&
+            sale.createdAt in startDay..endDayEnd &&
+            (reportPaymentFilter !in setOf("cash", "mpesa") ||
+                sale.paymentMethod.equals(reportPaymentFilter, ignoreCase = true)) &&
+            (selectedCounter == null || sale.matchesServiceCounter(selectedCounter, counters.size))
+    }
+
+    val isoFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    val shortDateFormat = SimpleDateFormat("dd MMM", Locale.getDefault())
+    val axisFormat = SimpleDateFormat("d MMM", Locale.getDefault())
+    val dowShortFormat = SimpleDateFormat("EEE", Locale.getDefault())
+    val dowFullFormat = SimpleDateFormat("EEEE", Locale.getDefault())
+
+    val byDayKey = scopedSales.groupBy { isoFormat.format(Date(it.createdAt)) }
+
+    val rawRevenues = LongArray(30)
+    val dayMeta = ArrayList<Triple<Calendar, String, List<SaleEntity>>>(30)
+    for (offset in 0 until 30) {
+        val cal = Calendar.getInstance().apply {
+            timeInMillis = startDay
+            add(Calendar.DAY_OF_YEAR, offset)
+        }
+        val key = isoFormat.format(cal.time)
+        val group = byDayKey[key].orEmpty()
+        rawRevenues[offset] = group.sumOf { it.totalKsh.toLong() }
+        dayMeta += Triple(cal, key, group)
+    }
+
+    val days = dayMeta.mapIndexed { idx, (cal, key, group) ->
+        val windowFrom = (idx - 6).coerceAtLeast(0)
+        val windowLen = (idx - windowFrom + 1).coerceAtLeast(1)
+        var rollingSum = 0L
+        for (j in windowFrom..idx) {
+            rollingSum += rawRevenues[j]
+        }
+        val revenue = rawRevenues[idx]
+        val cash = group.filter { it.paymentMethod.equals("cash", ignoreCase = true) }.sumOf { it.totalKsh.toLong() }
+        val mpesa = group.filter { it.paymentMethod.equals("mpesa", ignoreCase = true) }.sumOf { it.totalKsh.toLong() }
+
+        DailyRevenuePoint(
+            dateIso = key,
+            shortLabel = shortDateFormat.format(cal.time),
+            axisLabel = axisFormat.format(cal.time),
+            dayOfWeekShort = dowShortFormat.format(cal.time),
+            dayOfWeekFull = dowFullFormat.format(cal.time),
+            revenueKsh = revenue,
+            cashKsh = cash,
+            mpesaKsh = mpesa,
+            salesCount = group.size,
+            unitsSold = group.sumOf { it.quantity },
+            rolling7DayAvgKsh = rollingSum / windowLen
+        )
+    }
+
+    val totalRevenue = days.sumOf { it.revenueKsh }
+    val dailyAverage = totalRevenue / 30L
+    val activeDays = days.count { it.revenueKsh > 0L }
+    val bestDay = days.maxByOrNull { it.revenueKsh }?.takeIf { it.revenueKsh > 0L }
+
+    val last7Revenue = days.takeLast(7).sumOf { it.revenueKsh }
+    val prior7Revenue = days.drop(16).take(7).sumOf { it.revenueKsh }
+    val wowDelta = if (prior7Revenue > 0L) {
+        ((last7Revenue - prior7Revenue).toDouble() / prior7Revenue.toDouble()) * 100.0
+    } else null
+
+    val weekdayAverages = days
+        .groupBy { it.dayOfWeekFull }
+        .mapValues { (_, list) ->
+            if (list.isEmpty()) 0L else list.sumOf { it.revenueKsh } / list.size
+        }
+    val bestWeekday = weekdayAverages.entries
+        .filter { it.value > 0L }
+        .maxByOrNull { it.value }
+    val weakestWeekday = weekdayAverages.entries
+        .filter { it.key != bestWeekday?.key }
+        .minByOrNull { it.value }
+
+    val totalCash = days.sumOf { it.cashKsh }
+    val totalMpesa = days.sumOf { it.mpesaKsh }
+    val channelTotal = (totalCash + totalMpesa).coerceAtLeast(1L)
+    val cashPct = if (totalCash + totalMpesa > 0L) ((totalCash.toDouble() / channelTotal) * 100.0).roundToInt() else 0
+    val mpesaPct = if (totalCash + totalMpesa > 0L) (100 - cashPct).coerceAtLeast(0) else 0
+
+    val insights = buildList {
+        if (totalRevenue <= 0L) {
+            add(
+                RevenueActionInsight(
+                    title = "Build Your 30-Day Baseline",
+                    detail = "Complete sales at the counter or tables to unlock daily revenue trends, 7-day rolling averages, and peak-day staffing insights.",
+                    tone = InsightTone.INFO
+                )
+            )
+        } else {
+            // 1. Weekly momentum / pace
+            when {
+                wowDelta != null && wowDelta >= 8.0 -> add(
+                    RevenueActionInsight(
+                        title = "7-Day Momentum Up ${formatSignedPercent(wowDelta)}",
+                        detail = "Last 7 days (${formatKshLong(last7Revenue)}) outpaced the prior week (${formatKshLong(prior7Revenue)}). Keep fast-moving SKUs stocked ahead of weekend demand.",
+                        tone = InsightTone.POSITIVE
+                    )
+                )
+                wowDelta != null && wowDelta <= -8.0 -> add(
+                    RevenueActionInsight(
+                        title = "7-Day Pace Down ${formatSignedPercent(wowDelta)}",
+                        detail = "Last 7 days (${formatKshLong(last7Revenue)}) trailed the prior week (${formatKshLong(prior7Revenue)}). Consider mid-week drink specials or happy-hour bundles.",
+                        tone = InsightTone.WARNING
+                    )
+                )
+                wowDelta != null -> add(
+                    RevenueActionInsight(
+                        title = "Steady Weekly Trading Pace",
+                        detail = "Last 7 days (${formatKshLong(last7Revenue)}) tracked within ${formatSignedPercent(wowDelta)} of the prior 7 days (${formatKshLong(prior7Revenue)}).",
+                        tone = InsightTone.INFO
+                    )
+                )
+                else -> add(
+                    RevenueActionInsight(
+                        title = "Recent 7-Day Acceleration",
+                        detail = "Generated ${formatKshLong(last7Revenue)} over the last 7 days (${formatKshLong(last7Revenue / 7L)}/day avg).",
+                        tone = InsightTone.POSITIVE
+                    )
+                )
+            }
+
+            // 2. Peak & quiet trading weekday insight
+            if (bestWeekday != null) {
+                val pluralBest = "${bestWeekday.key}s"
+                val comparisonText = if (weakestWeekday != null && weakestWeekday.value < bestWeekday.value) {
+                    val pluralWeak = "${weakestWeekday.key}s"
+                    if (weakestWeekday.value > 0L) {
+                        "$pluralBest average ${formatKshLong(bestWeekday.value)} vs $pluralWeak at ${formatKshLong(weakestWeekday.value)}. Align top-up restocks before $pluralBest."
+                    } else {
+                        "$pluralBest lead at ${formatKshLong(bestWeekday.value)} avg while $pluralWeak saw minimal traffic — test weekday promos."
+                    }
+                } else {
+                    "$pluralBest average ${formatKshLong(bestWeekday.value)} — schedule full counter coverage."
+                }
+                add(
+                    RevenueActionInsight(
+                        title = "Strongest Day: $pluralBest",
+                        detail = comparisonText,
+                        tone = InsightTone.INFO
+                    )
+                )
+            }
+
+            // 3. Peak spike & payment channel / consistency insight
+            if (bestDay != null) {
+                val channelSummary = when {
+                    totalCash + totalMpesa <= 0L -> "Recorded across $activeDays of 30 days."
+                    mpesaPct >= 60 -> "M-Pesa drove $mpesaPct% of 30-day receipts — prioritize fast till confirmation at peak hours."
+                    cashPct >= 65 -> "Cash drove $cashPct% of 30-day receipts — tighten end-of-shift till drops."
+                    else -> "Balanced $mpesaPct% M-Pesa / $cashPct% Cash collection across $activeDays active days."
+                }
+                add(
+                    RevenueActionInsight(
+                        title = "Peak Day ${bestDay.shortLabel} · ${formatKshLong(bestDay.revenueKsh)}",
+                        detail = "${bestDay.salesCount} sales (${bestDay.unitsSold} units) on ${bestDay.dayOfWeekFull}. $channelSummary",
+                        tone = if (activeDays >= 20) InsightTone.POSITIVE else InsightTone.INFO
+                    )
+                )
+            }
+        }
+    }
+
+    return ThirtyDayRevenueInsights(
+        days = days,
+        totalRevenueKsh = totalRevenue,
+        dailyAverageKsh = dailyAverage,
+        activeDaysCount = activeDays,
+        bestDay = bestDay,
+        bestWeekdayLabel = bestWeekday?.key?.let { "${it}s" },
+        bestWeekdayAvgKsh = bestWeekday?.value ?: 0L,
+        weakestWeekdayLabel = weakestWeekday?.key?.let { "${it}s" },
+        weakestWeekdayAvgKsh = weakestWeekday?.value ?: 0L,
+        last7DaysRevenueKsh = last7Revenue,
+        prior7DaysRevenueKsh = prior7Revenue,
+        weekOverWeekDeltaPercent = wowDelta,
+        cashSharePercent = cashPct,
+        mpesaSharePercent = mpesaPct,
+        actionableInsights = insights
+    )
 }
 
 internal fun formatSignedPercent(value: Double): String {

@@ -194,6 +194,16 @@ internal fun shouldClearSessionForRefreshFailure(statusCode: Int, message: Strin
     ).any(normalized::contains)
 }
 
+internal fun shouldFallbackFromApplyPosOperation(error: Throwable): Boolean {
+    if (error !is SupabaseApiException) return false
+    if (error is SupabaseUnauthorizedException) return false
+    if (error.statusCode == HttpURLConnection.HTTP_NOT_FOUND || error.statusCode == 300) return true
+    val msg = error.message.orEmpty().lowercase()
+    return msg.contains("could not find the function") ||
+        msg.contains("pgrst202") ||
+        (msg.contains("apply_pos_operation") && msg.contains("not found"))
+}
+
 class SupabaseRestClient(context: Context) {
     private val sessionStore = EncryptedSessionStore(context)
     private val installationId = sessionStore.installationId()
@@ -922,8 +932,13 @@ class SupabaseRestClient(context: Context) {
                     .put("_kind", kind)
                     .put("_payload", payload)
             )
-        } catch (_: Exception) {
-            dispatchPosOperation(shopId, kind, payload)
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            if (shouldFallbackFromApplyPosOperation(error)) {
+                dispatchPosOperation(shopId, kind, payload)
+            } else {
+                throw error
+            }
         }
     }
 
