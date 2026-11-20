@@ -1,0 +1,346 @@
+package com.alvinb.counterpos.ui
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.Placeable
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.alvinb.counterpos.data.butchery.ButcheryPricing
+import java.util.Locale
+
+@Composable
+fun ButcheryPaymentMethodsEditor(
+    methods: List<String>,
+    enabled: Boolean,
+    onMethodsChange: (List<String>) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var customInput by remember { mutableStateOf("") }
+
+    fun addMethod(candidate: String) {
+        val cleaned = candidate.trim().take(32)
+        if (cleaned.isEmpty()) return
+        val exists = methods.any { it.equals(cleaned, ignoreCase = true) }
+        if (!exists && methods.size < 8) {
+            onMethodsChange(methods + cleaned)
+        }
+    }
+
+    val remainingSuggestions = remember(methods) {
+        ButcheryPricing.SUGGESTED_PAYMENT_METHODS.filter { suggestion ->
+            methods.none { it.equals(suggestion, ignoreCase = true) }
+        }
+    }
+
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Payments,
+                contentDescription = null,
+                tint = ButcheryPalette.EmeraldHeader,
+                modifier = Modifier.size(18.dp)
+            )
+            Column {
+                Text(
+                    text = "Custom Payment Methods",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "Displayed as direct one-tap checkout buttons (no STK push).",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        WrapFlowLayout(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalSpacing = 6.dp,
+            verticalSpacing = 6.dp
+        ) {
+            methods.forEachIndexed { index, method ->
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = ButcheryPalette.EmeraldHeader.copy(alpha = 0.10f),
+                    border = BorderStroke(1.dp, ButcheryPalette.EmeraldHeader.copy(alpha = 0.45f)),
+                    modifier = Modifier.testTag("butchery_configured_method_$index")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(start = 10.dp, end = if (methods.size > 1 && enabled) 2.dp else 10.dp, top = 4.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = method,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = ButcheryPalette.EmeraldHeader
+                        )
+                        if (methods.size > 1 && enabled) {
+                            IconButton(
+                                onClick = {
+                                    onMethodsChange(methods.filterNot { it.equals(method, ignoreCase = true) })
+                                },
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .testTag("butchery_remove_method_$index")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Remove $method",
+                                    tint = ButcheryPalette.EmeraldHeader,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (enabled && methods.size < 8) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = customInput,
+                    onValueChange = { customInput = it.take(32) },
+                    label = { Text("Add payment method") },
+                    placeholder = { Text("e.g. Till 8291, Pochi, Card") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("butchery_custom_payment_input")
+                )
+                OutlinedButton(
+                    onClick = {
+                        addMethod(customInput)
+                        customInput = ""
+                    },
+                    enabled = customInput.trim().isNotEmpty() &&
+                        methods.none { it.equals(customInput.trim(), ignoreCase = true) },
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ButcheryPalette.EmeraldHeader),
+                    modifier = Modifier
+                        .height(52.dp)
+                        .testTag("butchery_add_payment_method_button")
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Add payment method", modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Add", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            }
+
+            if (remainingSuggestions.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Quick add:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    remainingSuggestions.forEach { suggestion ->
+                        val tagSuffix = suggestion.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]+"), "_")
+                        FilterChip(
+                            selected = false,
+                            onClick = { addMethod(suggestion) },
+                            label = { Text("+ $suggestion", fontSize = 11.sp) },
+                            modifier = Modifier.testTag("butchery_suggest_method_$tagSuffix")
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ButcheryMeatTypesEditor(
+    selectedCategories: List<String>,
+    enabled: Boolean,
+    onCategoriesChange: (List<String>) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val allCategories = ButcheryPricing.ALL_MEAT_CATEGORIES
+    val singleSelected = selectedCategories.size == 1
+
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Column {
+            Text(
+                text = "Meat Types Sold",
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = if (singleSelected) {
+                    "Selling ${selectedCategories.first()} only — other meat categories are hidden."
+                } else {
+                    "${selectedCategories.size} meat types active (choose 1 or more)."
+                },
+                fontSize = 11.sp,
+                color = if (singleSelected) ButcheryPalette.EmeraldHeader else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = if (singleSelected) FontWeight.SemiBold else FontWeight.Normal
+            )
+        }
+
+        WrapFlowLayout(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalSpacing = 6.dp,
+            verticalSpacing = 6.dp
+        ) {
+            allCategories.forEach { category ->
+                val isSelected = selectedCategories.any { it.equals(category, ignoreCase = true) }
+                val tagSuffix = category.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]+"), "_")
+                FilterChip(
+                    selected = isSelected,
+                    enabled = enabled,
+                    onClick = {
+                        if (isSelected) {
+                            if (selectedCategories.size > 1) {
+                                onCategoriesChange(selectedCategories.filterNot { it.equals(category, ignoreCase = true) })
+                            }
+                        } else {
+                            onCategoriesChange(
+                                allCategories.filter { cat ->
+                                    cat.equals(category, ignoreCase = true) ||
+                                        selectedCategories.any { it.equals(cat, ignoreCase = true) }
+                                }
+                            )
+                        }
+                    },
+                    label = {
+                        Text(
+                            text = category,
+                            fontSize = 12.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                        )
+                    },
+                    modifier = Modifier.testTag("butchery_meat_type_$tagSuffix")
+                )
+            }
+            if (selectedCategories.size < allCategories.size && enabled) {
+                FilterChip(
+                    selected = false,
+                    onClick = { onCategoriesChange(allCategories) },
+                    label = { Text("Select All", fontSize = 12.sp) },
+                    modifier = Modifier.testTag("butchery_meat_type_all")
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WrapFlowLayout(
+    modifier: Modifier = Modifier,
+    horizontalSpacing: Dp = 6.dp,
+    verticalSpacing: Dp = 6.dp,
+    content: @Composable () -> Unit
+) {
+    Layout(
+        content = content,
+        modifier = modifier
+    ) { measurables, constraints ->
+        val hGap = horizontalSpacing.roundToPx()
+        val vGap = verticalSpacing.roundToPx()
+        val maxWidth = constraints.maxWidth
+        val itemConstraints = constraints.copy(minWidth = 0, minHeight = 0)
+        val placeables = measurables.map { it.measure(itemConstraints) }
+
+        val rows = mutableListOf<List<Placeable>>()
+        var currentRow = mutableListOf<Placeable>()
+        var currentRowWidth = 0
+
+        placeables.forEach { placeable ->
+            val neededWidth = if (currentRow.isEmpty()) placeable.width else currentRowWidth + hGap + placeable.width
+            if (currentRow.isNotEmpty() && maxWidth != androidx.compose.ui.unit.Constraints.Infinity && neededWidth > maxWidth) {
+                rows += currentRow
+                currentRow = mutableListOf(placeable)
+                currentRowWidth = placeable.width
+            } else {
+                currentRow += placeable
+                currentRowWidth = neededWidth
+            }
+        }
+        if (currentRow.isNotEmpty()) {
+            rows += currentRow
+        }
+
+        val totalWidth = if (constraints.hasFixedWidth) {
+            constraints.maxWidth
+        } else {
+            rows.maxOfOrNull { row ->
+                row.sumOf { it.width } + (row.size - 1).coerceAtLeast(0) * hGap
+            }?.coerceIn(constraints.minWidth, constraints.maxWidth) ?: constraints.minWidth
+        }
+        val totalHeight = rows.foldIndexed(0) { idx, acc, row ->
+            val rowHeight = row.maxOfOrNull { it.height } ?: 0
+            acc + rowHeight + if (idx > 0) vGap else 0
+        }.coerceIn(constraints.minHeight, constraints.maxHeight)
+
+        layout(totalWidth, totalHeight) {
+            var y = 0
+            rows.forEach { row ->
+                var x = 0
+                val rowHeight = row.maxOfOrNull { it.height } ?: 0
+                row.forEach { placeable ->
+                    placeable.placeRelative(x, y + (rowHeight - placeable.height) / 2)
+                    x += placeable.width + hGap
+                }
+                y += rowHeight + vGap
+            }
+        }
+    }
+}

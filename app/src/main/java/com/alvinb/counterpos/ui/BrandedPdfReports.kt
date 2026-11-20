@@ -857,3 +857,327 @@ internal fun buildBrandedReportPdf(
     session.endPage()
     return session.finishToByteArray()
 }
+
+internal fun buildButcheryReportPdf(
+    context: Context?,
+    butcheryName: String,
+    snapshot: com.alvinb.counterpos.data.butchery.ButcheryDailyReportSnapshot,
+    beefOnlyMode: Boolean = false,
+    singleMeatLabel: String? = null,
+    sessionFactory: () -> PdfDocumentSession = { AndroidPdfDocumentSession() }
+): ByteArray {
+    val pageWidth = 595f
+    val pageHeight = 842f
+    val margin = 32f
+    val contentWidth = pageWidth - margin * 2f
+    val contentBottomLimit = 784f
+
+    val safeName = butcheryName.trim().ifBlank { "Butchery POS" }
+    val displayFont = context?.let {
+        runCatching { ResourcesCompat.getFont(it, R.font.space_grotesk) }.getOrNull()
+    } ?: Typeface.DEFAULT
+    val bodyFont = context?.let {
+        runCatching { ResourcesCompat.getFont(it, R.font.inter) }.getOrNull()
+    } ?: Typeface.DEFAULT
+    val displayBold = Typeface.create(displayFont, Typeface.BOLD)
+    val bodyRegular = Typeface.create(bodyFont, Typeface.NORMAL)
+    val bodyBold = Typeface.create(bodyFont, Typeface.BOLD)
+
+    val logoBitmap: Bitmap? = context?.let {
+        runCatching { BitmapFactory.decodeResource(it.resources, R.drawable.ic_counterpos_logo) }.getOrNull()
+    }
+
+    val session = sessionFactory()
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    val integerFormat = NumberFormat.getIntegerInstance(Locale.US)
+    val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
+    val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+    val generatedLabel = SimpleDateFormat("dd MMM yyyy · HH:mm", Locale.getDefault()).format(Date())
+
+    fun money(value: Long): String = "KES ${integerFormat.format(value)}"
+    fun weightLabel(grams: Long): String = String.format(Locale.US, "%.2f kg", grams / 1000.0)
+
+    fun applyFont(size: Float, bold: Boolean, display: Boolean = false) {
+        paint.textSize = size
+        paint.typeface = when {
+            display -> displayBold
+            bold -> bodyBold
+            else -> bodyRegular
+        }
+    }
+
+    fun fittingText(value: String, maxWidth: Float, size: Float, bold: Boolean = false, display: Boolean = false): String {
+        applyFont(size, bold, display)
+        if (paint.measureText(value) <= maxWidth) return value
+        var result = value
+        while (result.isNotEmpty() && paint.measureText("$result…") > maxWidth) {
+            result = result.dropLast(1)
+        }
+        return if (result.isEmpty()) "" else "$result…"
+    }
+
+    fun Canvas.drawStyledText(
+        text: String,
+        x: Float,
+        baseline: Float,
+        size: Float,
+        color: Int,
+        bold: Boolean = false,
+        display: Boolean = false,
+        align: Paint.Align = Paint.Align.LEFT
+    ) {
+        applyFont(size, bold, display)
+        paint.color = color
+        paint.style = Paint.Style.FILL
+        paint.textAlign = align
+        drawText(text, x, baseline, paint)
+    }
+
+    fun Canvas.fillRoundBox(
+        left: Float,
+        top: Float,
+        right: Float,
+        bottom: Float,
+        radius: Float,
+        fillColor: Int,
+        strokeColor: Int? = null,
+        strokeWidth: Float = 1f
+    ) {
+        val rect = RectF(left, top, right, bottom)
+        paint.shader = null
+        paint.style = Paint.Style.FILL
+        paint.color = fillColor
+        drawRoundRect(rect, radius, radius, paint)
+        if (strokeColor != null) {
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = strokeWidth
+            paint.color = strokeColor
+            drawRoundRect(rect, radius, radius, paint)
+            paint.style = Paint.Style.FILL
+        }
+    }
+
+    var pageNumber = 1
+    var currentCanvas = session.beginPage(pageWidth.toInt(), pageHeight.toInt(), pageNumber)
+    var y = 0f
+
+    fun Canvas.drawFooter() {
+        val footerTop = 804f
+        paint.shader = null
+        paint.style = Paint.Style.FILL
+        paint.color = PdfPalette.Emerald
+        drawRect(margin, footerTop, margin + contentWidth * 0.72f, footerTop + 1.5f, paint)
+        paint.color = PdfPalette.AmberAccent
+        drawRect(margin + contentWidth * 0.72f, footerTop, pageWidth - margin, footerTop + 1.5f, paint)
+        drawStyledText(
+            fittingText("$safeName  ·  Butchery Daily Report  ·  Generated $generatedLabel", 420f, 7.5f),
+            margin,
+            823f,
+            7.5f,
+            PdfPalette.Muted
+        )
+        val pillRight = pageWidth - margin
+        val pillLeft = pillRight - 52f
+        fillRoundBox(pillLeft, 811f, pillRight, 827f, 8f, PdfPalette.DeepForest)
+        drawStyledText("Page $pageNumber", (pillLeft + pillRight) / 2f, 822f, 7.5f, PdfPalette.Mint, bold = true, align = Paint.Align.CENTER)
+    }
+
+    fun Canvas.drawTableHeader(startY: Float): Float {
+        val headerHeight = 26f
+        val path = Path().apply {
+            addRoundRect(
+                RectF(margin, startY, pageWidth - margin, startY + headerHeight),
+                floatArrayOf(7f, 7f, 7f, 7f, 0f, 0f, 0f, 0f),
+                Path.Direction.CW
+            )
+        }
+        paint.shader = null
+        paint.style = Paint.Style.FILL
+        paint.color = PdfPalette.DeepForest
+        drawPath(path, paint)
+        drawStyledText("TIME", margin + 10f, startY + 16.5f, 7.2f, PdfPalette.Mint, bold = true)
+        drawStyledText("MEAT CUT", margin + 72f, startY + 16.5f, 7.2f, PdfPalette.White, bold = true)
+        drawStyledText("RATE / KG", margin + 250f, startY + 16.5f, 7.2f, PdfPalette.White, bold = true, align = Paint.Align.RIGHT)
+        drawStyledText("WEIGHT", margin + 332f, startY + 16.5f, 7.2f, PdfPalette.White, bold = true, align = Paint.Align.RIGHT)
+        drawStyledText("METHOD", margin + 390f, startY + 16.5f, 7.2f, PdfPalette.White, bold = true)
+        drawStyledText("AMOUNT", pageWidth - margin - 10f, startY + 16.5f, 7.2f, PdfPalette.Mint, bold = true, align = Paint.Align.RIGHT)
+        return startY + headerHeight
+    }
+
+    fun startContinuationPage() {
+        currentCanvas.drawFooter()
+        session.endPage()
+        pageNumber += 1
+        currentCanvas = session.beginPage(pageWidth.toInt(), pageHeight.toInt(), pageNumber)
+        currentCanvas.fillRoundBox(margin, 24f, pageWidth - margin, 60f, 10f, PdfPalette.DeepForest)
+        currentCanvas.drawStyledText(
+            fittingText("$safeName  ·  Daily Butchery Ledger (Cont.)", 380f, 12f, bold = true, display = true),
+            margin + 14f,
+            46f,
+            12f,
+            PdfPalette.White,
+            bold = true,
+            display = true
+        )
+        y = currentCanvas.drawTableHeader(72f)
+    }
+
+    // Hero Header
+    val c1 = currentCanvas
+    val heroTop = 24f
+    val heroBottom = 118f
+    val heroRect = RectF(margin, heroTop, pageWidth - margin, heroBottom)
+    c1.save()
+    c1.clipPath(Path().apply { addRoundRect(heroRect, 14f, 14f, Path.Direction.CW) })
+    paint.shader = LinearGradient(margin, heroTop, pageWidth - margin, heroBottom, PdfPalette.DeepForest, PdfPalette.ForestMid, Shader.TileMode.CLAMP)
+    paint.style = Paint.Style.FILL
+    c1.drawRect(heroRect, paint)
+    paint.shader = null
+    paint.color = PdfPalette.Mint
+    c1.drawRect(margin, heroBottom - 3.5f, margin + contentWidth * 0.72f, heroBottom, paint)
+    paint.color = PdfPalette.AmberAccent
+    c1.drawRect(margin + contentWidth * 0.72f, heroBottom - 3.5f, pageWidth - margin, heroBottom, paint)
+    c1.restore()
+
+    if (logoBitmap != null && !logoBitmap.isRecycled) {
+        c1.fillRoundBox(margin + 16f, heroTop + 18f, margin + 58f, heroTop + 60f, 9f, PdfPalette.White, PdfPalette.Mint, 1.2f)
+        c1.drawBitmap(logoBitmap, null, RectF(margin + 20f, heroTop + 22f, margin + 54f, heroTop + 56f), paint)
+    }
+    val textLeft = margin + 70f
+    c1.drawStyledText(
+        fittingText(safeName.uppercase(Locale.ROOT), 280f, 8.2f, bold = true),
+        textLeft,
+        heroTop + 30f,
+        8.2f,
+        PdfPalette.Mint,
+        bold = true
+    )
+    c1.drawStyledText(
+        "Daily Sales Report",
+        textLeft,
+        heroTop + 53f,
+        19f,
+        PdfPalette.White,
+        bold = true,
+        display = true
+    )
+    val scopeLabel = when {
+        !singleMeatLabel.isNullOrBlank() -> "${singleMeatLabel}-Only Butchery"
+        beefOnlyMode -> "Beef-Only Butchery"
+        else -> "Full Meat Counter"
+    }
+    val subLine = "${dateFormat.format(Date(snapshot.startMs))}  •  $scopeLabel"
+    c1.drawStyledText(subLine, textLeft, heroTop + 72f, 8.2f, PdfPalette.SoftText)
+
+    val badgeRight = pageWidth - margin - 16f
+    c1.drawStyledText("BUTCHERY POS", badgeRight, heroTop + 31f, 8.0f, PdfPalette.Mint, bold = true, align = Paint.Align.RIGHT)
+    c1.drawStyledText(generatedLabel, badgeRight, heroTop + 52f, 7.6f, PdfPalette.SoftText, align = Paint.Align.RIGHT)
+
+    y = heroBottom + 14f
+
+    // 4 KPI Cards
+    val gap = 8f
+    val kpiW = (contentWidth - gap * 3f) / 4f
+    val kpiH = 58f
+    data class BCard(val label: String, val value: String, val sub: String, val bg: Int, val accent: Int)
+    val cards = listOf(
+        BCard("TOTAL SALES", money(snapshot.totalSalesKsh), "${snapshot.sales.size} transactions", PdfPalette.MintSoft, PdfPalette.Emerald),
+        BCard("WEIGHT SOLD", weightLabel(snapshot.totalWeightGrams), "${snapshot.totalWeightGrams} g total", PdfPalette.AmberSoft, PdfPalette.Amber),
+        BCard("M-PESA", money(snapshot.mpesaTotalKsh), "${snapshot.mpesaPercent}% of revenue", PdfPalette.TealSoft, PdfPalette.Teal),
+        BCard("CASH PAYMENT", money(snapshot.cashTotalKsh), "${snapshot.cashPercent}% of revenue", PdfPalette.SlateSoft, PdfPalette.DeepForest)
+    )
+    cards.forEachIndexed { idx, card ->
+        val left = margin + idx * (kpiW + gap)
+        c1.fillRoundBox(left, y, left + kpiW, y + kpiH, 8f, card.bg)
+        paint.color = card.accent
+        paint.style = Paint.Style.FILL
+        c1.drawRoundRect(RectF(left, y + 6f, left + 3.5f, y + kpiH - 6f), 2f, 2f, paint)
+        c1.drawStyledText(card.label, left + 10f, y + 17f, 6.8f, card.accent, bold = true)
+        c1.drawStyledText(fittingText(card.value, kpiW - 14f, 11.5f, bold = true, display = true), left + 10f, y + 36f, 11.5f, PdfPalette.Ink, bold = true, display = true)
+        c1.drawStyledText(fittingText(card.sub, kpiW - 14f, 7.0f), left + 10f, y + 50f, 7.0f, PdfPalette.Muted)
+    }
+    y += kpiH + 12f
+
+    // Top Cuts Breakdown
+    val topCuts = snapshot.topCuts.take(5)
+    if (topCuts.isNotEmpty()) {
+        val boxH = 26f + topCuts.size * 20f + 8f
+        c1.fillRoundBox(margin, y, pageWidth - margin, y + boxH, 9f, PdfPalette.White, PdfPalette.Border, 1f)
+        c1.drawStyledText("CUTS BREAKDOWN", margin + 12f, y + 17f, 7.5f, PdfPalette.Emerald, bold = true)
+        c1.drawStyledText("WEIGHT  ·  REVENUE", pageWidth - margin - 12f, y + 17f, 7.0f, PdfPalette.Muted, bold = true, align = Paint.Align.RIGHT)
+        val maxRev = topCuts.maxOfOrNull { it.totalKsh }?.coerceAtLeast(1L) ?: 1L
+        var rowY = y + 26f
+        topCuts.forEachIndexed { idx, cut ->
+            val accent = if (idx == 0) PdfPalette.Emerald else if (idx == 1) PdfPalette.Teal else PdfPalette.Amber
+            c1.drawStyledText(fittingText(cut.cutName, 175f, 8.2f, bold = true), margin + 14f, rowY + 12.5f, 8.2f, PdfPalette.Ink, bold = true)
+            val trackL = margin + 195f
+            val trackR = margin + 375f
+            c1.fillRoundBox(trackL, rowY + 5f, trackR, rowY + 13f, 4f, PdfPalette.SlateSoft)
+            val fillW = ((cut.totalKsh.toFloat() / maxRev.toFloat()) * (trackR - trackL)).coerceAtLeast(6f)
+            c1.fillRoundBox(trackL, rowY + 5f, trackL + fillW, rowY + 13f, 4f, accent)
+            c1.drawStyledText(weightLabel(cut.totalGrams), margin + 440f, rowY + 12.5f, 7.8f, PdfPalette.Muted, align = Paint.Align.RIGHT)
+            c1.drawStyledText(money(cut.totalKsh), pageWidth - margin - 12f, rowY + 12.5f, 8.2f, PdfPalette.Ink, bold = true, align = Paint.Align.RIGHT)
+            rowY += 20f
+        }
+        y += boxH + 12f
+    }
+
+    // Transaction Ledger
+    y = if (y + 60f > contentBottomLimit) {
+        startContinuationPage()
+        y
+    } else {
+        currentCanvas.drawTableHeader(y)
+    }
+
+    if (snapshot.sales.isEmpty()) {
+        currentCanvas.fillRoundBox(margin, y, pageWidth - margin, y + 44f, 0f, PdfPalette.Zebra, PdfPalette.Border, 0.8f)
+        currentCanvas.drawStyledText("No butchery sales recorded for this day.", pageWidth / 2f, y + 26f, 9f, PdfPalette.Muted, align = Paint.Align.CENTER)
+    } else {
+        val rowH = 30f
+        snapshot.sales.forEachIndexed { idx, sale ->
+            if (y + rowH > contentBottomLimit) startContinuationPage()
+            val canvas = currentCanvas
+            if (idx % 2 == 1) {
+                paint.color = PdfPalette.Zebra
+                paint.style = Paint.Style.FILL
+                canvas.drawRect(margin, y, pageWidth - margin, y + rowH, paint)
+            }
+            paint.color = PdfPalette.Border
+            paint.strokeWidth = 0.7f
+            canvas.drawLine(margin, y, margin, y + rowH, paint)
+            canvas.drawLine(pageWidth - margin, y, pageWidth - margin, y + rowH, paint)
+
+            canvas.drawStyledText(timeFormat.format(Date(sale.createdAt)), margin + 10f, y + 18.5f, 7.8f, PdfPalette.Ink)
+            canvas.drawStyledText(fittingText(sale.cutName, 120f, 8.2f, bold = true), margin + 72f, y + 18.5f, 8.2f, PdfPalette.Ink, bold = true)
+            canvas.drawStyledText("KES ${sale.pricePerKgKsh}", margin + 250f, y + 18.5f, 7.6f, PdfPalette.Muted, align = Paint.Align.RIGHT)
+            canvas.drawStyledText(weightLabel(sale.weightGrams.toLong()), margin + 332f, y + 18.5f, 8.0f, PdfPalette.Ink, bold = true, align = Paint.Align.RIGHT)
+
+            val isMpesa = com.alvinb.counterpos.data.butchery.ButcheryPricing.isMpesaPayment(sale.paymentMethod)
+            val methodLabel = com.alvinb.counterpos.data.butchery.ButcheryPricing.paymentMethodDisplayLabel(sale.paymentMethod)
+            val pillBg = when {
+                isMpesa -> PdfPalette.MintSoft
+                com.alvinb.counterpos.data.butchery.ButcheryPricing.isCashPayment(sale.paymentMethod) -> PdfPalette.SlateSoft
+                else -> PdfPalette.AmberSoft
+            }
+            val pillFg = when {
+                isMpesa -> PdfPalette.Emerald
+                com.alvinb.counterpos.data.butchery.ButcheryPricing.isCashPayment(sale.paymentMethod) -> PdfPalette.DeepForest
+                else -> PdfPalette.Amber
+            }
+            val pillX = margin + 382f
+            val pillW = 64f
+            canvas.fillRoundBox(pillX, y + 8f, pillX + pillW, y + 22f, 7f, pillBg)
+            canvas.drawStyledText(fittingText(methodLabel, pillW - 6f, 6.6f, bold = true), pillX + pillW / 2f, y + 17.5f, 6.6f, pillFg, bold = true, align = Paint.Align.CENTER)
+            canvas.drawStyledText(money(sale.totalKsh.toLong()), pageWidth - margin - 10f, y + 18.5f, 8.2f, PdfPalette.Ink, bold = true, align = Paint.Align.RIGHT)
+
+            paint.color = PdfPalette.Border
+            canvas.drawLine(margin, y + rowH, pageWidth - margin, y + rowH, paint)
+            y += rowH
+        }
+    }
+
+    currentCanvas.drawFooter()
+    session.endPage()
+    return session.finishToByteArray()
+}

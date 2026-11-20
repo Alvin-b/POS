@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.AddBusiness
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.TableRestaurant
 import androidx.compose.material.icons.filled.Visibility
@@ -48,6 +49,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -89,7 +91,7 @@ fun RegisterBusinessScreen(
         error = state.startupError,
         notice = state.notice,
         isCreating = state.isAuthenticating || state.isCreatingBusiness,
-        onRegister = { email, password, name, type, size, mode, count, phone ->
+        onRegister = { email, password, name, type, size, mode, count, phone, enrollButchery, butcheryName, beefOnly, beefPrice ->
             viewModel.registerOwnerAndBusiness(
                 email = email,
                 password = password,
@@ -98,7 +100,11 @@ fun RegisterBusinessScreen(
                 businessSize = size,
                 inventoryMode = mode,
                 counterCount = count,
-                ownerPhone = phone
+                ownerPhone = phone,
+                enrollButchery = enrollButchery,
+                butcheryName = butcheryName,
+                butcheryBeefOnly = beefOnly,
+                butcheryBeefPricePerKgKsh = beefPrice
             )
         },
         onNavigateToSignIn = onNavigateToSignIn,
@@ -120,7 +126,11 @@ fun RegisterBusinessScreen(
         businessSize: String,
         inventoryMode: String,
         counterCount: Int,
-        ownerPhone: String
+        ownerPhone: String,
+        enrollButchery: Boolean,
+        butcheryName: String,
+        butcheryBeefOnly: Boolean,
+        butcheryBeefPricePerKgKsh: Int
     ) -> Unit,
     onNavigateToSignIn: () -> Unit,
     onClearError: () -> Unit = {}
@@ -138,6 +148,10 @@ fun RegisterBusinessScreen(
     var businessSize by remember { mutableStateOf("medium") } // "small", "medium", "large"
     var inventoryMode by remember { mutableStateOf("shared") } // "shared" vs "per_counter"
     var counterCount by remember { mutableStateOf("1") }
+    var enrollButchery by remember { mutableStateOf(false) }
+    var butcheryName by remember { mutableStateOf("") }
+    var butcheryBeefOnly by remember { mutableStateOf(false) }
+    var butcheryBeefPrice by remember { mutableStateOf("680") }
 
     val isClub = businessType == "big_club" || businessType == "club"
     val isLiquorStore = businessType == "counter_seller" || businessType == "liquor_store"
@@ -148,9 +162,10 @@ fun RegisterBusinessScreen(
     val businessNameValid = businessName.trim().length in 2..120
     val ownerPhoneValid = com.alvinb.counterpos.data.SubscriptionManager.normalizeKenyanPhone(ownerPhone) != null
     val counterCountValid = !isClub || (counterCount.toIntOrNull()?.let { it in 1..50 } == true)
+    val butcheryPriceValid = !enrollButchery || (butcheryBeefPrice.toIntOrNull()?.let { it in 50..10_000 } == true)
 
     val canSubmit = emailValid && passwordValid && passwordsMatch &&
-        businessNameValid && ownerPhoneValid && counterCountValid && !isCreating
+        businessNameValid && ownerPhoneValid && counterCountValid && butcheryPriceValid && !isCreating
 
     Scaffold(
         modifier = Modifier
@@ -594,6 +609,93 @@ fun RegisterBusinessScreen(
                                 }
                             }
                         }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Scale,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Column {
+                                    Text(
+                                        text = "Enroll Butchery Package",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp
+                                    )
+                                    Text(
+                                        text = "Add a separate meat counter alongside your business",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Switch(
+                                checked = enrollButchery,
+                                onCheckedChange = { enrollButchery = it },
+                                enabled = !isCreating,
+                                modifier = Modifier.testTag("register_enroll_butchery_switch")
+                            )
+                        }
+
+                        if (enrollButchery) {
+                            OutlinedTextField(
+                                value = butcheryName,
+                                onValueChange = { butcheryName = it.take(80) },
+                                label = { Text("Butchery Name (optional)") },
+                                placeholder = {
+                                    Text(
+                                        if (businessName.isNotBlank()) "${businessName.trim()} Butchery" else "e.g. Prime Cuts Butchery"
+                                    )
+                                },
+                                singleLine = true,
+                                enabled = !isCreating,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.fillMaxWidth().testTag("register_butchery_name_input")
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Beef-Only Butchery", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                    Text(
+                                        "Turn on if this butchery sells only beef cuts",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = butcheryBeefOnly,
+                                    onCheckedChange = { butcheryBeefOnly = it },
+                                    enabled = !isCreating,
+                                    modifier = Modifier.testTag("register_butchery_beef_only_switch")
+                                )
+                            }
+                            OutlinedTextField(
+                                value = butcheryBeefPrice,
+                                onValueChange = { butcheryBeefPrice = it.filter(Char::isDigit).take(5) },
+                                label = { Text("Beef Selling Price per kg (KES)") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                enabled = !isCreating,
+                                isError = !butcheryPriceValid,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.fillMaxWidth().testTag("register_butchery_price_input")
+                            )
+                        }
                     }
                 }
             }
@@ -723,6 +825,7 @@ fun RegisterBusinessScreen(
                     Button(
                         onClick = {
                             val parsedCount = if (isClub) counterCount.toIntOrNull() ?: 1 else 1
+                            val parsedBeefPrice = butcheryBeefPrice.toIntOrNull() ?: 680
                             onRegister(
                                 email.trim(),
                                 password,
@@ -731,7 +834,11 @@ fun RegisterBusinessScreen(
                                 businessSize,
                                 inventoryMode,
                                 parsedCount,
-                                ownerPhone
+                                ownerPhone,
+                                enrollButchery,
+                                butcheryName.trim(),
+                                butcheryBeefOnly,
+                                parsedBeefPrice
                             )
                         },
                         enabled = canSubmit,

@@ -67,6 +67,7 @@ import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -180,6 +181,9 @@ fun CounterPosWorkspace(
     val diningTables by viewModel.diningTables.collectAsStateWithLifecycle()
     val tableOrders by viewModel.tableOrders.collectAsStateWithLifecycle()
     val serviceCounters by viewModel.serviceCounters.collectAsStateWithLifecycle()
+    val butcheryConfig by viewModel.butcheryConfig.collectAsStateWithLifecycle()
+    val butcheryCuts by viewModel.butcheryCuts.collectAsStateWithLifecycle()
+    val butcherySales by viewModel.butcherySales.collectAsStateWithLifecycle()
     val products = remember(cachedProducts, state.counterStockByProduct, state.selectedCounterId, session.activeBusiness?.counterInventoryMode) {
         if (session.activeBusiness?.counterInventoryMode == "per_counter") {
             cachedProducts.map { product ->
@@ -311,6 +315,32 @@ fun CounterPosWorkspace(
         return
     }
 
+    if (state.isButcheryWorkspaceOpen) {
+        ButcheryWorkspaceScreen(
+            activeTab = state.butcheryTab,
+            config = butcheryConfig,
+            cuts = butcheryCuts,
+            sales = butcherySales,
+            businessName = session.activeBusiness?.shopName.orEmpty(),
+            ownerCanEdit = role.equals("owner", ignoreCase = true) || role.equals("manager", ignoreCase = true),
+            notice = state.notice,
+            onClearNotice = viewModel::clearNotice,
+            onSelectTab = viewModel::selectButcheryTab,
+            onBackToMainPos = viewModel::closeButcheryWorkspace,
+            onSaveConfig = { enabled, name, beefOnly, price, methods, categories ->
+                viewModel.enrollOrUpdateButchery(enabled, name, beefOnly, price, methods, categories)
+            },
+            onApplyCategoryPrice = viewModel::applyCategoryPricePerKg,
+            onUpdateCutPrice = viewModel::updateButcheryCutPrice,
+            onUpdateCutStockKg = viewModel::setButcheryCutStockKg,
+            onToggleCutActive = viewModel::setButcheryCutActive,
+            onAddCut = viewModel::addButcheryCut,
+            onRecordSale = viewModel::recordButcherySale,
+            onUndoLastSale = viewModel::undoLatestButcherySale
+        )
+        return
+    }
+
     BackHandler {
         when {
             state.isTeamPanelOpen -> viewModel.closeTeamPanel()
@@ -371,7 +401,9 @@ fun CounterPosWorkspace(
                     counters = serviceCounters,
                     selectedCounterId = state.selectedCounterId,
                     onCounterSelect = viewModel::selectCounter,
-                    onSyncData = { viewModel.synchronizeData(showNotice = true) }
+                    onSyncData = { viewModel.synchronizeData(showNotice = true) },
+                    isButcheryEnabled = butcheryConfig?.enabled == true,
+                    onOpenButchery = { viewModel.openButcheryWorkspace(ButcheryTab.SELL) }
                 )
                 if (!state.isOnline) {
                     Surface(color = MaterialTheme.colorScheme.tertiaryContainer) {
@@ -1076,12 +1108,17 @@ fun CounterPosWorkspace(
                 role = role,
                 businessType = session.activeBusiness?.businessType ?: "big_club",
                 registeredCounters = serviceCounters,
+                butcheryConfig = butcheryConfig,
                 onClose = viewModel::closeTeamPanel,
                 onBusinessNameSave = { viewModel.updateBusinessName(it) },
                 onLoadMembers = { viewModel.loadEmployeeMembers() },
                 onCounterCreate = { name -> viewModel.createServiceCounter(name) },
                 onCounterRename = { id, name -> viewModel.renameServiceCounter(id, name) },
                 onCounterDelete = { id -> viewModel.deleteServiceCounter(id) },
+                onSaveButcheryConfig = { enabled, name, beefOnly, price, methods, categories ->
+                    viewModel.enrollOrUpdateButchery(enabled, name, beefOnly, price, methods, categories)
+                },
+                onOpenButcheryWorkspace = { tab -> viewModel.openButcheryWorkspace(tab) },
                 onOpenStaffManagement = {
                     viewModel.closeTeamPanel()
                     viewModel.openStaffManagement()
@@ -1318,6 +1355,8 @@ private fun LeanTopBar(
     selectedCounterId: String? = null,
     onCounterSelect: (String) -> Unit = {},
     onSyncData: () -> Unit = {},
+    isButcheryEnabled: Boolean = false,
+    onOpenButchery: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val focusManager = LocalFocusManager.current
@@ -1527,6 +1566,36 @@ private fun LeanTopBar(
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(20.dp)
                             )
+                        }
+                    }
+
+                    if (isButcheryEnabled) {
+                        Surface(
+                            onClick = onOpenButchery,
+                            shape = RoundedCornerShape(18.dp),
+                            color = Color(0xFF1F8E4E),
+                            modifier = Modifier
+                                .height(36.dp)
+                                .testTag("open_butchery_workspace_button")
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 10.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Scale,
+                                    contentDescription = "Open Butchery POS",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = "Butchery",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
                         }
                     }
 

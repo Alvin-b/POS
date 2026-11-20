@@ -13,6 +13,9 @@ import com.alvinb.counterpos.data.local.entity.ServiceCounterEntity
 import com.alvinb.counterpos.data.local.entity.TableOrderEntity
 import com.alvinb.counterpos.data.local.entity.parseSaleUnits
 import kotlinx.coroutines.flow.Flow
+import com.alvinb.counterpos.data.local.entity.ButcheryConfigEntity
+import com.alvinb.counterpos.data.local.entity.ButcheryCutEntity
+import com.alvinb.counterpos.data.local.entity.ButcherySaleEntity
 import com.alvinb.counterpos.data.local.entity.OfflineSessionEntity
 import com.alvinb.counterpos.data.local.entity.OfflineTransactionLogEntity
 import com.alvinb.counterpos.data.local.entity.OfflineTransactionStatus
@@ -811,5 +814,125 @@ interface CounterPosDao {
         if (restoreStock(sale.catalogCode, stockToRestore) != 1) return false
         deleteTableOrderBySaleId(sale.id)
         return markSaleUndone(sale.id) == 1
+    }
+
+    // ---- Butchery Package Queries & Transactions ----
+    @Query("SELECT * FROM butchery_config WHERE shopId = :shopId LIMIT 1")
+    fun observeButcheryConfig(shopId: String): Flow<ButcheryConfigEntity?>
+
+    @Query("SELECT * FROM butchery_config WHERE shopId = :shopId LIMIT 1")
+    suspend fun getButcheryConfig(shopId: String): ButcheryConfigEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertButcheryConfig(config: ButcheryConfigEntity)
+
+    @Query("SELECT * FROM butchery_cuts WHERE shopId = :shopId ORDER BY sortOrder ASC, name COLLATE NOCASE ASC")
+    fun observeButcheryCuts(shopId: String): Flow<List<ButcheryCutEntity>>
+
+    @Query("SELECT * FROM butchery_cuts WHERE shopId = :shopId ORDER BY sortOrder ASC, name COLLATE NOCASE ASC")
+    suspend fun getButcheryCuts(shopId: String): List<ButcheryCutEntity>
+
+    @Query("SELECT * FROM butchery_cuts WHERE id = :cutId LIMIT 1")
+    suspend fun getButcheryCutById(cutId: String): ButcheryCutEntity?
+
+    @Query("SELECT COUNT(*) FROM butchery_cuts WHERE shopId = :shopId")
+    suspend fun getButcheryCutCount(shopId: String): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertButcheryCut(cut: ButcheryCutEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertButcheryCuts(cuts: List<ButcheryCutEntity>)
+
+    @Query("UPDATE butchery_cuts SET pricePerKgKsh = :pricePerKgKsh WHERE id = :cutId")
+    suspend fun updateButcheryCutPrice(cutId: String, pricePerKgKsh: Int): Int
+
+    @Query("UPDATE butchery_cuts SET pricePerKgKsh = :pricePerKgKsh WHERE shopId = :shopId AND category = 'Beef'")
+    suspend fun updateAllBeefCutPrices(shopId: String, pricePerKgKsh: Int): Int
+
+    @Query("UPDATE butchery_cuts SET pricePerKgKsh = :pricePerKgKsh WHERE shopId = :shopId AND lower(category) = lower(:category)")
+    suspend fun updateCutPricesForCategory(shopId: String, category: String, pricePerKgKsh: Int): Int
+
+    @Query("UPDATE butchery_cuts SET stockGrams = :stockGrams WHERE id = :cutId")
+    suspend fun setButcheryCutStockGrams(cutId: String, stockGrams: Int): Int
+
+    @Query("UPDATE butchery_cuts SET stockGrams = stockGrams + :grams WHERE id = :cutId")
+    suspend fun addButcheryCutStockGrams(cutId: String, grams: Int): Int
+
+    @Query("UPDATE butchery_cuts SET active = :active WHERE id = :cutId")
+    suspend fun setButcheryCutActive(cutId: String, active: Boolean): Int
+
+    @Query("SELECT * FROM butchery_sales WHERE shopId = :shopId ORDER BY createdAt DESC, id DESC")
+    fun observeButcherySales(shopId: String): Flow<List<ButcherySaleEntity>>
+
+    @Query("SELECT * FROM butchery_sales WHERE shopId = :shopId AND undone = 0 ORDER BY createdAt DESC, id DESC LIMIT 1")
+    suspend fun getLatestActiveButcherySale(shopId: String): ButcherySaleEntity?
+
+    @Query("UPDATE butchery_sales SET undone = 1 WHERE id = :saleId AND undone = 0")
+    suspend fun markButcherySaleUndone(saleId: Long): Int
+
+    @Insert
+    suspend fun insertButcherySale(sale: ButcherySaleEntity): Long
+
+    @Transaction
+    suspend fun enrollButchery(config: ButcheryConfigEntity, starterCuts: List<ButcheryCutEntity>) {
+        upsertButcheryConfig(config)
+        if (getButcheryCutCount(config.shopId) == 0 && starterCuts.isNotEmpty()) {
+            insertButcheryCuts(starterCuts)
+        }
+    }
+
+    @Transaction
+    suspend fun recordButcherySale(
+        shopId: String,
+        cutId: String,
+        weightGrams: Int,
+        totalKsh: Int,
+        paymentMethod: String,
+        entryMode: String,
+        attendantName: String?,
+        createdAt: Long
+    ): Long? {
+        if (weightGrams <= 0 || totalKsh <= 0) return null
+        val cut = getButcheryCutById(cutId) ?: return null
+        if (cut.shopId != shopId) return null
+        val deducted = minOf(cut.stockGrams.coerceAtLeast(0), weightGrams)
+        if (deducted > 0) {
+            setButcheryCutStockGrams(cut.id, cut.stockGrams - deducted)
+        }
+        val trimmedPayment = paymentMethod.trim()
+        val normalizedPayment = when {
+            trimmedPayment.isEmpty() -> "Cash Payment"
+            trimmedPayment.equals("mpesa", ignoreCase = true) -> "mpesa"
+            trimmedPayment.equals("cash", ignoreCase = true) -> "cash"
+            else -> trimmedPayment.take(32)
+        }
+        return insertButcherySale(
+            ButcherySaleEntity(
+                shopId = shopId,
+                cutId = cut.id,
+                cutName = cut.name,
+                category = cut.category,
+                pricePerKgKsh = cut.pricePerKgKsh,
+                weightGrams = weightGrams,
+                totalKsh = totalKsh,
+                paymentMethod = normalizedPayment,
+                entryMode = entryMode,
+                stockDeductedGrams = deducted,
+                attendantName = attendantName,
+                createdAt = createdAt,
+                undone = false
+            )
+        )
+    }
+
+    @Transaction
+    suspend fun undoLatestButcherySale(shopId: String): Boolean {
+        val latest = getLatestActiveButcherySale(shopId) ?: return false
+        if (markButcherySaleUndone(latest.id) != 1) return false
+        if (latest.stockDeductedGrams > 0) {
+            addButcheryCutStockGrams(latest.cutId, latest.stockDeductedGrams)
+        }
+        return true
     }
 }

@@ -31,12 +31,16 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Store
+import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -68,6 +72,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.alvinb.counterpos.data.local.entity.ButcheryConfigEntity
 import com.alvinb.counterpos.data.remote.ServiceCounter
 import org.json.JSONObject
 import java.util.Locale
@@ -83,12 +88,22 @@ fun OwnerSettingsScreen(
     role: String,
     businessType: String = "big_club",
     registeredCounters: List<ServiceCounter>,
+    butcheryConfig: ButcheryConfigEntity? = null,
     onClose: () -> Unit,
     onBusinessNameSave: (String) -> Unit,
     onLoadMembers: () -> Unit,
     onCounterCreate: (String) -> Unit,
     onCounterRename: (String, String) -> Unit,
     onCounterDelete: (String) -> Unit = {},
+    onSaveButcheryConfig: (
+        enabled: Boolean,
+        name: String,
+        beefOnly: Boolean,
+        defaultBeefPricePerKgKsh: Int,
+        paymentMethods: List<String>,
+        enabledCategories: List<String>
+    ) -> Unit = { _, _, _, _, _, _ -> },
+    onOpenButcheryWorkspace: (ButcheryTab) -> Unit = {},
     onOpenStaffManagement: () -> Unit = {},
     onOpenSubscription: () -> Unit = {}
 ) {
@@ -97,6 +112,29 @@ fun OwnerSettingsScreen(
     val isLiquorStore = businessType.equals("counter_seller", ignoreCase = true) ||
         businessType.equals("liquor_store", ignoreCase = true)
     var businessNameDraft by remember(businessName) { mutableStateOf(businessName) }
+    var butcheryEnabledDraft by remember(butcheryConfig?.enabled) { mutableStateOf(butcheryConfig?.enabled ?: false) }
+    var butcheryNameDraft by remember(butcheryConfig?.butcheryName, businessName) {
+        mutableStateOf(
+            butcheryConfig?.butcheryName?.takeIf(String::isNotBlank)
+                ?: if (businessName.isNotBlank()) "$businessName Butchery" else "Main Butchery"
+        )
+    }
+    var butcheryCategoriesDraft by remember(butcheryConfig?.enabledCategoriesJson, butcheryConfig?.beefOnlyMode) {
+        mutableStateOf(com.alvinb.counterpos.data.butchery.ButcheryPricing.resolveEnabledCategories(butcheryConfig))
+    }
+    var butcheryBeefPriceDraft by remember(butcheryConfig?.defaultBeefPricePerKgKsh) {
+        mutableStateOf((butcheryConfig?.defaultBeefPricePerKgKsh ?: 680).toString())
+    }
+    var butcheryPaymentMethodsDraft by remember(butcheryConfig?.paymentMethodsJson) {
+        mutableStateOf(com.alvinb.counterpos.data.butchery.ButcheryPricing.parsePaymentMethods(butcheryConfig?.paymentMethodsJson))
+    }
+    val butcheryIsBeefOnly = butcheryCategoriesDraft.size == 1 &&
+        butcheryCategoriesDraft.first().equals(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label, ignoreCase = true)
+    val primaryMeatLabel = if (butcheryCategoriesDraft.size == 1) {
+        butcheryCategoriesDraft.first()
+    } else {
+        com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label
+    }
     var newCounterName by remember { mutableStateOf("") }
     var editingCounterId by remember { mutableStateOf<String?>(null) }
     var editingCounterName by remember { mutableStateOf("") }
@@ -193,6 +231,126 @@ fun OwnerSettingsScreen(
                             Spacer(Modifier.width(8.dp))
                         }
                         Text("Save business name")
+                    }
+                    if (!ownerCanEdit) ReadOnlyHint()
+                }
+
+                SettingsSection(
+                    title = "Butchery Module",
+                    description = "Enable Butchery POS with custom payment methods and Price per KG calculations.",
+                    icon = Icons.Default.Scale
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (butcheryEnabledDraft) "Butchery Module ON" else "Enable Butchery Module",
+                                fontWeight = FontWeight.SemiBold,
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            Text(
+                                text = "Separate meat counter POS, weight/price calculator, payment methods & kg reports.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = butcheryEnabledDraft,
+                            onCheckedChange = { enabled ->
+                                butcheryEnabledDraft = enabled
+                                if (ownerCanEdit) {
+                                    val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                    onSaveButcheryConfig(enabled, butcheryNameDraft.trim(), butcheryIsBeefOnly, price, butcheryPaymentMethodsDraft, butcheryCategoriesDraft)
+                                }
+                            },
+                            enabled = ownerCanEdit,
+                            modifier = Modifier.testTag("owner_settings_butchery_switch")
+                        )
+                    }
+
+                    if (butcheryEnabledDraft) {
+                        OutlinedTextField(
+                            value = butcheryNameDraft,
+                            onValueChange = { butcheryNameDraft = it.take(80) },
+                            label = { Text("Enrolled Butchery Name") },
+                            placeholder = { Text("e.g. Prime Cuts Butchery") },
+                            singleLine = true,
+                            enabled = ownerCanEdit,
+                            modifier = Modifier.fillMaxWidth().testTag("owner_settings_butchery_name_input")
+                        )
+
+                        ButcheryMeatTypesEditor(
+                            selectedCategories = butcheryCategoriesDraft,
+                            enabled = ownerCanEdit,
+                            onCategoriesChange = { butcheryCategoriesDraft = it }
+                        )
+
+                        OutlinedTextField(
+                            value = butcheryBeefPriceDraft,
+                            onValueChange = { butcheryBeefPriceDraft = it.filter(Char::isDigit).take(5) },
+                            label = { Text("Default $primaryMeatLabel Price per kg (KES)") },
+                            supportingText = {
+                                Text("Digital-scale customers buying KES 100 / 150 / 200 compute exact kg from this rate.")
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            enabled = ownerCanEdit,
+                            modifier = Modifier.fillMaxWidth().testTag("owner_settings_beef_price_input")
+                        )
+
+                        ButcheryPaymentMethodsEditor(
+                            methods = butcheryPaymentMethodsDraft,
+                            enabled = ownerCanEdit,
+                            onMethodsChange = { butcheryPaymentMethodsDraft = it }
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                    onSaveButcheryConfig(true, butcheryNameDraft.trim(), butcheryIsBeefOnly, price, butcheryPaymentMethodsDraft, butcheryCategoriesDraft)
+                                },
+                                enabled = ownerCanEdit && butcheryNameDraft.trim().isNotEmpty(),
+                                modifier = Modifier.weight(1f).testTag("owner_settings_save_butchery_button")
+                            ) {
+                                Text("Save Butchery", fontWeight = FontWeight.Bold)
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                    if (ownerCanEdit) {
+                                        onSaveButcheryConfig(true, butcheryNameDraft.trim(), butcheryIsBeefOnly, price, butcheryPaymentMethodsDraft, butcheryCategoriesDraft)
+                                    }
+                                    onOpenButcheryWorkspace(ButcheryTab.SETTINGS)
+                                },
+                                modifier = Modifier.weight(1f).testTag("owner_settings_butchery_cuts_button")
+                            ) {
+                                Text("Cuts & Prices")
+                            }
+                        }
+
+                        Button(
+                            onClick = {
+                                val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                if (ownerCanEdit) {
+                                    onSaveButcheryConfig(true, butcheryNameDraft.trim(), butcheryIsBeefOnly, price, butcheryPaymentMethodsDraft, butcheryCategoriesDraft)
+                                }
+                                onOpenButcheryWorkspace(ButcheryTab.SELL)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1F8E4E)),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().testTag("owner_settings_open_butchery_pos_button")
+                        ) {
+                            Icon(Icons.Default.Storefront, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Open Butchery POS", fontWeight = FontWeight.Bold)
+                        }
                     }
                     if (!ownerCanEdit) ReadOnlyHint()
                 }

@@ -16,6 +16,9 @@ import com.alvinb.counterpos.data.remote.PlatformBillingSettings
 import com.alvinb.counterpos.data.remote.CounterReportRow
 import com.alvinb.counterpos.data.remote.ServiceCounter
 import com.alvinb.counterpos.data.SessionSnapshot
+import com.alvinb.counterpos.data.local.entity.ButcheryConfigEntity
+import com.alvinb.counterpos.data.local.entity.ButcheryCutEntity
+import com.alvinb.counterpos.data.local.entity.ButcherySaleEntity
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.DiningTableEntity
@@ -27,10 +30,15 @@ import com.alvinb.counterpos.data.local.entity.serializeSaleUnits
 import com.alvinb.counterpos.data.model.BusinessHours
 import com.alvinb.counterpos.data.model.DayBusinessHours
 import com.alvinb.counterpos.ui.scanner.ScannerMode
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.CancellationException
@@ -45,6 +53,7 @@ import java.util.regex.Pattern
 
 enum class PosTab { SCAN, STOCK, SALES, REPORTS, TABLES }
 enum class StockMode { MY_STOCK, LIBRARY }
+enum class ButcheryTab { SELL, REPORT, SETTINGS }
 
 data class AdminEnrollmentCredential(
     val businessId: String,
@@ -215,12 +224,17 @@ data class CounterPosUiState(
     val isManagingCounters: Boolean = false,
     val platformBillingSettings: PlatformBillingSettings? = null,
     val isLoadingPlatformBillingSettings: Boolean = false,
-    val isSavingPlatformBillingSettings: Boolean = false
+    val isSavingPlatformBillingSettings: Boolean = false,
+
+    // Butchery Add-On Workspace
+    val isButcheryWorkspaceOpen: Boolean = false,
+    val butcheryTab: ButcheryTab = ButcheryTab.SELL
 )
 
 internal fun CounterPosUiState.activeTableIdForSale(): String? =
     selectedTableId.takeIf { tab == PosTab.TABLES }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class CounterPosViewModel(
     private val repository: CounterPosRepository,
     private val connectivityManager: ConnectivityManager,
@@ -235,6 +249,28 @@ class CounterPosViewModel(
     val diningTables = repository.diningTables.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val tableOrders = repository.tableOrders.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val serviceCounters = repository.serviceCounters.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val activeShopIdFlow = session
+        .map { it.activeBusiness?.shopId }
+        .distinctUntilChanged()
+
+    val butcheryConfig = activeShopIdFlow
+        .flatMapLatest { shopId ->
+            if (shopId.isNullOrBlank()) flowOf(null) else repository.observeButcheryConfig(shopId)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    val butcheryCuts = activeShopIdFlow
+        .flatMapLatest { shopId ->
+            if (shopId.isNullOrBlank()) flowOf(emptyList()) else repository.observeButcheryCuts(shopId)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val butcherySales = activeShopIdFlow
+        .flatMapLatest { shopId ->
+            if (shopId.isNullOrBlank()) flowOf(emptyList()) else repository.observeButcherySales(shopId)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _uiState = MutableStateFlow(CounterPosUiState(adminAuditEvents = repository.getCachedAdminAuditEvents()))
     val uiState = _uiState.asStateFlow()
@@ -683,7 +719,11 @@ class CounterPosViewModel(
         businessSize: String = "medium",
         inventoryMode: String = "shared",
         counterCount: Int = 1,
-        ownerPhone: String = ""
+        ownerPhone: String = "",
+        enrollButchery: Boolean = false,
+        butcheryName: String = "",
+        butcheryBeefOnly: Boolean = false,
+        butcheryBeefPricePerKgKsh: Int = 680
     ) = viewModelScope.launch {
         if (_uiState.value.isAuthenticating || _uiState.value.isCreatingBusiness) return@launch
         val cleanEmail = email.trim()
@@ -774,10 +814,23 @@ class CounterPosViewModel(
                 )
             }
 
-            repository.createBusiness(cleanName, businessType, businessSize, inventoryMode, counterCount, normalizedOwnerPhone)
+            repository.createBusiness(
+                name = cleanName,
+                businessType = businessType,
+                businessSize = businessSize,
+                inventoryMode = inventoryMode,
+                counterCount = counterCount,
+                ownerPhone = normalizedOwnerPhone,
+                enrollButchery = enrollButchery,
+                butcheryName = butcheryName,
+                butcheryBeefOnly = butcheryBeefOnly,
+                butcheryBeefPricePerKgKsh = butcheryBeefPricePerKgKsh
+            )
             _uiState.update {
                 it.copy(
                     isCreatingBusiness = false,
+                    isButcheryWorkspaceOpen = enrollButchery && businessType == "counter_seller",
+                    butcheryTab = ButcheryTab.SELL,
                     startupError = null,
                     notice = "Business profile created. Welcome to $cleanName!"
                 )
@@ -2906,6 +2959,189 @@ class CounterPosViewModel(
             } catch (error: Exception) {
                 _uiState.update { it.copy(actionError = error.message ?: "Could not update the product photo.") }
             }
+        }
+    }
+
+    // ---- Butchery Workspace Actions ----
+    fun openButcheryWorkspace(initialTab: ButcheryTab = ButcheryTab.SELL) {
+        _uiState.update {
+            it.copy(
+                isButcheryWorkspaceOpen = true,
+                butcheryTab = initialTab,
+                isTeamPanelOpen = false
+            )
+        }
+    }
+
+    fun closeButcheryWorkspace() {
+        _uiState.update { it.copy(isButcheryWorkspaceOpen = false) }
+    }
+
+    fun selectButcheryTab(tab: ButcheryTab) {
+        _uiState.update { it.copy(butcheryTab = tab) }
+    }
+
+    fun enrollOrUpdateButchery(
+        enabled: Boolean,
+        butcheryName: String,
+        beefOnlyMode: Boolean,
+        defaultBeefPricePerKgKsh: Int,
+        paymentMethods: List<String>? = null,
+        enabledCategories: List<String>? = null
+    ) {
+        val shopId = session.value.activeBusiness?.shopId ?: return
+        viewModelScope.launch {
+            runCatching {
+                repository.enrollOrUpdateButchery(
+                    shopId = shopId,
+                    enabled = enabled,
+                    butcheryName = butcheryName,
+                    beefOnlyMode = beefOnlyMode,
+                    defaultBeefPricePerKgKsh = defaultBeefPricePerKgKsh,
+                    paymentMethods = paymentMethods,
+                    enabledCategories = enabledCategories
+                )
+            }.onSuccess {
+                _uiState.update {
+                    it.copy(
+                        actionError = null,
+                        notice = if (enabled) "Butchery settings saved" else "Butchery package turned off",
+                        isButcheryWorkspaceOpen = if (!enabled) false else it.isButcheryWorkspaceOpen
+                    )
+                }
+            }.onFailure { err ->
+                _uiState.update { it.copy(actionError = err.message ?: "Could not save butchery settings.") }
+            }
+        }
+    }
+
+    fun applyDefaultBeefPricePerKg(pricePerKgKsh: Int) {
+        applyCategoryPricePerKg(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label, pricePerKgKsh)
+    }
+
+    fun applyCategoryPricePerKg(category: String, pricePerKgKsh: Int) {
+        val shopId = session.value.activeBusiness?.shopId ?: return
+        if (pricePerKgKsh <= 0) return
+        viewModelScope.launch {
+            runCatching { repository.applyCategoryPricePerKg(shopId, category, pricePerKgKsh) }
+                .onSuccess {
+                    _uiState.update {
+                        it.copy(notice = "Updated $category selling price to KES $pricePerKgKsh/kg", actionError = null)
+                    }
+                }
+                .onFailure { err ->
+                    _uiState.update { it.copy(actionError = err.message ?: "Failed to update $category price.") }
+                }
+        }
+    }
+
+    fun updateButcheryCutPrice(cutId: String, pricePerKgKsh: Int) {
+        if (pricePerKgKsh <= 0) return
+        viewModelScope.launch {
+            runCatching { repository.updateButcheryCutPrice(cutId, pricePerKgKsh) }
+                .onSuccess { updated ->
+                    if (updated) _uiState.update { it.copy(notice = "Updated price to KES $pricePerKgKsh/kg", actionError = null) }
+                }
+                .onFailure { err ->
+                    _uiState.update { it.copy(actionError = err.message ?: "Failed to update price.") }
+                }
+        }
+    }
+
+    fun setButcheryCutStockKg(cutId: String, stockKg: Double) {
+        viewModelScope.launch {
+            runCatching { repository.setButcheryCutStockKg(cutId, stockKg) }
+                .onSuccess { updated ->
+                    if (updated) _uiState.update { it.copy(notice = "Updated stock weight", actionError = null) }
+                }
+                .onFailure { err ->
+                    _uiState.update { it.copy(actionError = err.message ?: "Failed to update stock.") }
+                }
+        }
+    }
+
+    fun addButcheryCut(
+        name: String,
+        category: String,
+        pricePerKgKsh: Int,
+        stockKg: Double,
+        iconKey: String
+    ) {
+        val shopId = session.value.activeBusiness?.shopId ?: return
+        viewModelScope.launch {
+            runCatching {
+                repository.addButcheryCut(
+                    shopId = shopId,
+                    name = name,
+                    category = category,
+                    pricePerKgKsh = pricePerKgKsh,
+                    stockKg = stockKg,
+                    iconKey = iconKey
+                )
+            }.onSuccess {
+                _uiState.update { it.copy(notice = "Added ${name.trim()} to Butchery", actionError = null) }
+            }.onFailure { err ->
+                _uiState.update { it.copy(actionError = err.message ?: "Failed to add meat cut.") }
+            }
+        }
+    }
+
+    fun setButcheryCutActive(cutId: String, active: Boolean) {
+        viewModelScope.launch {
+            runCatching { repository.setButcheryCutActive(cutId, active) }
+        }
+    }
+
+    fun recordButcherySale(
+        cut: ButcheryCutEntity,
+        weightGrams: Int,
+        totalKsh: Int,
+        paymentMethod: String,
+        entryMode: String
+    ) {
+        val shopId = session.value.activeBusiness?.shopId ?: return
+        if (weightGrams <= 0 || totalKsh <= 0) {
+            _uiState.update { it.copy(actionError = "Enter a valid weight or KES amount first.") }
+            return
+        }
+        viewModelScope.launch {
+            runCatching {
+                repository.recordButcherySale(
+                    shopId = shopId,
+                    cutId = cut.id,
+                    weightGrams = weightGrams,
+                    totalKsh = totalKsh,
+                    paymentMethod = paymentMethod,
+                    entryMode = entryMode
+                )
+            }.onSuccess { saleId ->
+                if (saleId != null && saleId > 0L) {
+                    val kgLabel = com.alvinb.counterpos.data.butchery.ButcheryPricing.formatWeightKg(weightGrams)
+                    val modeLabel = com.alvinb.counterpos.data.butchery.ButcheryPricing.paymentMethodDisplayLabel(paymentMethod)
+                    _uiState.update {
+                        it.copy(
+                            actionError = null,
+                            notice = "Recorded ${cut.name} ($kgLabel) · KES $totalKsh ($modeLabel)"
+                        )
+                    }
+                } else {
+                    _uiState.update { it.copy(actionError = "Could not record butchery sale.") }
+                }
+            }.onFailure { err ->
+                _uiState.update { it.copy(actionError = err.message ?: "Could not record butchery sale.") }
+            }
+        }
+    }
+
+    fun undoLatestButcherySale() {
+        val shopId = session.value.activeBusiness?.shopId ?: return
+        viewModelScope.launch {
+            runCatching { repository.undoLatestButcherySale(shopId) }
+                .onSuccess { undone ->
+                    _uiState.update {
+                        it.copy(notice = if (undone) "✓ Last butchery sale undone" else "No active butchery sale to undo")
+                    }
+                }
         }
     }
 }

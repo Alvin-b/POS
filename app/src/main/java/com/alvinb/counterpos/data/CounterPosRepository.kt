@@ -5,7 +5,11 @@ import android.content.res.AssetManager
 import android.net.Uri
 import com.alvinb.counterpos.OfflineOutboxWorker
 import com.alvinb.counterpos.BuildConfig
+import com.alvinb.counterpos.data.butchery.ButcheryPricing
 import com.alvinb.counterpos.data.local.dao.CounterPosDao
+import com.alvinb.counterpos.data.local.entity.ButcheryConfigEntity
+import com.alvinb.counterpos.data.local.entity.ButcheryCutEntity
+import com.alvinb.counterpos.data.local.entity.ButcherySaleEntity
 import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.OfflineSessionEntity
 import com.alvinb.counterpos.data.local.entity.OfflineTransactionLogEntity
@@ -125,6 +129,12 @@ class CounterPosRepository(
         dao.observePendingTransactionLogCount(shopId)
     fun observeTableSettlementOutbox(shopId: String): Flow<List<OutboxEntity>> =
         dao.observeTableSettlementOutbox(shopId)
+    fun observeButcheryConfig(shopId: String): Flow<ButcheryConfigEntity?> =
+        dao.observeButcheryConfig(shopId)
+    fun observeButcheryCuts(shopId: String): Flow<List<ButcheryCutEntity>> =
+        dao.observeButcheryCuts(shopId)
+    fun observeButcherySales(shopId: String): Flow<List<ButcherySaleEntity>> =
+        dao.observeButcherySales(shopId)
     fun observeCounterStock(shopId: String, counterId: String): Flow<Map<String, Int>> =
         dao.observeCounterStock(shopId, counterId).map { rows ->
             buildMap {
@@ -564,7 +574,11 @@ class CounterPosRepository(
         businessSize: String = "medium",
         inventoryMode: String = "shared",
         counterCount: Int = 1,
-        ownerPhone: String = ""
+        ownerPhone: String = "",
+        enrollButchery: Boolean = false,
+        butcheryName: String = "",
+        butcheryBeefOnly: Boolean = false,
+        butcheryBeefPricePerKgKsh: Int = 680
     ): SessionSnapshot = withContext(Dispatchers.IO) {
         require(name.trim().length in 1..120) { "Enter a business name (up to 120 characters)." }
         val normalizedOwnerPhone = SubscriptionManager.normalizeKenyanPhone(ownerPhone)
@@ -610,6 +624,21 @@ class CounterPosRepository(
         val shopId = createdSession.activeBusiness?.shopId
             ?: throw IllegalStateException("Business was created, but its owner profile could not be loaded.")
         remote.setOwnerBusinessPhone(shopId, normalizedOwnerPhone)
+        if (enrollButchery) {
+            val resolvedButcheryName = butcheryName.trim().ifBlank { "${name.trim()} Butchery" }
+            val safePrice = butcheryBeefPricePerKgKsh.coerceIn(100, 10_000)
+            dao.enrollButchery(
+                config = ButcheryConfigEntity(
+                    shopId = shopId,
+                    enabled = true,
+                    butcheryName = resolvedButcheryName,
+                    beefOnlyMode = butcheryBeefOnly,
+                    defaultBeefPricePerKgKsh = safePrice,
+                    updatedAt = System.currentTimeMillis()
+                ),
+                starterCuts = ButcheryPricing.defaultCuts(shopId, safePrice)
+            )
+        }
         loadAccount(autoSelectSingleBusiness = true)
     }
 
@@ -2918,6 +2947,136 @@ class CounterPosRepository(
     }.getOrNull() ?: runCatching {
         SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).parse(value)?.time
     }.getOrNull() ?: Date().time
+
+    // ---- Butchery Package Operations ----
+    suspend fun enrollOrUpdateButchery(
+        shopId: String,
+        enabled: Boolean,
+        butcheryName: String,
+        beefOnlyMode: Boolean,
+        defaultBeefPricePerKgKsh: Int,
+        paymentMethods: List<String>? = null,
+        enabledCategories: List<String>? = null
+    ) = withContext(Dispatchers.IO) {
+        val safePrice = defaultBeefPricePerKgKsh.coerceIn(100, 10_000)
+        val existing = dao.getButcheryConfig(shopId)
+        val resolvedName = butcheryName.trim().ifBlank {
+            existing?.butcheryName?.takeIf(String::isNotBlank)
+                ?: activeBusiness?.shopName?.let { "$it Butchery" }
+                ?: "Butchery Counter"
+        }
+        val resolvedPaymentJson = paymentMethods?.let { ButcheryPricing.serializePaymentMethods(it) }
+            ?: existing?.paymentMethodsJson
+            ?: ButcheryPricing.DEFAULT_PAYMENT_METHODS_JSON
+        val resolvedCategories = when {
+            enabledCategories != null -> enabledCategories.ifEmpty { ButcheryPricing.ALL_MEAT_CATEGORIES }
+            beefOnlyMode -> listOf(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label)
+            existing != null && existing.beefOnlyMode && !beefOnlyMode -> ButcheryPricing.ALL_MEAT_CATEGORIES
+            existing != null -> ButcheryPricing.parseEnabledCategories(existing.enabledCategoriesJson)
+            else -> ButcheryPricing.ALL_MEAT_CATEGORIES
+        }
+        val effectiveBeefOnly = resolvedCategories.size == 1 &&
+            resolvedCategories.first().equals(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label, ignoreCase = true)
+        val config = ButcheryConfigEntity(
+            shopId = shopId,
+            enabled = enabled,
+            butcheryName = resolvedName,
+            beefOnlyMode = effectiveBeefOnly,
+            defaultBeefPricePerKgKsh = safePrice,
+            paymentMethodsJson = resolvedPaymentJson,
+            enabledCategoriesJson = ButcheryPricing.serializeEnabledCategories(resolvedCategories),
+            updatedAt = System.currentTimeMillis()
+        )
+        dao.enrollButchery(config, ButcheryPricing.defaultCuts(shopId, safePrice))
+    }
+
+    suspend fun applyDefaultBeefPricePerKg(shopId: String, pricePerKgKsh: Int) =
+        applyCategoryPricePerKg(shopId, com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label, pricePerKgKsh)
+
+    suspend fun applyCategoryPricePerKg(shopId: String, category: String, pricePerKgKsh: Int) = withContext(Dispatchers.IO) {
+        val safePrice = pricePerKgKsh.coerceIn(100, 10_000)
+        val existing = dao.getButcheryConfig(shopId) ?: ButcheryConfigEntity(
+            shopId = shopId,
+            enabled = true,
+            butcheryName = activeBusiness?.shopName?.let { "$it Butchery" } ?: "Butchery Counter"
+        )
+        val nextConfig = if (category.equals(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label, ignoreCase = true)) {
+            existing.copy(defaultBeefPricePerKgKsh = safePrice, updatedAt = System.currentTimeMillis())
+        } else {
+            existing.copy(updatedAt = System.currentTimeMillis())
+        }
+        dao.enrollButchery(
+            nextConfig,
+            ButcheryPricing.defaultCuts(shopId, safePrice)
+        )
+        dao.updateCutPricesForCategory(shopId, category, safePrice)
+    }
+
+    suspend fun updateButcheryCutPrice(cutId: String, pricePerKgKsh: Int): Boolean = withContext(Dispatchers.IO) {
+        if (pricePerKgKsh <= 0) return@withContext false
+        dao.updateButcheryCutPrice(cutId, pricePerKgKsh) == 1
+    }
+
+    suspend fun setButcheryCutStockKg(cutId: String, stockKg: Double): Boolean = withContext(Dispatchers.IO) {
+        val grams = (stockKg.coerceAtLeast(0.0) * 1000.0).toInt()
+        dao.setButcheryCutStockGrams(cutId, grams) == 1
+    }
+
+    suspend fun addButcheryCut(
+        shopId: String,
+        name: String,
+        category: String,
+        pricePerKgKsh: Int,
+        stockKg: Double,
+        iconKey: String
+    ) = withContext(Dispatchers.IO) {
+        val cleanName = name.trim()
+        require(cleanName.isNotEmpty()) { "Enter a cut name." }
+        require(pricePerKgKsh > 0) { "Enter a valid price per kg." }
+        val currentCount = dao.getButcheryCutCount(shopId)
+        val grams = (stockKg.coerceAtLeast(0.0) * 1000.0).toInt()
+        dao.upsertButcheryCut(
+            ButcheryCutEntity(
+                id = "${shopId}_cut_${UUID.randomUUID().toString().take(8)}",
+                shopId = shopId,
+                name = cleanName,
+                category = category,
+                pricePerKgKsh = pricePerKgKsh,
+                stockGrams = grams,
+                iconKey = iconKey,
+                active = true,
+                sortOrder = currentCount + 1
+            )
+        )
+    }
+
+    suspend fun setButcheryCutActive(cutId: String, active: Boolean) = withContext(Dispatchers.IO) {
+        dao.setButcheryCutActive(cutId, active)
+    }
+
+    suspend fun recordButcherySale(
+        shopId: String,
+        cutId: String,
+        weightGrams: Int,
+        totalKsh: Int,
+        paymentMethod: String,
+        entryMode: String
+    ): Long? = withContext(Dispatchers.IO) {
+        dao.recordButcherySale(
+            shopId = shopId,
+            cutId = cutId,
+            weightGrams = weightGrams,
+            totalKsh = totalKsh,
+            paymentMethod = paymentMethod,
+            entryMode = entryMode,
+            attendantName = account?.email,
+            createdAt = System.currentTimeMillis()
+        )
+    }
+
+    suspend fun undoLatestButcherySale(shopId: String): Boolean = withContext(Dispatchers.IO) {
+        dao.undoLatestButcherySale(shopId)
+    }
 }
 
 private data class Tuple6<A, B, C, D, E, F>(
