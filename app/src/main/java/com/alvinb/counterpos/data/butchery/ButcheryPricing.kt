@@ -278,16 +278,15 @@ object ButcheryPricing {
 
     fun defaultCuts(shopId: String, beefPricePerKgKsh: Int = 680): List<ButcheryCutEntity> {
         val safeBeef = beefPricePerKgKsh.coerceIn(100, 10_000)
-        val cubesPrice = (safeBeef - 60).coerceAtLeast(100)
         return listOf(
             ButcheryCutEntity(
-                id = "${shopId}_beef_steak",
+                id = "${shopId}_beef",
                 shopId = shopId,
-                name = "Beef Steak",
+                name = "Beef",
                 category = ButcheryCategory.BEEF.label,
                 pricePerKgKsh = safeBeef,
                 stockGrams = 0,
-                iconKey = "beef_steak",
+                iconKey = "beef",
                 active = true,
                 sortOrder = 1
             ),
@@ -314,17 +313,6 @@ object ButcheryPricing {
                 sortOrder = 3
             ),
             ButcheryCutEntity(
-                id = "${shopId}_beef_cubes",
-                shopId = shopId,
-                name = "Beef Cubes",
-                category = ButcheryCategory.BEEF.label,
-                pricePerKgKsh = cubesPrice,
-                stockGrams = 0,
-                iconKey = "beef_cubes",
-                active = true,
-                sortOrder = 4
-            ),
-            ButcheryCutEntity(
                 id = "${shopId}_matumbo",
                 shopId = shopId,
                 name = "Matumbo",
@@ -333,7 +321,7 @@ object ButcheryPricing {
                 stockGrams = 0,
                 iconKey = "matumbo",
                 active = true,
-                sortOrder = 5
+                sortOrder = 4
             ),
             ButcheryCutEntity(
                 id = "${shopId}_pork_chops",
@@ -344,7 +332,7 @@ object ButcheryPricing {
                 stockGrams = 0,
                 iconKey = "pork",
                 active = true,
-                sortOrder = 6
+                sortOrder = 5
             )
         )
     }

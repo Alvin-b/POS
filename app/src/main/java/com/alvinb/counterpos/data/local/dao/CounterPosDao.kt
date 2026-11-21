@@ -874,11 +874,20 @@ interface CounterPosDao {
     @Insert
     suspend fun insertButcherySale(sale: ButcherySaleEntity): Long
 
+    @Query("UPDATE butchery_cuts SET name = 'Beef', iconKey = 'beef' WHERE shopId = :shopId AND name = 'Beef Steak'")
+    suspend fun normalizeStarterBeefCut(shopId: String): Int
+
+    @Query("DELETE FROM butchery_cuts WHERE shopId = :shopId AND id LIKE '%_beef_cubes' AND name = 'Beef Cubes' AND stockGrams = 0")
+    suspend fun removeUnusedStarterBeefCubes(shopId: String): Int
+
     @Transaction
     suspend fun enrollButchery(config: ButcheryConfigEntity, starterCuts: List<ButcheryCutEntity>) {
         upsertButcheryConfig(config)
         if (getButcheryCutCount(config.shopId) == 0 && starterCuts.isNotEmpty()) {
             insertButcheryCuts(starterCuts)
+        } else {
+            normalizeStarterBeefCut(config.shopId)
+            removeUnusedStarterBeefCubes(config.shopId)
         }
     }
 

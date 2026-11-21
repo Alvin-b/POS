@@ -87,12 +87,11 @@ internal object ButcheryPalette {
 }
 
 internal fun butcheryDrawableRes(iconKey: String): Int = when (iconKey.lowercase()) {
-    "goat" -> R.drawable.ic_butchery_goat
-    "chicken" -> R.drawable.ic_butchery_chicken
-    "beef_cubes" -> R.drawable.ic_butchery_beef_cubes
-    "matumbo" -> R.drawable.ic_butchery_matumbo
-    "pork" -> R.drawable.ic_butchery_pork
-    else -> R.drawable.ic_butchery_beef_steak
+    "goat" -> R.drawable.img_butchery_goat
+    "chicken" -> R.drawable.img_butchery_chicken
+    "matumbo" -> R.drawable.img_butchery_matumbo
+    "pork" -> R.drawable.img_butchery_pork
+    else -> R.drawable.img_butchery_beef
 }
 
 @Composable
@@ -149,10 +148,16 @@ fun ButcheryPosScreen(
         )
     }
 
-    val selectedCut = remember(filteredCuts, cuts, selectedCutId) {
+    val selectedCut = remember(filteredCuts, cuts, enabledCategories, selectedCutId) {
         filteredCuts.firstOrNull { it.id == selectedCutId }
             ?: filteredCuts.firstOrNull()
-            ?: cuts.firstOrNull { it.active }
+            ?: if (searchQuery.isBlank()) {
+                cuts.firstOrNull { cut ->
+                    cut.active && enabledCategories.any { it.equals(cut.category, ignoreCase = true) }
+                }
+            } else {
+                null
+            }
     }
 
     LaunchedEffect(filteredCuts) {
@@ -787,14 +792,26 @@ private fun ButcheryCutTile(
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
-                Image(
-                    painter = painterResource(id = butcheryDrawableRes(cut.iconKey)),
-                    contentDescription = cut.name,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.size(44.dp)
-                )
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color.White,
+                    border = BorderStroke(
+                        1.dp,
+                        if (isSelected) Color.White.copy(alpha = 0.9f) else ButcheryPalette.KeypadBorder
+                    ),
+                    modifier = Modifier.size(56.dp)
+                ) {
+                    Image(
+                        painter = painterResource(id = butcheryDrawableRes(cut.iconKey)),
+                        contentDescription = cut.name,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(RoundedCornerShape(12.dp))
+                    )
+                }
                 Text(
                     text = cut.name,
                     fontSize = 12.sp,

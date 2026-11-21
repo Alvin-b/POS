@@ -5,10 +5,12 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.room.Room
 import androidx.sqlite.db.SupportSQLiteDatabase
@@ -128,8 +130,7 @@ class ButcheryPosTest {
             selectedCategory = ButcheryCategory.ALL.label,
             searchQuery = ""
         )
-        assertTrue(visibleInBeefOnly.isNotEmpty())
-        assertTrue(visibleInBeefOnly.all { it.category == ButcheryCategory.BEEF.label })
+        assertEquals(listOf("Beef"), visibleInBeefOnly.map { it.name })
 
         val visibleInMixed = ButcheryPricing.filterCuts(
             cuts = cuts,
@@ -137,7 +138,7 @@ class ButcheryPosTest {
             selectedCategory = ButcheryCategory.ALL.label,
             searchQuery = ""
         )
-        assertEquals(6, visibleInMixed.size)
+        assertEquals(5, visibleInMixed.size)
     }
 
     @Test
@@ -157,18 +158,18 @@ class ButcheryPosTest {
         assertEquals("Savannah Prime Butchery", config.butcheryName)
 
         val cuts = repository.observeButcheryCuts(shopId).first()
-        val steakCut = cuts.first { it.name == "Beef Steak" }
-        assertEquals(680, steakCut.pricePerKgKsh)
+        val beefCut = cuts.first { it.name == "Beef" }
+        assertEquals(680, beefCut.pricePerKgKsh)
 
-        // Set 10.0 kg stock on Beef Steak and update price to 700/kg
-        assertTrue(repository.setButcheryCutStockKg(steakCut.id, 10.0))
-        assertTrue(repository.updateButcheryCutPrice(steakCut.id, 700))
+        // Set 10.0 kg stock on Beef and update price to 700/kg
+        assertTrue(repository.setButcheryCutStockKg(beefCut.id, 10.0))
+        assertTrue(repository.updateButcheryCutPrice(beefCut.id, 700))
 
         // Customer 1: 1.50 kg via M-Pesa (no STK push)
         val calc1 = ButcheryPricing.computeFromWeightKg(1.50, 700)
         val sale1Id = repository.recordButcherySale(
             shopId = shopId,
-            cutId = steakCut.id,
+            cutId = beefCut.id,
             weightGrams = calc1.weightGrams,
             totalKsh = calc1.totalKsh,
             paymentMethod = "mpesa",
@@ -180,7 +181,7 @@ class ButcheryPosTest {
         val calc2 = ButcheryPricing.computeFromAmountKsh(150, 700)
         val sale2Id = repository.recordButcherySale(
             shopId = shopId,
-            cutId = steakCut.id,
+            cutId = beefCut.id,
             weightGrams = calc2.weightGrams,
             totalKsh = calc2.totalKsh,
             paymentMethod = "cash",
@@ -188,8 +189,8 @@ class ButcheryPosTest {
         )
         assertNotNull(sale2Id)
 
-        val updatedSteak = repository.observeButcheryCuts(shopId).first().first { it.id == steakCut.id }
-        assertEquals(10_000 - calc1.weightGrams - calc2.weightGrams, updatedSteak.stockGrams)
+        val updatedBeef = repository.observeButcheryCuts(shopId).first().first { it.id == beefCut.id }
+        assertEquals(10_000 - calc1.weightGrams - calc2.weightGrams, updatedBeef.stockGrams)
 
         val sales = repository.observeButcherySales(shopId).first()
         val window = ButcheryPricing.dayWindowMillis(0)
@@ -202,7 +203,7 @@ class ButcheryPosTest {
         // Export Excel CSV & Branded PDF
         val csv = ButcheryPricing.buildExcelCsv("Savannah Prime Butchery", report)
         assertTrue(csv.contains("Savannah Prime Butchery"))
-        assertTrue(csv.contains("Beef Steak"))
+        assertTrue(csv.contains("\"Beef\""))
         assertTrue(csv.contains("By Amount (KES)"))
 
         val pdfSession = BitmapRecordingPdfSession()
@@ -219,8 +220,8 @@ class ButcheryPosTest {
 
         // Undo latest sale (sale 2) restores exact stock grams
         assertTrue(repository.undoLatestButcherySale(shopId))
-        val afterUndoSteak = repository.observeButcheryCuts(shopId).first().first { it.id == steakCut.id }
-        assertEquals(10_000 - calc1.weightGrams, afterUndoSteak.stockGrams)
+        val afterUndoBeef = repository.observeButcheryCuts(shopId).first().first { it.id == beefCut.id }
+        assertEquals(10_000 - calc1.weightGrams, afterUndoBeef.stockGrams)
         val reportAfterUndo = ButcheryPricing.buildDailyReport(
             repository.observeButcherySales(shopId).first(),
             window.first,
@@ -290,9 +291,10 @@ class ButcheryPosTest {
         }
         composeRule.waitForIdle()
 
-        // Beef-Only hides non-beef cuts while preserving Beef Steak & Beef Cubes
-        composeRule.onNodeWithText("Beef Steak").assertIsDisplayed()
-        composeRule.onNodeWithText("Beef Cubes").assertIsDisplayed()
+        // Beef-Only shows just Beef and hides non-beef products and old Beef Steak / Beef Cubes
+        composeRule.onNodeWithText("Beef").assertIsDisplayed()
+        composeRule.onNodeWithText("Beef Steak").assertDoesNotExist()
+        composeRule.onNodeWithText("Beef Cubes").assertDoesNotExist()
         composeRule.onNodeWithText("Goat Meat").assertDoesNotExist()
         composeRule.onNodeWithText("Whole Chicken").assertDoesNotExist()
         composeRule.onNodeWithText("Pork Chops").assertDoesNotExist()
@@ -380,13 +382,13 @@ class ButcheryPosTest {
         assertEquals(listOf("M-Pesa", "Cash Payment", "Till 8291", "Airtel Money"), methods)
 
         val cuts = repository.observeButcheryCuts(shopId).first()
-        val steakCut = cuts.first { it.name == "Beef Steak" }
-        val calc = ButcheryPricing.computeFromAmountKsh(200, steakCut.pricePerKgKsh)
+        val beefCut = cuts.first { it.name == "Beef" }
+        val calc = ButcheryPricing.computeFromAmountKsh(200, beefCut.pricePerKgKsh)
         assertEquals(250, calc.weightGrams) // 200 / 800 = 0.25 kg = 250 g
 
         val saleId = repository.recordButcherySale(
             shopId = shopId,
-            cutId = steakCut.id,
+            cutId = beefCut.id,
             weightGrams = calc.weightGrams,
             totalKsh = calc.totalKsh,
             paymentMethod = "Till 8291",
@@ -596,7 +598,7 @@ class ButcheryPosTest {
             selectedCategory = ButcheryCategory.ALL.label,
             searchQuery = ""
         )
-        assertTrue(subsetCuts.any { it.name == "Beef Steak" })
+        assertTrue(subsetCuts.any { it.name == "Beef" })
         assertTrue(subsetCuts.any { it.name == "Whole Chicken" })
         assertTrue(subsetCuts.none { it.name == "Pork Chops" })
     }
@@ -675,8 +677,105 @@ class ButcheryPosTest {
 
         composeRule.onNodeWithText("Mbuzi Express · Goat/Mbuzi Only").assertIsDisplayed()
         composeRule.onNodeWithText("Goat Meat").assertIsDisplayed()
-        composeRule.onNodeWithText("Beef Steak").assertDoesNotExist()
+        composeRule.onNodeWithText("Beef").assertDoesNotExist()
         composeRule.onNodeWithText("Whole Chicken").assertDoesNotExist()
         composeRule.onNodeWithText("Pork Chops").assertDoesNotExist()
+    }
+
+    @Test
+    fun butcherySettingsSelectingBeefOnlyDisplaysOnlyBeefProduct() {
+        val shopId = "shop-beef-settings-only"
+        val initialConfig = ButcheryConfigEntity(
+            shopId = shopId,
+            enabled = true,
+            butcheryName = "Kenyatta Butchery",
+            beefOnlyMode = false,
+            defaultBeefPricePerKgKsh = 680,
+            enabledCategoriesJson = ButcheryPricing.ALL_MEAT_CATEGORIES_JSON
+        )
+        val cuts = ButcheryPricing.defaultCuts(shopId, 680)
+
+        composeRule.setContent {
+            ButcherySettingsScreen(
+                config = initialConfig,
+                cuts = cuts,
+                businessName = "Kenyatta Club",
+                ownerCanEdit = true,
+                onBack = {},
+                onSaveConfig = { _, _, _, _, _, _ -> },
+                onApplyCategoryPrice = { _, _ -> },
+                onUpdateCutPrice = { _, _ -> },
+                onUpdateCutStockKg = { _, _ -> },
+                onToggleCutActive = { _, _ -> },
+                onAddCut = { _, _, _, _, _ -> }
+            )
+        }
+        composeRule.waitForIdle()
+
+        // Deselect all non-beef meat types so only Beef remains selected
+        composeRule.onNodeWithTag("butchery_meat_type_goat_mbuzi").performClick()
+        composeRule.onNodeWithTag("butchery_meat_type_chicken").performClick()
+        composeRule.onNodeWithTag("butchery_meat_type_liver_matumbo").performClick()
+        composeRule.onNodeWithTag("butchery_meat_type_pork").performClick()
+        composeRule.waitForIdle()
+
+        // Settings list below displays only the chosen Beef product
+        composeRule.onNodeWithTag("butchery_settings_list")
+            .performScrollToNode(hasTestTag("butchery_edit_cut_${shopId}_beef"))
+        composeRule.onNodeWithTag("butchery_edit_cut_${shopId}_beef").assertIsDisplayed()
+        composeRule.onNodeWithTag("butchery_edit_cut_${shopId}_goat_meat").assertDoesNotExist()
+        composeRule.onNodeWithTag("butchery_edit_cut_${shopId}_whole_chicken").assertDoesNotExist()
+        composeRule.onNodeWithTag("butchery_edit_cut_${shopId}_matumbo").assertDoesNotExist()
+        composeRule.onNodeWithTag("butchery_edit_cut_${shopId}_pork_chops").assertDoesNotExist()
+    }
+
+    @Test
+    fun migration15To16NormalizesBeefCutNameAndRemovesUnusedBeefCubes() {
+        val dbName = "migration_15_16_test.db"
+        context.deleteDatabase(dbName)
+        val v15Helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(dbName)
+                .callback(object : SupportSQLiteOpenHelper.Callback(15) {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        db.execSQL(
+                            """
+                            CREATE TABLE IF NOT EXISTS butchery_cuts (
+                                id TEXT NOT NULL PRIMARY KEY,
+                                shopId TEXT NOT NULL,
+                                name TEXT NOT NULL,
+                                category TEXT NOT NULL,
+                                pricePerKgKsh INTEGER NOT NULL,
+                                stockGrams INTEGER NOT NULL,
+                                iconKey TEXT NOT NULL,
+                                active INTEGER NOT NULL,
+                                sortOrder INTEGER NOT NULL
+                            )
+                            """.trimIndent()
+                        )
+                        db.execSQL(
+                            "INSERT INTO butchery_cuts VALUES ('s1_beef_steak','s1','Beef Steak','Beef',680,0,'beef_steak',1,1)"
+                        )
+                        db.execSQL(
+                            "INSERT INTO butchery_cuts VALUES ('s1_beef_cubes','s1','Beef Cubes','Beef',620,0,'beef_cubes',1,4)"
+                        )
+                    }
+
+                    override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+                })
+                .build()
+        )
+        val db = v15Helper.writableDatabase
+        AppDatabase.MIGRATION_15_16.migrate(db)
+        val cursor = db.query("SELECT id, name, iconKey FROM butchery_cuts ORDER BY sortOrder")
+        val rows = mutableListOf<Triple<String, String, String>>()
+        while (cursor.moveToNext()) {
+            rows += Triple(cursor.getString(0), cursor.getString(1), cursor.getString(2))
+        }
+        cursor.close()
+        db.close()
+        context.deleteDatabase(dbName)
+
+        assertEquals(listOf(Triple("s1_beef_steak", "Beef", "beef")), rows)
     }
 }
