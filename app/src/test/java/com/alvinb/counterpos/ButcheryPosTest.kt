@@ -20,13 +20,17 @@ import androidx.test.core.app.ApplicationProvider
 import com.alvinb.counterpos.data.CounterPosRepository
 import com.alvinb.counterpos.data.butchery.ButcheryCategory
 import com.alvinb.counterpos.data.butchery.ButcheryPricing
+import com.alvinb.counterpos.data.butchery.ButcheryTrendRange
 import com.alvinb.counterpos.data.local.AppDatabase
 import com.alvinb.counterpos.data.local.entity.ButcheryConfigEntity
+import com.alvinb.counterpos.data.local.entity.ButcherySaleEntity
 import com.alvinb.counterpos.data.remote.SupabaseRestClient
+import com.alvinb.counterpos.ui.ButcheryDailySalesScreen
 import com.alvinb.counterpos.ui.ButcheryPosScreen
 import com.alvinb.counterpos.ui.ButcherySettingsScreen
 import com.alvinb.counterpos.ui.PdfDocumentSession
 import com.alvinb.counterpos.ui.buildButcheryReportPdf
+import java.util.Calendar
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -777,5 +781,154 @@ class ButcheryPosTest {
         context.deleteDatabase(dbName)
 
         assertEquals(listOf(Triple("s1_beef_steak", "Beef", "beef")), rows)
+    }
+
+    @Test
+    fun dailySalesTrendCalculatesDailyRevenueAndMeatQuantityAccurately() {
+        val noonCal = Calendar.getInstance().apply {
+            set(2026, Calendar.NOVEMBER, 21, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val refMs = noonCal.timeInMillis
+        val dayMs = 86_400_000L
+
+        val sales = listOf(
+            // 5 days ago: Beef 2.0 kg = 1,360
+            ButcherySaleEntity(
+                id = 1L, shopId = "s1", cutId = "s1_beef", cutName = "Beef", category = "Beef",
+                pricePerKgKsh = 680, weightGrams = 2_000, totalKsh = 1_360,
+                paymentMethod = "mpesa", entryMode = "weight", stockDeductedGrams = 0,
+                attendantName = "Owner", createdAt = refMs - (5 * dayMs), undone = false
+            ),
+            // 2 days ago: Goat 1.5 kg = 1,125 + Beef 1.0 kg = 680
+            ButcherySaleEntity(
+                id = 2L, shopId = "s1", cutId = "s1_goat", cutName = "Goat Meat", category = "Goat/Mbuzi",
+                pricePerKgKsh = 750, weightGrams = 1_500, totalKsh = 1_125,
+                paymentMethod = "cash", entryMode = "weight", stockDeductedGrams = 0,
+                attendantName = "Owner", createdAt = refMs - (2 * dayMs), undone = false
+            ),
+            ButcherySaleEntity(
+                id = 3L, shopId = "s1", cutId = "s1_beef", cutName = "Beef", category = "Beef",
+                pricePerKgKsh = 680, weightGrams = 1_000, totalKsh = 680,
+                paymentMethod = "mpesa", entryMode = "weight", stockDeductedGrams = 0,
+                attendantName = "Owner", createdAt = refMs - (2 * dayMs), undone = false
+            ),
+            // Today: Beef 3.5 kg = 2,380 (peak day) + undone sale that must be ignored
+            ButcherySaleEntity(
+                id = 4L, shopId = "s1", cutId = "s1_beef", cutName = "Beef", category = "Beef",
+                pricePerKgKsh = 680, weightGrams = 3_500, totalKsh = 2_380,
+                paymentMethod = "mpesa", entryMode = "amount", stockDeductedGrams = 0,
+                attendantName = "Owner", createdAt = refMs, undone = false
+            ),
+            ButcherySaleEntity(
+                id = 5L, shopId = "s1", cutId = "s1_beef", cutName = "Beef", category = "Beef",
+                pricePerKgKsh = 680, weightGrams = 10_000, totalKsh = 6_800,
+                paymentMethod = "cash", entryMode = "weight", stockDeductedGrams = 0,
+                attendantName = "Owner", createdAt = refMs, undone = true
+            )
+        )
+
+        val allTrend = ButcheryPricing.buildDailySalesTrend(
+            allSales = sales,
+            range = ButcheryTrendRange.SEVEN_DAYS,
+            categoryFilter = ButcheryCategory.ALL.label,
+            referenceMs = refMs
+        )
+        assertEquals(7, allTrend.days.size)
+        assertEquals(5_545L, allTrend.totalRevenueKsh)
+        assertEquals(8_000L, allTrend.totalWeightGrams)
+        assertEquals(4, allTrend.totalTransactions)
+        assertEquals(3, allTrend.activeDaysCount)
+        assertEquals(2_380L, allTrend.bestRevenueDay?.revenueKsh)
+        assertEquals(3_500L, allTrend.bestVolumeDay?.weightGrams)
+        assertTrue((allTrend.revenueChangePercent ?: 0.0) > 0.0)
+        assertTrue((allTrend.quantityChangePercent ?: 0.0) > 0.0)
+
+        // Category filter isolates Beef only
+        val beefTrend = ButcheryPricing.buildDailySalesTrend(
+            allSales = sales,
+            range = ButcheryTrendRange.SEVEN_DAYS,
+            categoryFilter = ButcheryCategory.BEEF.label,
+            referenceMs = refMs
+        )
+        assertEquals(4_420L, beefTrend.totalRevenueKsh)
+        assertEquals(6_500L, beefTrend.totalWeightGrams)
+        assertEquals(3, beefTrend.totalTransactions)
+    }
+
+    @Test
+    fun dailySalesScreenRendersVicoRevenueAndMeatQuantityChartsAndRespondsToFilters() {
+        val noonCal = Calendar.getInstance().apply {
+            set(2026, Calendar.NOVEMBER, 21, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val refMs = noonCal.timeInMillis
+        val dayMs = 86_400_000L
+
+        val config = ButcheryConfigEntity(
+            shopId = "s-trend",
+            enabled = true,
+            butcheryName = "Savannah Prime Butchery",
+            beefOnlyMode = false,
+            defaultBeefPricePerKgKsh = 680
+        )
+        val sales = listOf(
+            ButcherySaleEntity(
+                id = 1L, shopId = "s-trend", cutId = "c1", cutName = "Beef", category = "Beef",
+                pricePerKgKsh = 680, weightGrams = 2_500, totalKsh = 1_700,
+                paymentMethod = "mpesa", entryMode = "weight", stockDeductedGrams = 0,
+                attendantName = "Owner", createdAt = refMs - (10 * dayMs), undone = false
+            ),
+            ButcherySaleEntity(
+                id = 2L, shopId = "s-trend", cutId = "c2", cutName = "Goat Meat", category = "Goat/Mbuzi",
+                pricePerKgKsh = 750, weightGrams = 2_000, totalKsh = 1_500,
+                paymentMethod = "cash", entryMode = "weight", stockDeductedGrams = 0,
+                attendantName = "Owner", createdAt = refMs - (1 * dayMs), undone = false
+            ),
+            ButcherySaleEntity(
+                id = 3L, shopId = "s-trend", cutId = "c1", cutName = "Beef", category = "Beef",
+                pricePerKgKsh = 680, weightGrams = 4_000, totalKsh = 2_720,
+                paymentMethod = "mpesa", entryMode = "amount", stockDeductedGrams = 0,
+                attendantName = "Owner", createdAt = refMs, undone = false
+            )
+        )
+
+        composeRule.setContent {
+            ButcheryDailySalesScreen(
+                config = config,
+                sales = sales,
+                onBack = {},
+                referenceMs = refMs
+            )
+        }
+        composeRule.waitForIdle()
+
+        // Default 14D range includes all 3 sales: KES 5,920 & 8.5 kg
+        composeRule.onNodeWithTag("butchery_daily_sales_total_revenue").assertTextEquals("KES 5,920")
+        composeRule.onNodeWithTag("butchery_daily_sales_total_kg").assertTextEquals("8.5 kg")
+        composeRule.onNodeWithTag("butchery_daily_revenue_vico_chart").assertIsDisplayed()
+
+        // Scroll to verify Vico quantity chart and daily performance breakdown card
+        composeRule.onNodeWithTag("butchery_daily_sales_list")
+            .performScrollToNode(hasTestTag("butchery_daily_quantity_vico_chart"))
+        composeRule.onNodeWithTag("butchery_daily_quantity_vico_chart").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("butchery_daily_sales_list")
+            .performScrollToNode(hasTestTag("butchery_daily_breakdown_card"))
+        composeRule.onNodeWithTag("butchery_daily_breakdown_card").assertIsDisplayed()
+
+        // Scroll back up to filter bar and switch to 7D range (excludes the 10-day-old sale)
+        composeRule.onNodeWithTag("butchery_daily_sales_list")
+            .performScrollToNode(hasTestTag("butchery_trend_range_7"))
+        composeRule.onNodeWithTag("butchery_trend_range_7").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("butchery_daily_sales_total_revenue").assertTextEquals("KES 4,220")
+        composeRule.onNodeWithTag("butchery_daily_sales_total_kg").assertTextEquals("6.0 kg")
+
+        // Filter to Beef only inside 7D
+        composeRule.onNodeWithTag("butchery_trend_category_beef").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("butchery_daily_sales_total_revenue").assertTextEquals("KES 2,720")
+        composeRule.onNodeWithTag("butchery_daily_sales_total_kg").assertTextEquals("4.0 kg")
     }
 }

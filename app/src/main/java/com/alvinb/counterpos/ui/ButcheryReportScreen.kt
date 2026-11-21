@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Share
@@ -79,6 +80,7 @@ fun ButcheryReportScreen(
     onSharePdf: (ButcheryDailyReportSnapshot) -> Unit,
     onSaveExcelCsv: (ButcheryDailyReportSnapshot) -> Unit,
     onShareExcelCsv: (ButcheryDailyReportSnapshot) -> Unit,
+    onOpenTrends: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -153,6 +155,15 @@ fun ButcheryReportScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.Undo,
                             contentDescription = "Undo latest sale",
+                            tint = Color.White
+                        )
+                    }
+                }
+                if (onOpenTrends != null) {
+                    IconButton(onClick = onOpenTrends, modifier = Modifier.testTag("butchery_report_open_trends_button")) {
+                        Icon(
+                            imageVector = Icons.Default.BarChart,
+                            contentDescription = "Open Daily Sales Trends",
                             tint = Color.White
                         )
                     }

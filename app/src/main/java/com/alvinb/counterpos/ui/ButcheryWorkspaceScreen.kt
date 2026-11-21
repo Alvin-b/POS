@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Assessment
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -147,8 +148,8 @@ fun ButcheryWorkspaceScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .navigationBarsPadding()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     ButcheryNavItem(
                         label = "Quick Sale",
@@ -159,7 +160,15 @@ fun ButcheryWorkspaceScreen(
                         modifier = Modifier.weight(1f)
                     )
                     ButcheryNavItem(
-                        label = "Daily Report",
+                        label = "Daily Sales",
+                        icon = Icons.Default.BarChart,
+                        selected = activeTab == ButcheryTab.DAILY_SALES,
+                        tag = "butchery_nav_daily_sales",
+                        onClick = { onSelectTab(ButcheryTab.DAILY_SALES) },
+                        modifier = Modifier.weight(1f)
+                    )
+                    ButcheryNavItem(
+                        label = "Report",
                         icon = Icons.Default.Assessment,
                         selected = activeTab == ButcheryTab.REPORT,
                         tag = "butchery_nav_report",
@@ -193,6 +202,11 @@ fun ButcheryWorkspaceScreen(
                     onUndoLastSale = onUndoLastSale,
                     onRecordSale = onRecordSale
                 )
+                ButcheryTab.DAILY_SALES -> ButcheryDailySalesScreen(
+                    config = config,
+                    sales = sales,
+                    onBack = { onSelectTab(ButcheryTab.SELL) }
+                )
                 ButcheryTab.REPORT -> {
                     val enabledCategories = remember(config) { ButcheryPricing.resolveEnabledCategories(config) }
                     val singleMeatLabel = if (enabledCategories.size == 1) enabledCategories.first() else null
@@ -201,6 +215,7 @@ fun ButcheryWorkspaceScreen(
                         sales = sales,
                         onBack = { onSelectTab(ButcheryTab.SELL) },
                         onUndoLatestSale = onUndoLastSale,
+                        onOpenTrends = { onSelectTab(ButcheryTab.DAILY_SALES) },
                         onSavePdf = { snapshot ->
                             pendingPdfBytes = buildButcheryReportPdf(
                                 context = context,
@@ -273,13 +288,13 @@ private fun ButcheryNavItem(
         shape = RoundedCornerShape(12.dp),
         color = if (selected) ButcheryPalette.EmeraldHeader else Color(0xFFF1F5F9),
         modifier = modifier
-            .height(48.dp)
+            .height(54.dp)
             .testTag(tag)
     ) {
-        Row(
+        Column(
             modifier = Modifier.fillMaxSize(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
             Icon(
                 imageVector = icon,
@@ -287,12 +302,13 @@ private fun ButcheryNavItem(
                 tint = if (selected) Color.White else Color(0xFF475569),
                 modifier = Modifier.size(18.dp)
             )
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.height(2.dp))
             Text(
                 text = label,
-                fontSize = 12.sp,
+                fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (selected) Color.White else Color(0xFF334155)
+                color = if (selected) Color.White else Color(0xFF334155),
+                maxLines = 1
             )
         }
     }

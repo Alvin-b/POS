@@ -670,6 +670,76 @@ class SupabaseRestClient(context: Context) {
         "sales?select=*&shop_id=eq.$shopId&order=created_at.desc&limit=1000"
     )
 
+    suspend fun butcheryConfig(shopId: String): JSONObject? =
+        query("butchery_config?select=*&shop_id=eq.$shopId&limit=1").optJSONObject(0)
+
+    suspend fun butcheryCuts(shopId: String): JSONArray =
+        query("butchery_cuts?select=*&shop_id=eq.$shopId&order=sort_order.asc,name.asc")
+
+    suspend fun butcherySales(shopId: String): JSONArray = query(
+        "butchery_sales?select=*&shop_id=eq.$shopId&order=created_at.desc,id.desc&limit=1000"
+    )
+
+    suspend fun upsertButcheryConfig(
+        shopId: String,
+        enabled: Boolean,
+        butcheryName: String,
+        beefOnlyMode: Boolean,
+        defaultBeefPricePerKgKsh: Int,
+        paymentMethods: JSONArray,
+        enabledCategories: JSONArray
+    ): JSONObject = rpcObject(
+        "upsert_butchery_config",
+        JSONObject()
+            .put("_shop", shopId)
+            .put("_enabled", enabled)
+            .put("_butchery_name", butcheryName)
+            .put("_beef_only_mode", beefOnlyMode)
+            .put("_default_beef_price_per_kg_ksh", defaultBeefPricePerKgKsh)
+            .put("_payment_methods", paymentMethods)
+            .put("_enabled_categories", enabledCategories)
+    )
+
+    suspend fun upsertButcheryCut(cut: JSONObject): JSONObject = rpcObject(
+        "upsert_butchery_cut",
+        JSONObject()
+            .put("_shop", cut.optString("shop_id"))
+            .put("_id", cut.optString("id"))
+            .put("_name", cut.optString("name"))
+            .put("_category", cut.optString("category"))
+            .put("_price_per_kg_ksh", cut.optInt("price_per_kg_ksh"))
+            .put("_stock_grams", cut.optInt("stock_grams"))
+            .put("_icon_key", cut.optString("icon_key", "beef_steak"))
+            .put("_active", cut.optBoolean("active", true))
+            .put("_sort_order", cut.optInt("sort_order"))
+    )
+
+    suspend fun updateButcheryCategoryPrice(shopId: String, category: String, pricePerKgKsh: Int): Int =
+        rpcInt("update_butchery_category_price", JSONObject()
+            .put("_shop", shopId).put("_category", category).put("_price_per_kg_ksh", pricePerKgKsh))
+
+    suspend fun recordButcherySale(
+        shopId: String,
+        cutId: String,
+        weightGrams: Int,
+        totalKsh: Int,
+        paymentMethod: String,
+        entryMode: String,
+        operationId: String,
+        attendantName: String?
+    ): JSONObject = rpcObject(
+        "record_butchery_sale",
+        JSONObject()
+            .put("_shop", shopId).put("_cut_id", cutId).put("_weight_grams", weightGrams)
+            .put("_total_ksh", totalKsh).put("_payment_method", paymentMethod)
+            .put("_entry_mode", entryMode).put("_operation_id", operationId)
+            .putNullable("_attendant_name", attendantName)
+    )
+
+    suspend fun undoLatestButcherySale(shopId: String, saleId: Long? = null): JSONObject =
+        rpcObject("undo_latest_butchery_sale", JSONObject().put("_shop", shopId)
+            .put("_sale_id", saleId ?: JSONObject.NULL))
+
     suspend fun serviceCounters(shopId: String): List<ServiceCounter> = buildList {
         val rows = query("service_counters?select=id,name,active&shop_id=eq.$shopId&active=eq.true&order=name.asc")
         for (index in 0 until rows.length()) rows.optJSONObject(index)?.let { row ->
@@ -1550,6 +1620,9 @@ class SupabaseRestClient(context: Context) {
 
     private suspend fun rpcBoolean(name: String, args: JSONObject): Boolean =
         request("/rest/v1/rpc/$name", "POST", args.toString(), true).trim().equals("true", ignoreCase = true)
+
+    private suspend fun rpcInt(name: String, args: JSONObject): Int =
+        request("/rest/v1/rpc/$name", "POST", args.toString(), true).trim().toIntOrNull() ?: 0
 
     private suspend fun rpcArray(name: String, args: JSONObject): JSONArray {
         val body = request("/rest/v1/rpc/$name", "POST", args.toString(), true)
