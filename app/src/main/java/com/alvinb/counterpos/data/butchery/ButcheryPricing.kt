@@ -67,6 +67,45 @@ data class ButcheryDailyReportSnapshot(
     val totalWeightKg: Double get() = totalWeightGrams / 1000.0
 }
 
+enum class ButcheryTrendRange(val days: Int, val label: String, val subtitle: String) {
+    SEVEN_DAYS(7, "7D", "Last 7 Days"),
+    FOURTEEN_DAYS(14, "14D", "Last 14 Days"),
+    THIRTY_DAYS(30, "30D", "Last 30 Days")
+}
+
+data class ButcheryDailyTrendPoint(
+    val dayStartMs: Long,
+    val axisLabel: String,
+    val shortDateLabel: String,
+    val revenueKsh: Long,
+    val weightGrams: Long,
+    val salesCount: Int,
+    val rollingAvgRevenueKsh: Long,
+    val rollingAvgWeightGrams: Long
+) {
+    val weightKg: Double get() = weightGrams / 1000.0
+    val rollingAvgWeightKg: Double get() = rollingAvgWeightGrams / 1000.0
+}
+
+data class ButcheryDailySalesTrendSnapshot(
+    val range: ButcheryTrendRange,
+    val selectedCategory: String,
+    val days: List<ButcheryDailyTrendPoint>,
+    val totalRevenueKsh: Long,
+    val totalWeightGrams: Long,
+    val totalTransactions: Int,
+    val activeDaysCount: Int,
+    val avgDailyRevenueKsh: Long,
+    val avgDailyWeightGrams: Long,
+    val bestRevenueDay: ButcheryDailyTrendPoint?,
+    val bestVolumeDay: ButcheryDailyTrendPoint?,
+    val revenueChangePercent: Double?,
+    val quantityChangePercent: Double?
+) {
+    val totalWeightKg: Double get() = totalWeightGrams / 1000.0
+    val avgDailyWeightKg: Double get() = avgDailyWeightGrams / 1000.0
+}
+
 object ButcheryPricing {
     val DEFAULT_PAYMENT_METHODS = listOf("M-Pesa", "Cash Payment")
     const val DEFAULT_PAYMENT_METHODS_JSON = "[\"M-Pesa\",\"Cash Payment\"]"
@@ -484,5 +523,109 @@ object ButcheryPricing {
                 )
             }
         }
+    }
+
+    fun buildDailySalesTrend(
+        allSales: List<ButcherySaleEntity>,
+        range: ButcheryTrendRange = ButcheryTrendRange.FOURTEEN_DAYS,
+        categoryFilter: String = ButcheryCategory.ALL.label,
+        referenceMs: Long = System.currentTimeMillis()
+    ): ButcheryDailySalesTrendSnapshot {
+        val axisFmt = SimpleDateFormat("dd/MM", Locale.US)
+        val shortDateFmt = SimpleDateFormat("EEE, dd MMM", Locale.US)
+
+        val cal = Calendar.getInstance().apply {
+            timeInMillis = referenceMs
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val todayStart = cal.timeInMillis
+
+        val dayBuckets = (-(range.days - 1)..0).map { offset ->
+            val dayCal = Calendar.getInstance().apply {
+                timeInMillis = todayStart
+                add(Calendar.DAY_OF_YEAR, offset)
+            }
+            val start = dayCal.timeInMillis
+            dayCal.add(Calendar.DAY_OF_YEAR, 1)
+            val end = dayCal.timeInMillis - 1L
+            Triple(start, end, Date(start))
+        }
+
+        val firstStartMs = dayBuckets.first().first
+        val lastEndMs = dayBuckets.last().second
+
+        val eligibleSales = allSales.filter { sale ->
+            !sale.undone &&
+                sale.createdAt in firstStartMs..lastEndMs &&
+                (categoryFilter == ButcheryCategory.ALL.label ||
+                    sale.category.equals(categoryFilter, ignoreCase = true))
+        }
+
+        data class RawDay(val startMs: Long, val date: Date, val revenueKsh: Long, val weightGrams: Long, val count: Int)
+        val rawDays = dayBuckets.map { (start, end, date) ->
+            val daySales = eligibleSales.filter { it.createdAt in start..end }
+            RawDay(
+                startMs = start,
+                date = date,
+                revenueKsh = daySales.sumOf { it.totalKsh.toLong() },
+                weightGrams = daySales.sumOf { it.weightGrams.toLong() },
+                count = daySales.size
+            )
+        }
+
+        val rollingWindow = if (range == ButcheryTrendRange.THIRTY_DAYS) 7 else 3
+        val points = rawDays.mapIndexed { idx, raw ->
+            val fromIdx = (idx - rollingWindow + 1).coerceAtLeast(0)
+            val slice = rawDays.subList(fromIdx, idx + 1)
+            val avgRev = (slice.sumOf { it.revenueKsh }.toDouble() / slice.size.toDouble()).roundToInt().toLong()
+            val avgGrams = (slice.sumOf { it.weightGrams }.toDouble() / slice.size.toDouble()).roundToInt().toLong()
+            ButcheryDailyTrendPoint(
+                dayStartMs = raw.startMs,
+                axisLabel = axisFmt.format(raw.date),
+                shortDateLabel = shortDateFmt.format(raw.date),
+                revenueKsh = raw.revenueKsh,
+                weightGrams = raw.weightGrams,
+                salesCount = raw.count,
+                rollingAvgRevenueKsh = avgRev,
+                rollingAvgWeightGrams = avgGrams
+            )
+        }
+
+        val totalRev = points.sumOf { it.revenueKsh }
+        val totalGrams = points.sumOf { it.weightGrams }
+        val totalTx = points.sumOf { it.salesCount }
+        val activeDays = points.count { it.salesCount > 0 || it.revenueKsh > 0L || it.weightGrams > 0L }
+        val avgRev = if (activeDays > 0) (totalRev.toDouble() / activeDays.toDouble()).roundToInt().toLong() else 0L
+        val avgGrams = if (activeDays > 0) (totalGrams.toDouble() / activeDays.toDouble()).roundToInt().toLong() else 0L
+
+        val split = points.size / 2
+        val prior = if (split > 0) points.take(split) else emptyList()
+        val recent = if (split > 0) points.drop(split) else emptyList()
+        val priorRev = prior.sumOf { it.revenueKsh }
+        val recentRev = recent.sumOf { it.revenueKsh }
+        val priorGrams = prior.sumOf { it.weightGrams }
+        val recentGrams = recent.sumOf { it.weightGrams }
+
+        val revChangePct = if (priorRev > 0L) ((recentRev - priorRev) * 100.0) / priorRev.toDouble() else null
+        val qtyChangePct = if (priorGrams > 0L) ((recentGrams - priorGrams) * 100.0) / priorGrams.toDouble() else null
+
+        return ButcheryDailySalesTrendSnapshot(
+            range = range,
+            selectedCategory = categoryFilter,
+            days = points,
+            totalRevenueKsh = totalRev,
+            totalWeightGrams = totalGrams,
+            totalTransactions = totalTx,
+            activeDaysCount = activeDays,
+            avgDailyRevenueKsh = avgRev,
+            avgDailyWeightGrams = avgGrams,
+            bestRevenueDay = points.filter { it.revenueKsh > 0L }.maxByOrNull { it.revenueKsh },
+            bestVolumeDay = points.filter { it.weightGrams > 0L }.maxByOrNull { it.weightGrams },
+            revenueChangePercent = revChangePct,
+            quantityChangePercent = qtyChangePct
+        )
     }
 }

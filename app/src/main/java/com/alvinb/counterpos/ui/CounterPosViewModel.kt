@@ -53,7 +53,7 @@ import java.util.regex.Pattern
 
 enum class PosTab { SCAN, STOCK, SALES, REPORTS, TABLES }
 enum class StockMode { MY_STOCK, LIBRARY }
-enum class ButcheryTab { SELL, REPORT, SETTINGS }
+enum class ButcheryTab { SELL, DAILY_SALES, REPORT, SETTINGS }
 
 data class AdminEnrollmentCredential(
     val businessId: String,
