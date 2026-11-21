@@ -49,7 +49,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -160,7 +162,8 @@ fun ButcherySettingsScreen(
         LazyColumn(
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth(),
+                .fillMaxWidth()
+                .testTag("butchery_settings_list"),
             contentPadding = PaddingValues(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -326,11 +329,21 @@ fun ButcherySettingsScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Image(
-                            painter = painterResource(id = butcheryDrawableRes(cut.iconKey)),
-                            contentDescription = cut.name,
-                            modifier = Modifier.size(40.dp)
-                        )
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color(0xFFF8FAFC),
+                            border = BorderStroke(1.dp, ButcheryPalette.KeypadBorder),
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Image(
+                                painter = painterResource(id = butcheryDrawableRes(cut.iconKey)),
+                                contentDescription = cut.name,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(RoundedCornerShape(12.dp))
+                            )
+                        }
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = cut.name,
@@ -461,7 +474,7 @@ private fun AddButcheryCutDialog(
         ButcheryCategory.CHICKEN.label -> "chicken"
         ButcheryCategory.OFFAL.label -> "matumbo"
         ButcheryCategory.PORK.label -> "pork"
-        else -> "beef_steak"
+        else -> "beef"
     }
 
     AlertDialog(
@@ -473,7 +486,7 @@ private fun AddButcheryCutDialog(
                     value = name,
                     onValueChange = { name = it.take(40) },
                     label = { Text("Cut Name") },
-                    placeholder = { Text("e.g. T-Bone Steak") },
+                    placeholder = { Text("e.g. Beef Ribs") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().testTag("butchery_new_cut_name_input")
                 )

@@ -36,7 +36,7 @@ import java.util.concurrent.Executors
         ButcheryCutEntity::class,
         ButcherySaleEntity::class
     ],
-    version = 15,
+    version = 16,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -288,6 +288,14 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("UPDATE butchery_cuts SET name = 'Beef', iconKey = 'beef' WHERE name = 'Beef Steak'")
+                db.execSQL("UPDATE butchery_cuts SET iconKey = 'beef' WHERE category = 'Beef' AND iconKey IN ('beef_steak', 'beef_cubes')")
+                db.execSQL("DELETE FROM butchery_cuts WHERE id LIKE '%_beef_cubes' AND name = 'Beef Cubes' AND stockGrams = 0")
+            }
+        }
+
         private fun ensureColumn(db: SupportSQLiteDatabase, table: String, column: String, declaration: String) {
             val cursor = db.query("PRAGMA table_info($table)")
             val exists = try {
@@ -339,7 +347,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_11_12,
                     MIGRATION_12_13,
                     MIGRATION_13_14,
-                    MIGRATION_14_15
+                    MIGRATION_14_15,
+                    MIGRATION_15_16
                 )
                 .build().also { instance = it }
         }

@@ -1109,6 +1109,7 @@ fun CounterPosWorkspace(
                 businessType = session.activeBusiness?.businessType ?: "big_club",
                 registeredCounters = serviceCounters,
                 butcheryConfig = butcheryConfig,
+                butcheryCuts = butcheryCuts,
                 onClose = viewModel::closeTeamPanel,
                 onBusinessNameSave = { viewModel.updateBusinessName(it) },
                 onLoadMembers = { viewModel.loadEmployeeMembers() },

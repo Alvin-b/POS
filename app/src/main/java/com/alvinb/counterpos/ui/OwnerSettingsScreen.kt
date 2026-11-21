@@ -1,6 +1,8 @@
 package com.alvinb.counterpos.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -66,13 +68,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.alvinb.counterpos.data.butchery.ButcheryPricing
 import com.alvinb.counterpos.data.local.entity.ButcheryConfigEntity
+import com.alvinb.counterpos.data.local.entity.ButcheryCutEntity
 import com.alvinb.counterpos.data.remote.ServiceCounter
 import org.json.JSONObject
 import java.util.Locale
@@ -89,6 +96,7 @@ fun OwnerSettingsScreen(
     businessType: String = "big_club",
     registeredCounters: List<ServiceCounter>,
     butcheryConfig: ButcheryConfigEntity? = null,
+    butcheryCuts: List<ButcheryCutEntity> = emptyList(),
     onClose: () -> Unit,
     onBusinessNameSave: (String) -> Unit,
     onLoadMembers: () -> Unit,
@@ -287,6 +295,82 @@ fun OwnerSettingsScreen(
                             enabled = ownerCanEdit,
                             onCategoriesChange = { butcheryCategoriesDraft = it }
                         )
+
+                        val chosenButcheryProducts = remember(butcheryCuts, butcheryCategoriesDraft, butcheryBeefPriceDraft, butcheryConfig?.shopId) {
+                            val sourceCuts = butcheryCuts.ifEmpty {
+                                ButcheryPricing.defaultCuts(
+                                    shopId = butcheryConfig?.shopId ?: "preview",
+                                    beefPricePerKgKsh = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                )
+                            }
+                            sourceCuts.filter { cut ->
+                                cut.active && butcheryCategoriesDraft.any { it.equals(cut.category, ignoreCase = true) }
+                            }
+                        }
+
+                        if (chosenButcheryProducts.isNotEmpty()) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = if (chosenButcheryProducts.size == 1) {
+                                        "Displayed Product"
+                                    } else {
+                                        "Displayed Products (${chosenButcheryProducts.size})"
+                                    },
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                chosenButcheryProducts.forEach { product ->
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = MaterialTheme.colorScheme.surface,
+                                        border = BorderStroke(1.dp, ButcheryPalette.KeypadBorder),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("owner_butchery_chosen_product_${product.id}")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Surface(
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = Color.White,
+                                                border = BorderStroke(1.dp, ButcheryPalette.KeypadBorder),
+                                                modifier = Modifier.size(40.dp)
+                                            ) {
+                                                Image(
+                                                    painter = painterResource(id = butcheryDrawableRes(product.iconKey)),
+                                                    contentDescription = product.name,
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .clip(RoundedCornerShape(10.dp))
+                                                )
+                                            }
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = product.name,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 13.sp,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                                Text(
+                                                    text = "${product.category} · KES ${product.pricePerKgKsh}/kg",
+                                                    fontSize = 11.sp,
+                                                    color = ButcheryPalette.EmeraldHeader,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
                         OutlinedTextField(
                             value = butcheryBeefPriceDraft,
