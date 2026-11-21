@@ -100,3 +100,15 @@ jobs:
             --title "Counter POS $VERSION_NAME" \
             --generate-notes \
             --verify-tag
+      - name: Submit signed release to Galaxy Store for review
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          SAMSUNG_SERVICE_ACCOUNT_ID: ${{ secrets.SAMSUNG_SERVICE_ACCOUNT_ID }}
+          SAMSUNG_SERVICE_ACCOUNT_PRIVATE_KEY: ${{ secrets.SAMSUNG_SERVICE_ACCOUNT_PRIVATE_KEY }}
+          SAMSUNG_CONTENT_ID: ${{ secrets.SAMSUNG_CONTENT_ID }}
+          GALAXY_APK_PATH: app/build/outputs/apk/release/CounterPOS.apk
+        run: |
+          python3 -m pip install --disable-pip-version-check --no-input -r scripts/requirements-galaxy-store.txt
+          export ANDROID_VERSION_CODE="$VERSION_CODE"
+          export ANDROID_VERSION_NAME="$VERSION_NAME"
+          python3 scripts/publish_galaxy_store.py
