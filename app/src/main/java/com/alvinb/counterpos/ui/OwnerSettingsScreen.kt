@@ -31,12 +31,16 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Store
+import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -63,10 +67,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.alvinb.counterpos.data.local.entity.ButcheryConfigEntity
 import com.alvinb.counterpos.data.remote.ServiceCounter
 import org.json.JSONObject
 import java.util.Locale
@@ -82,21 +88,57 @@ fun OwnerSettingsScreen(
     role: String,
     businessType: String = "big_club",
     registeredCounters: List<ServiceCounter>,
+    butcheryConfig: ButcheryConfigEntity? = null,
     onClose: () -> Unit,
     onBusinessNameSave: (String) -> Unit,
     onLoadMembers: () -> Unit,
     onCounterCreate: (String) -> Unit,
     onCounterRename: (String, String) -> Unit,
+    onCounterDelete: (String) -> Unit = {},
+    onSaveButcheryConfig: (
+        enabled: Boolean,
+        name: String,
+        beefOnly: Boolean,
+        defaultBeefPricePerKgKsh: Int,
+        paymentMethods: List<String>,
+        enabledCategories: List<String>
+    ) -> Unit = { _, _, _, _, _, _ -> },
+    onOpenButcheryWorkspace: (ButcheryTab) -> Unit = {},
     onOpenStaffManagement: () -> Unit = {},
     onOpenSubscription: () -> Unit = {}
 ) {
     BackHandler(onBack = onClose)
     val ownerCanEdit = role.equals("owner", ignoreCase = true)
-    val isLiquorStore = businessType.equals("counter_seller", ignoreCase = true)
+    val isLiquorStore = businessType.equals("counter_seller", ignoreCase = true) ||
+        businessType.equals("liquor_store", ignoreCase = true)
     var businessNameDraft by remember(businessName) { mutableStateOf(businessName) }
+    var butcheryEnabledDraft by remember(butcheryConfig?.enabled) { mutableStateOf(butcheryConfig?.enabled ?: false) }
+    var butcheryNameDraft by remember(butcheryConfig?.butcheryName, businessName) {
+        mutableStateOf(
+            butcheryConfig?.butcheryName?.takeIf(String::isNotBlank)
+                ?: if (businessName.isNotBlank()) "$businessName Butchery" else "Main Butchery"
+        )
+    }
+    var butcheryCategoriesDraft by remember(butcheryConfig?.enabledCategoriesJson, butcheryConfig?.beefOnlyMode) {
+        mutableStateOf(com.alvinb.counterpos.data.butchery.ButcheryPricing.resolveEnabledCategories(butcheryConfig))
+    }
+    var butcheryBeefPriceDraft by remember(butcheryConfig?.defaultBeefPricePerKgKsh) {
+        mutableStateOf((butcheryConfig?.defaultBeefPricePerKgKsh ?: 680).toString())
+    }
+    var butcheryPaymentMethodsDraft by remember(butcheryConfig?.paymentMethodsJson) {
+        mutableStateOf(com.alvinb.counterpos.data.butchery.ButcheryPricing.parsePaymentMethods(butcheryConfig?.paymentMethodsJson))
+    }
+    val butcheryIsBeefOnly = butcheryCategoriesDraft.size == 1 &&
+        butcheryCategoriesDraft.first().equals(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label, ignoreCase = true)
+    val primaryMeatLabel = if (butcheryCategoriesDraft.size == 1) {
+        butcheryCategoriesDraft.first()
+    } else {
+        com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label
+    }
     var newCounterName by remember { mutableStateOf("") }
     var editingCounterId by remember { mutableStateOf<String?>(null) }
     var editingCounterName by remember { mutableStateOf("") }
+    var counterPendingDeletion by remember { mutableStateOf<ServiceCounter?>(null) }
 
     // The roster is intentionally derived only from actual member rows. There are no sample names,
     // placeholder emails, or local fallback accounts in this screen.
@@ -189,6 +231,126 @@ fun OwnerSettingsScreen(
                             Spacer(Modifier.width(8.dp))
                         }
                         Text("Save business name")
+                    }
+                    if (!ownerCanEdit) ReadOnlyHint()
+                }
+
+                SettingsSection(
+                    title = "Butchery Module",
+                    description = "Enable Butchery POS with custom payment methods and Price per KG calculations.",
+                    icon = Icons.Default.Scale
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (butcheryEnabledDraft) "Butchery Module ON" else "Enable Butchery Module",
+                                fontWeight = FontWeight.SemiBold,
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            Text(
+                                text = "Separate meat counter POS, weight/price calculator, payment methods & kg reports.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = butcheryEnabledDraft,
+                            onCheckedChange = { enabled ->
+                                butcheryEnabledDraft = enabled
+                                if (ownerCanEdit) {
+                                    val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                    onSaveButcheryConfig(enabled, butcheryNameDraft.trim(), butcheryIsBeefOnly, price, butcheryPaymentMethodsDraft, butcheryCategoriesDraft)
+                                }
+                            },
+                            enabled = ownerCanEdit,
+                            modifier = Modifier.testTag("owner_settings_butchery_switch")
+                        )
+                    }
+
+                    if (butcheryEnabledDraft) {
+                        OutlinedTextField(
+                            value = butcheryNameDraft,
+                            onValueChange = { butcheryNameDraft = it.take(80) },
+                            label = { Text("Enrolled Butchery Name") },
+                            placeholder = { Text("e.g. Prime Cuts Butchery") },
+                            singleLine = true,
+                            enabled = ownerCanEdit,
+                            modifier = Modifier.fillMaxWidth().testTag("owner_settings_butchery_name_input")
+                        )
+
+                        ButcheryMeatTypesEditor(
+                            selectedCategories = butcheryCategoriesDraft,
+                            enabled = ownerCanEdit,
+                            onCategoriesChange = { butcheryCategoriesDraft = it }
+                        )
+
+                        OutlinedTextField(
+                            value = butcheryBeefPriceDraft,
+                            onValueChange = { butcheryBeefPriceDraft = it.filter(Char::isDigit).take(5) },
+                            label = { Text("Default $primaryMeatLabel Price per kg (KES)") },
+                            supportingText = {
+                                Text("Digital-scale customers buying KES 100 / 150 / 200 compute exact kg from this rate.")
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            enabled = ownerCanEdit,
+                            modifier = Modifier.fillMaxWidth().testTag("owner_settings_beef_price_input")
+                        )
+
+                        ButcheryPaymentMethodsEditor(
+                            methods = butcheryPaymentMethodsDraft,
+                            enabled = ownerCanEdit,
+                            onMethodsChange = { butcheryPaymentMethodsDraft = it }
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                    onSaveButcheryConfig(true, butcheryNameDraft.trim(), butcheryIsBeefOnly, price, butcheryPaymentMethodsDraft, butcheryCategoriesDraft)
+                                },
+                                enabled = ownerCanEdit && butcheryNameDraft.trim().isNotEmpty(),
+                                modifier = Modifier.weight(1f).testTag("owner_settings_save_butchery_button")
+                            ) {
+                                Text("Save Butchery", fontWeight = FontWeight.Bold)
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                    if (ownerCanEdit) {
+                                        onSaveButcheryConfig(true, butcheryNameDraft.trim(), butcheryIsBeefOnly, price, butcheryPaymentMethodsDraft, butcheryCategoriesDraft)
+                                    }
+                                    onOpenButcheryWorkspace(ButcheryTab.SETTINGS)
+                                },
+                                modifier = Modifier.weight(1f).testTag("owner_settings_butchery_cuts_button")
+                            ) {
+                                Text("Cuts & Prices")
+                            }
+                        }
+
+                        Button(
+                            onClick = {
+                                val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                if (ownerCanEdit) {
+                                    onSaveButcheryConfig(true, butcheryNameDraft.trim(), butcheryIsBeefOnly, price, butcheryPaymentMethodsDraft, butcheryCategoriesDraft)
+                                }
+                                onOpenButcheryWorkspace(ButcheryTab.SELL)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1F8E4E)),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().testTag("owner_settings_open_butchery_pos_button")
+                        ) {
+                            Icon(Icons.Default.Storefront, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Open Butchery POS", fontWeight = FontWeight.Bold)
+                        }
                     }
                     if (!ownerCanEdit) ReadOnlyHint()
                 }
@@ -292,70 +454,80 @@ fun OwnerSettingsScreen(
                 }
 
                 SettingsSection(
-                    title = if (isLiquorStore) "Service counter" else "Service counters",
-                    description = if (isLiquorStore) "Your checkout point." else "Manage checkout points.",
+                    title = "Service counters",
+                    description = if (isLiquorStore) "Add, rename, or remove checkout counters." else "Add, rename, or remove service counters.",
                     icon = Icons.Default.Tune
                 ) {
-                    if (isLiquorStore) {
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(
-                                    text = registeredCounters.firstOrNull()?.name ?: "Main Counter",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
-                                )
-                                Text(
-                                    text = "Single checkout with shared stock.",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
+                    if (isLiquorStore && registeredCounters.size <= 1) {
+                        Text(
+                            text = "Liquor Store default is 1 counter. Add more counters below whenever needed.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (registeredCounters.isEmpty()) {
+                        Text(
+                            "No registered counters yet. Add your first counter below.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     } else {
-                        if (registeredCounters.isEmpty()) {
-                            Text("No registered counters were returned by the business service.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        } else {
-                            registeredCounters.forEach { counter ->
-                                CounterSettingsRow(
-                                    counter = counter,
-                                    ownerCanEdit = ownerCanEdit,
-                                    editing = editingCounterId == counter.id,
-                                    editingName = editingCounterName,
-                                    onStartEditing = {
-                                        editingCounterId = counter.id
-                                        editingCounterName = counter.name
-                                    },
-                                    onEditingNameChange = { editingCounterName = it.take(60) },
-                                    onRename = {
-                                        onCounterRename(counter.id, editingCounterName.trim())
-                                        editingCounterId = null
-                                    }
-                                )
-                            }
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                            OutlinedTextField(
-                                value = newCounterName,
-                                onValueChange = { newCounterName = it.take(60) },
-                                label = { Text("New counter name") },
-                                placeholder = {
-                                    Text(if (registeredCounters.isEmpty()) "Main Counter" else "Counter ${registeredCounters.size + 1}")
+                        registeredCounters.forEach { counter ->
+                            CounterSettingsRow(
+                                counter = counter,
+                                ownerCanEdit = ownerCanEdit && !state.isManagingCounters,
+                                canDelete = registeredCounters.size > 1,
+                                editing = editingCounterId == counter.id,
+                                editingName = editingCounterName,
+                                onStartEditing = {
+                                    editingCounterId = counter.id
+                                    editingCounterName = counter.name
                                 },
-                                singleLine = true,
-                                enabled = ownerCanEdit,
-                                modifier = Modifier.weight(1f)
+                                onEditingNameChange = { editingCounterName = it.take(60) },
+                                onRename = {
+                                    onCounterRename(counter.id, editingCounterName.trim())
+                                    editingCounterId = null
+                                },
+                                onRequestDelete = { counterPendingDeletion = counter }
                             )
-                            Button(
-                                onClick = {
-                                    onCounterCreate(newCounterName.trim())
-                                    newCounterName = ""
-                                },
-                                enabled = ownerCanEdit && newCounterName.trim().isNotBlank()
-                            ) {
+                        }
+                        if (registeredCounters.size == 1) {
+                            Text(
+                                text = "At least 1 active service counter is required. Add another counter before removing this one.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        OutlinedTextField(
+                            value = newCounterName,
+                            onValueChange = { newCounterName = it.take(60) },
+                            label = { Text("New counter name") },
+                            placeholder = {
+                                Text(if (registeredCounters.isEmpty()) "Main Counter" else "Counter ${registeredCounters.size + 1}")
+                            },
+                            singleLine = true,
+                            enabled = ownerCanEdit && !state.isManagingCounters,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("new_counter_name_input")
+                        )
+                        Button(
+                            onClick = {
+                                onCounterCreate(newCounterName.trim())
+                                newCounterName = ""
+                            },
+                            enabled = ownerCanEdit && !state.isManagingCounters && newCounterName.trim().isNotBlank(),
+                            modifier = Modifier.testTag("add_counter_button")
+                        ) {
+                            if (state.isManagingCounters) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            } else {
                                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(17.dp))
                                 Spacer(Modifier.width(4.dp))
                                 Text("Add")
@@ -368,6 +540,54 @@ fun OwnerSettingsScreen(
                 Spacer(Modifier.size(6.dp))
             }
         }
+    }
+
+    val targetCounter = counterPendingDeletion
+    if (targetCounter != null) {
+        AlertDialog(
+            onDismissRequest = { if (!state.isManagingCounters) counterPendingDeletion = null },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error
+                )
+            },
+            title = {
+                Text("Delete ${targetCounter.name}?", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Text(
+                    "This counter will be removed from checkout and bar selectors. Historical sales and reports remain preserved.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onCounterDelete(targetCounter.id)
+                        counterPendingDeletion = null
+                    },
+                    enabled = !state.isManagingCounters,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    ),
+                    modifier = Modifier.testTag("confirm_delete_counter_button")
+                ) {
+                    Text("Delete Counter", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { counterPendingDeletion = null },
+                    enabled = !state.isManagingCounters
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
 }
@@ -427,11 +647,13 @@ private fun ReadOnlyHint() {
 private fun CounterSettingsRow(
     counter: ServiceCounter,
     ownerCanEdit: Boolean,
+    canDelete: Boolean,
     editing: Boolean,
     editingName: String,
     onStartEditing: () -> Unit,
     onEditingNameChange: (String) -> Unit,
-    onRename: () -> Unit
+    onRename: () -> Unit,
+    onRequestDelete: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.fillMaxWidth()) {
         if (editing) {
@@ -447,13 +669,39 @@ private fun CounterSettingsRow(
                 Button(onClick = onRename, enabled = ownerCanEdit && editingName.trim().isNotBlank()) { Text("Save") }
             }
         } else {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(counter.name, fontWeight = FontWeight.SemiBold)
-                    if (!counter.active) Text("Inactive", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                }
-                IconButton(onClick = onStartEditing, enabled = ownerCanEdit) {
-                    Icon(Icons.Default.Edit, contentDescription = "Rename ${counter.name}")
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(counter.name, fontWeight = FontWeight.SemiBold)
+                        if (!counter.active) Text("Inactive", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    }
+                    IconButton(
+                        onClick = onStartEditing,
+                        enabled = ownerCanEdit,
+                        modifier = Modifier.testTag("rename_counter_${counter.id}")
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = "Rename ${counter.name}")
+                    }
+                    IconButton(
+                        onClick = onRequestDelete,
+                        enabled = ownerCanEdit && canDelete,
+                        modifier = Modifier.testTag("delete_counter_${counter.id}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Delete ${counter.name}",
+                            tint = if (ownerCanEdit && canDelete) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                        )
+                    }
                 }
             }
         }

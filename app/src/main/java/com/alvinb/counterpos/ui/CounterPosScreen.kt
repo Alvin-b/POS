@@ -3,8 +3,6 @@ package com.alvinb.counterpos.ui
 import android.app.DatePickerDialog
 import android.content.Intent
 import android.widget.Toast
-import android.graphics.pdf.PdfDocument
-import android.graphics.Paint
 import android.net.Uri
 import androidx.core.content.FileProvider
 import androidx.activity.compose.BackHandler
@@ -12,6 +10,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -66,6 +67,7 @@ import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -92,9 +94,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -104,6 +103,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -116,9 +116,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -176,6 +181,9 @@ fun CounterPosWorkspace(
     val diningTables by viewModel.diningTables.collectAsStateWithLifecycle()
     val tableOrders by viewModel.tableOrders.collectAsStateWithLifecycle()
     val serviceCounters by viewModel.serviceCounters.collectAsStateWithLifecycle()
+    val butcheryConfig by viewModel.butcheryConfig.collectAsStateWithLifecycle()
+    val butcheryCuts by viewModel.butcheryCuts.collectAsStateWithLifecycle()
+    val butcherySales by viewModel.butcherySales.collectAsStateWithLifecycle()
     val products = remember(cachedProducts, state.counterStockByProduct, state.selectedCounterId, session.activeBusiness?.counterInventoryMode) {
         if (session.activeBusiness?.counterInventoryMode == "per_counter") {
             cachedProducts.map { product ->
@@ -307,6 +315,32 @@ fun CounterPosWorkspace(
         return
     }
 
+    if (state.isButcheryWorkspaceOpen) {
+        ButcheryWorkspaceScreen(
+            activeTab = state.butcheryTab,
+            config = butcheryConfig,
+            cuts = butcheryCuts,
+            sales = butcherySales,
+            businessName = session.activeBusiness?.shopName.orEmpty(),
+            ownerCanEdit = role.equals("owner", ignoreCase = true) || role.equals("manager", ignoreCase = true),
+            notice = state.notice,
+            onClearNotice = viewModel::clearNotice,
+            onSelectTab = viewModel::selectButcheryTab,
+            onBackToMainPos = viewModel::closeButcheryWorkspace,
+            onSaveConfig = { enabled, name, beefOnly, price, methods, categories ->
+                viewModel.enrollOrUpdateButchery(enabled, name, beefOnly, price, methods, categories)
+            },
+            onApplyCategoryPrice = viewModel::applyCategoryPricePerKg,
+            onUpdateCutPrice = viewModel::updateButcheryCutPrice,
+            onUpdateCutStockKg = viewModel::setButcheryCutStockKg,
+            onToggleCutActive = viewModel::setButcheryCutActive,
+            onAddCut = viewModel::addButcheryCut,
+            onRecordSale = viewModel::recordButcherySale,
+            onUndoLastSale = viewModel::undoLatestButcherySale
+        )
+        return
+    }
+
     BackHandler {
         when {
             state.isTeamPanelOpen -> viewModel.closeTeamPanel()
@@ -317,20 +351,37 @@ fun CounterPosWorkspace(
         }
     }
 
-    Scaffold(
+    val isDarkSurface = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val glowAccent = if (isDarkSurface) SerenityTokens.GlowDark else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput(Unit) {
-                detectTapGestures(onTap = {
-                    focusManager.clearFocus()
-                    keyboardController?.hide()
-                    if (state.isSearchActive && state.searchQuery.isBlank()) {
-                        viewModel.setSearchActive(false)
-                    }
-                })
-            },
-        topBar = {
-            Column {
+            .background(MaterialTheme.colorScheme.background)
+            .drawBehind {
+                drawRect(
+                    brush = Brush.radialGradient(
+                        colors = listOf(glowAccent.copy(alpha = 0.72f), Color.Transparent),
+                        center = Offset(size.width * 0.85f, -size.height * 0.05f),
+                        radius = size.maxDimension * 0.75f
+                    )
+                )
+            }
+    ) {
+        Scaffold(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = {
+                        focusManager.clearFocus()
+                        keyboardController?.hide()
+                        if (state.isSearchActive && state.searchQuery.isBlank()) {
+                            viewModel.setSearchActive(false)
+                        }
+                    })
+                },
+            topBar = {
+                Column {
                 LeanTopBar(
                     modifier = Modifier.statusBarsPadding(),
                     state = state,
@@ -350,7 +401,9 @@ fun CounterPosWorkspace(
                     counters = serviceCounters,
                     selectedCounterId = state.selectedCounterId,
                     onCounterSelect = viewModel::selectCounter,
-                    onSyncData = { viewModel.synchronizeData(showNotice = true) }
+                    onSyncData = { viewModel.synchronizeData(showNotice = true) },
+                    isButcheryEnabled = butcheryConfig?.enabled == true,
+                    onOpenButchery = { viewModel.openButcheryWorkspace(ButcheryTab.SELL) }
                 )
                 if (!state.isOnline) {
                     Surface(color = MaterialTheme.colorScheme.tertiaryContainer) {
@@ -374,17 +427,30 @@ fun CounterPosWorkspace(
                             }
                         }
                     }
-                } else if (state.pendingSyncCount > 0 && state.blockedOutbox.isEmpty()) {
+                } else if ((state.pendingSyncCount > 0 || state.isBackgroundOutboxSyncing) && state.blockedOutbox.isEmpty()) {
                     Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 2.dp, bottom = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            if (state.isBackgroundOutboxSyncing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(13.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                                Spacer(Modifier.width(8.dp))
+                            }
                             Text(
-                                if (state.isConnectionStable) {
-                                    "${state.pendingSyncCount} queued transaction${if (state.pendingSyncCount == 1) "" else "s"} syncing in background"
-                                } else {
-                                    "${state.pendingSyncCount} queued transaction${if (state.pendingSyncCount == 1) "" else "s"} waiting for stable connection"
+                                when {
+                                    state.isBackgroundOutboxSyncing && state.pendingSyncCount > 0 ->
+                                        "Syncing ${state.pendingSyncCount} queued transaction${if (state.pendingSyncCount == 1) "" else "s"} to Supabase…"
+                                    state.isBackgroundOutboxSyncing ->
+                                        "Syncing POS updates in background…"
+                                    state.isConnectionStable ->
+                                        "${state.pendingSyncCount} queued transaction${if (state.pendingSyncCount == 1) "" else "s"} queued for background sync"
+                                    else ->
+                                        "${state.pendingSyncCount} queued transaction${if (state.pendingSyncCount == 1) "" else "s"} waiting for stable connection"
                                 },
                                 modifier = Modifier.weight(1f),
                                 color = MaterialTheme.colorScheme.onSecondaryContainer,
@@ -440,91 +506,18 @@ fun CounterPosWorkspace(
             }
         },
         bottomBar = {
-            Surface(
-                modifier = Modifier
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .clip(RoundedCornerShape(26.dp)),
-                shape = RoundedCornerShape(26.dp),
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 5.dp,
-                shadowElevation = 4.dp
-            ) {
-                NavigationBar(
-                    modifier = Modifier.height(72.dp),
-                    containerColor = Color.Transparent,
-                    tonalElevation = 0.dp
-                ) {
-                    NavigationBarItem(
-                        selected = state.tab == PosTab.SCAN,
-                        onClick = { viewModel.selectTab(PosTab.SCAN) },
-                        icon = { Icon(Icons.Default.ShoppingCart, contentDescription = "POS", modifier = Modifier.size(21.dp)) },
-                        label = { Text("POS / Sell", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.SCAN) FontWeight.Bold else FontWeight.Normal) },
-                        colors = posNavigationItemColors(),
-                        modifier = Modifier.testTag("nav_pos")
-                    )
-                    if (canManageStock) {
-                        NavigationBarItem(
-                            selected = state.tab == PosTab.STOCK,
-                            onClick = { viewModel.selectTab(PosTab.STOCK) },
-                            icon = {
-                                BadgedBox(
-                                    badge = {
-                                        if (lowStockCatalogCodes.isNotEmpty()) {
-                                            Badge(
-                                                containerColor = MaterialTheme.colorScheme.secondary,
-                                                contentColor = MaterialTheme.colorScheme.onSecondary,
-                                                modifier = Modifier.testTag("nav_stock_low_badge")
-                                            ) {
-                                                Text(
-                                                    if (lowStockCatalogCodes.size > 99) "99+" else lowStockCatalogCodes.size.toString(),
-                                                    fontSize = 9.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-                                        }
-                                    }
-                                ) {
-                                    Icon(Icons.Default.Inventory2, contentDescription = "Stock", modifier = Modifier.size(21.dp))
-                                }
-                            },
-                            label = { Text("Stock (${products.count { it.inMyStock }})", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.STOCK) FontWeight.Bold else FontWeight.Normal) },
-                            colors = posNavigationItemColors(),
-                            modifier = Modifier.testTag("nav_stock")
-                        )
-                    }
-                    NavigationBarItem(
-                        selected = state.tab == PosTab.SALES,
-                        onClick = { viewModel.selectTab(PosTab.SALES) },
-                        icon = { Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = "Sales", modifier = Modifier.size(20.dp)) },
-                        label = { Text("Sales", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.SALES) FontWeight.Bold else FontWeight.Normal) },
-                        colors = posNavigationItemColors(),
-                        modifier = Modifier.testTag("nav_sales")
-                    )
-                    if (supportsSalesAnalytics) {
-                        NavigationBarItem(
-                            selected = state.tab == PosTab.REPORTS,
-                            onClick = { viewModel.selectTab(PosTab.REPORTS) },
-                            icon = { Icon(Icons.Default.Assessment, contentDescription = "Reports", modifier = Modifier.size(20.dp)) },
-                            label = { Text("Reports", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.REPORTS) FontWeight.Bold else FontWeight.Normal) },
-                            colors = posNavigationItemColors(),
-                            modifier = Modifier.testTag("nav_reports")
-                        )
-                    }
-                    if (supportsTables) {
-                        NavigationBarItem(
-                            selected = state.tab == PosTab.TABLES,
-                            onClick = { viewModel.selectTab(PosTab.TABLES) },
-                            icon = { Icon(Icons.Default.TableRestaurant, contentDescription = "Tables", modifier = Modifier.size(20.dp)) },
-                            label = { Text("Tables", fontSize = 10.sp, fontWeight = if (state.tab == PosTab.TABLES) FontWeight.Bold else FontWeight.Normal) },
-                            colors = posNavigationItemColors(),
-                            modifier = Modifier.testTag("nav_tables")
-                        )
-                    }
-                }
-            }
+            SerenityFloatingBottomNav(
+                selectedTab = state.tab,
+                canManageStock = canManageStock,
+                supportsSalesAnalytics = supportsSalesAnalytics,
+                supportsTables = supportsTables,
+                lowStockCount = lowStockCatalogCodes.size,
+                isDarkSurface = isDarkSurface,
+                onSelectTab = viewModel::selectTab
+            )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        containerColor = MaterialTheme.colorScheme.background
+        containerColor = Color.Transparent
     ) { padding ->
         if (!state.isReady && products.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
@@ -569,28 +562,72 @@ fun CounterPosWorkspace(
                         Text("You do not have permission to adjust stock.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                PosTab.SALES -> FullscreenSalesScreen(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
-                    sales = sales,
-                    todaySummary = summary,
-                    onUndo = viewModel::undoLastSale,
+                PosTab.SALES -> {
+                    val syncStatusBySaleId = remember(state.transactionLogs) {
+                        buildMap {
+                            state.transactionLogs.forEach { log ->
+                                val saleId = log.localSaleId
+                                if (saleId != null && !containsKey(saleId)) {
+                                    put(saleId, log.status)
+                                }
+                            }
+                        }
+                    }
+                    FullscreenSalesScreen(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(padding),
+                        sales = sales,
+                        products = products,
+                        counters = serviceCounters,
+                        todaySummary = summary,
+                        syncStatusBySaleId = syncStatusBySaleId,
+                        searchQuery = state.searchQuery,
+                        onClearSearch = viewModel::clearSearch,
+                        onUndo = viewModel::undoLastSale,
                     onExportPdf = { start, end ->
                         val filtered = sales.filter { !it.undone && it.createdAt in start..end }
-                        pendingSalesPdf = buildSalesPdf(filtered, start, end, "Sales report")
+                        pendingSalesPdf = buildBrandedReportPdf(
+                            context = context,
+                            businessName = session.activeBusiness?.shopName ?: "Counter POS",
+                            sales = filtered,
+                            products = products,
+                            counters = serviceCounters,
+                            startMs = start,
+                            endMs = end,
+                            title = "Sales Statement"
+                        )
                         salesPdfPicker.launch("sales-${formatReportDate(start)}-${formatReportDate(end)}.pdf")
                     },
                     onSharePdf = { start, end ->
                         val filtered = sales.filter { !it.undone && it.createdAt in start..end }
-                        sharePdf(context, buildSalesPdf(filtered, start, end, "Sales report"), "sales-${formatReportDate(start)}.pdf")
+                        sharePdf(
+                            context,
+                            buildBrandedReportPdf(
+                                context = context,
+                                businessName = session.activeBusiness?.shopName ?: "Counter POS",
+                                sales = filtered,
+                                products = products,
+                                counters = serviceCounters,
+                                startMs = start,
+                                endMs = end,
+                                title = "Sales Statement"
+                            ),
+                            "sales-${formatReportDate(start)}.pdf"
+                        )
                     }
                 )
+                }
                 PosTab.REPORTS -> CounterReportScreen(
                     modifier = Modifier.fillMaxSize().padding(padding),
+                    businessName = session.activeBusiness?.shopName ?: "Counter POS",
                     counters = serviceCounters,
                     registeredWaiterEmails = registeredWaiterEmails,
                     sales = sales,
+                    products = products,
+                    diningTables = diningTables,
+                    tableOrders = tableOrders,
+                    supportsTables = supportsTables,
                     remoteRows = state.counterReport,
                     isLoading = state.isLoadingCounterReport,
                     reportFilter = state.reportFilter,
@@ -605,18 +642,60 @@ fun CounterPosWorkspace(
                         viewModel.selectServingCounter(counter.id, counter.name)
                         viewModel.openRecordDispensation()
                     },
-                    onExportPdf = {
-                        val activeSales = sales.filterNot { it.undone }
-                        val start = if (state.reportFilter == "today") startOfReportDay(System.currentTimeMillis()) else activeSales.minOfOrNull { it.createdAt } ?: startOfReportDay(System.currentTimeMillis())
-                        val end = if (state.reportFilter == "today") endOfReportDay(System.currentTimeMillis()) else System.currentTimeMillis()
-                        pendingSalesPdf = buildSalesPdf(activeSales.filter { it.createdAt in start..end }, start, end, "Performance report")
-                        salesPdfPicker.launch("report-${formatReportDate(start)}.pdf")
+                    onExportPdf = { snapshot ->
+                        val paymentTag = when (state.reportPaymentFilter) {
+                            "cash" -> "Cash Only"
+                            "mpesa" -> "M-Pesa Only"
+                            else -> "All Payments"
+                        }
+                        val counterTag = if (state.reportCounterFilter == "all") {
+                            if (serviceCounters.size > 1) "All Counters" else null
+                        } else {
+                            serviceCounters.firstOrNull { it.id == state.reportCounterFilter }?.name
+                        }
+                        val filterSummary = listOfNotNull(snapshot.periodLabel, paymentTag, counterTag).joinToString(" · ")
+                        pendingSalesPdf = buildBrandedReportPdf(
+                            context = context,
+                            businessName = session.activeBusiness?.shopName ?: "Counter POS",
+                            sales = snapshot.filteredSales,
+                            products = products,
+                            counters = serviceCounters,
+                            snapshot = snapshot,
+                            startMs = snapshot.windowStartMs,
+                            endMs = snapshot.windowEndMs,
+                            title = "Performance Report",
+                            filterSummary = filterSummary
+                        )
+                        salesPdfPicker.launch("report-${formatReportDate(snapshot.windowStartMs)}.pdf")
                     },
-                    onSharePdf = {
-                        val activeSales = sales.filterNot { it.undone }
-                        val start = if (state.reportFilter == "today") startOfReportDay(System.currentTimeMillis()) else activeSales.minOfOrNull { it.createdAt } ?: startOfReportDay(System.currentTimeMillis())
-                        val end = if (state.reportFilter == "today") endOfReportDay(System.currentTimeMillis()) else System.currentTimeMillis()
-                        sharePdf(context, buildSalesPdf(activeSales.filter { it.createdAt in start..end }, start, end, "Performance report"), "report-${formatReportDate(start)}.pdf")
+                    onSharePdf = { snapshot ->
+                        val paymentTag = when (state.reportPaymentFilter) {
+                            "cash" -> "Cash Only"
+                            "mpesa" -> "M-Pesa Only"
+                            else -> "All Payments"
+                        }
+                        val counterTag = if (state.reportCounterFilter == "all") {
+                            if (serviceCounters.size > 1) "All Counters" else null
+                        } else {
+                            serviceCounters.firstOrNull { it.id == state.reportCounterFilter }?.name
+                        }
+                        val filterSummary = listOfNotNull(snapshot.periodLabel, paymentTag, counterTag).joinToString(" · ")
+                        sharePdf(
+                            context,
+                            buildBrandedReportPdf(
+                                context = context,
+                                businessName = session.activeBusiness?.shopName ?: "Counter POS",
+                                sales = snapshot.filteredSales,
+                                products = products,
+                                counters = serviceCounters,
+                                snapshot = snapshot,
+                                startMs = snapshot.windowStartMs,
+                                endMs = snapshot.windowEndMs,
+                                title = "Performance Report",
+                                filterSummary = filterSummary
+                            ),
+                            "report-${formatReportDate(snapshot.windowStartMs)}.pdf"
+                        )
                     }
                 )
                 PosTab.TABLES -> Box(
@@ -652,11 +731,14 @@ fun CounterPosWorkspace(
                         onScanProduct = { viewModel.openScanner(ScannerMode.TABLE_ADD) },
                         showCounterLabels = serviceCounters.size > 1,
                         registeredWaiterEmails = registeredWaiterEmails,
-                        businessName = session.activeBusiness?.shopName ?: "Counter POS"
+                        businessName = session.activeBusiness?.shopName ?: "Counter POS",
+                        searchQuery = state.searchQuery,
+                        onClearSearch = viewModel::clearSearch
                     )
                 }
             }
         }
+    }
     }
 
     if (state.isSyncRecoveryOpen) {
@@ -727,10 +809,13 @@ fun CounterPosWorkspace(
                         if (state.pendingSyncCount > 0 && state.isOnline) {
                             TextButton(
                                 onClick = viewModel::flushOfflineQueueNow,
-                                enabled = !state.isSyncingData,
+                                enabled = !state.isSyncingData && !state.isBackgroundOutboxSyncing,
                                 modifier = Modifier.testTag("flush_queue_button")
                             ) {
-                                Text(if (state.isSyncingData) "Flushing…" else "Flush Now", fontSize = 12.sp)
+                                Text(
+                                    if (state.isSyncingData || state.isBackgroundOutboxSyncing) "Syncing…" else "Flush Now",
+                                    fontSize = 12.sp
+                                )
                             }
                         }
                     }
@@ -738,7 +823,22 @@ fun CounterPosWorkspace(
                         Text(state.syncRecoveryError.orEmpty(), color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                     }
                     if (state.blockedOutbox.isNotEmpty()) {
-                        Text("Needs Attention", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Needs Attention", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                            if (state.blockedOutbox.size > 1 && state.isOnline) {
+                                TextButton(
+                                    onClick = viewModel::retryAllBlockedOutbox,
+                                    enabled = state.retryingOperationId == null,
+                                    modifier = Modifier.testTag("retry_all_blocked_button")
+                                ) {
+                                    Text("Retry All", fontSize = 12.sp)
+                                }
+                            }
+                        }
                         state.blockedOutbox.forEach { item ->
                             val label = when (item.operationType) {
                                 "sale" -> "Sale"
@@ -1008,11 +1108,17 @@ fun CounterPosWorkspace(
                 role = role,
                 businessType = session.activeBusiness?.businessType ?: "big_club",
                 registeredCounters = serviceCounters,
+                butcheryConfig = butcheryConfig,
                 onClose = viewModel::closeTeamPanel,
                 onBusinessNameSave = { viewModel.updateBusinessName(it) },
                 onLoadMembers = { viewModel.loadEmployeeMembers() },
                 onCounterCreate = { name -> viewModel.createServiceCounter(name) },
                 onCounterRename = { id, name -> viewModel.renameServiceCounter(id, name) },
+                onCounterDelete = { id -> viewModel.deleteServiceCounter(id) },
+                onSaveButcheryConfig = { enabled, name, beefOnly, price, methods, categories ->
+                    viewModel.enrollOrUpdateButchery(enabled, name, beefOnly, price, methods, categories)
+                },
+                onOpenButcheryWorkspace = { tab -> viewModel.openButcheryWorkspace(tab) },
                 onOpenStaffManagement = {
                     viewModel.closeTeamPanel()
                     viewModel.openStaffManagement()
@@ -1056,13 +1162,125 @@ fun CounterPosWorkspace(
 }
 
 @Composable
-private fun posNavigationItemColors() = NavigationBarItemDefaults.colors(
-    selectedIconColor = MaterialTheme.colorScheme.primary,
-    selectedTextColor = MaterialTheme.colorScheme.primary,
-    indicatorColor = Color.Transparent,
-    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-)
+private fun SerenityFloatingBottomNav(
+    selectedTab: PosTab,
+    canManageStock: Boolean,
+    supportsSalesAnalytics: Boolean,
+    supportsTables: Boolean,
+    lowStockCount: Int,
+    isDarkSurface: Boolean,
+    onSelectTab: (PosTab) -> Unit
+) {
+    val navColor = if (isDarkSurface) SerenityTokens.NavSurfaceDark else MaterialTheme.colorScheme.surface
+    val navItems = buildList {
+        add(Triple(PosTab.SCAN, "Sell", Icons.Default.ShoppingCart) to "nav_pos")
+        if (canManageStock) add(Triple(PosTab.STOCK, "Stock", Icons.Default.Inventory2) to "nav_stock")
+        add(Triple(PosTab.SALES, "Sales", Icons.AutoMirrored.Filled.ReceiptLong) to "nav_sales")
+        if (supportsSalesAnalytics) add(Triple(PosTab.REPORTS, "Reports", Icons.Default.Assessment) to "nav_reports")
+        if (supportsTables) add(Triple(PosTab.TABLES, "Tables", Icons.Default.TableRestaurant) to "nav_tables")
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp),
+            shape = RoundedCornerShape(32.dp),
+            color = navColor,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            shadowElevation = 8.dp
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                navItems.forEach { (tabInfo, testTagName) ->
+                    val (tab, label, icon) = tabInfo
+                    val selected = selectedTab == tab
+                    val pillColor by animateColorAsState(
+                        targetValue = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                        label = "navPillColor"
+                    )
+                    val contentTint = if (selected) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+
+                    Surface(
+                        onClick = { onSelectTab(tab) },
+                        shape = RoundedCornerShape(24.dp),
+                        color = pillColor,
+                        modifier = Modifier
+                            .height(48.dp)
+                            .animateContentSize()
+                            .minimumInteractiveComponentSize()
+                            .testTag(testTagName)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = if (selected) 15.dp else 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            if (tab == PosTab.STOCK && lowStockCount > 0) {
+                                BadgedBox(
+                                    badge = {
+                                        Badge(
+                                            containerColor = MaterialTheme.colorScheme.secondary,
+                                            contentColor = MaterialTheme.colorScheme.onSecondary,
+                                            modifier = Modifier.testTag("nav_stock_low_badge")
+                                        ) {
+                                            Text(
+                                                if (lowStockCount > 99) "99+" else lowStockCount.toString(),
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = icon,
+                                        contentDescription = label,
+                                        tint = contentTint,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            } else {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = label,
+                                    tint = contentTint,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            if (selected) {
+                                Spacer(Modifier.width(7.dp))
+                                Text(
+                                    text = label,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = contentTint,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun CounterSelector(
@@ -1137,6 +1355,8 @@ private fun LeanTopBar(
     selectedCounterId: String? = null,
     onCounterSelect: (String) -> Unit = {},
     onSyncData: () -> Unit = {},
+    isButcheryEnabled: Boolean = false,
+    onOpenButchery: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val focusManager = LocalFocusManager.current
@@ -1146,8 +1366,8 @@ private fun LeanTopBar(
 
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        shadowElevation = 2.dp
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f))
     ) {
         if (state.isSearchActive) {
             // Expanded search mode with instant outside-dismiss and close
@@ -1171,6 +1391,14 @@ private fun LeanTopBar(
                     )
                 }
 
+                val searchPlaceholder = when (state.tab) {
+                    PosTab.TABLES -> "Search tables..."
+                    PosTab.STOCK -> "Search bottles & brands..."
+                    PosTab.SALES -> "Search receipts..."
+                    PosTab.SCAN -> "Search products to sell..."
+                    PosTab.REPORTS -> "Search..."
+                }
+
                 OutlinedTextField(
                     value = state.searchQuery,
                     onValueChange = onSearchChange,
@@ -1180,7 +1408,7 @@ private fun LeanTopBar(
                         .testTag("search_text_input"),
                     placeholder = {
                         Text(
-                            if (state.tab == PosTab.STOCK) "Search bottles & brands..." else "Search to sell...",
+                            searchPlaceholder,
                             fontSize = 14.sp
                         )
                     },
@@ -1206,12 +1434,14 @@ private fun LeanTopBar(
                     )
                 )
 
-                IconButton(onClick = onOpenScanner, modifier = Modifier.size(40.dp)) {
-                    Icon(
-                        imageVector = Icons.Default.QrCodeScanner,
-                        contentDescription = "Scan barcode",
-                        tint = MaterialTheme.colorScheme.primary
-                    )
+                if (state.tab == PosTab.SCAN || state.tab == PosTab.STOCK) {
+                    IconButton(onClick = onOpenScanner, modifier = Modifier.size(40.dp)) {
+                        Icon(
+                            imageVector = Icons.Default.QrCodeScanner,
+                            contentDescription = "Scan barcode",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
             }
 
@@ -1239,7 +1469,8 @@ private fun LeanTopBar(
                     Column(Modifier.weight(1f)) {
                         Text(
                             text = businessName,
-                            fontSize = 16.sp,
+                            fontSize = 17.sp,
+                            fontFamily = SpaceGroteskFontFamily,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
@@ -1306,14 +1537,19 @@ private fun LeanTopBar(
                         }
                     }
 
-                    // Search icon button (avoids using so much static space!)
+                    // Search icon button (context-aware: tables on Tables tab, products on Sell/Stock)
                     IconButton(
                         onClick = { onSearchToggle(true) },
                         modifier = Modifier.size(40.dp).testTag("search_icon_button")
                     ) {
+                        val searchDesc = when (state.tab) {
+                            PosTab.TABLES -> "Search tables"
+                            PosTab.SALES -> "Search receipts"
+                            else -> "Search products"
+                        }
                         Icon(
                             imageVector = Icons.Default.Search,
-                            contentDescription = "Search products",
+                            contentDescription = searchDesc,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -1333,6 +1569,36 @@ private fun LeanTopBar(
                         }
                     }
 
+                    if (isButcheryEnabled) {
+                        Surface(
+                            onClick = onOpenButchery,
+                            shape = RoundedCornerShape(18.dp),
+                            color = Color(0xFF1F8E4E),
+                            modifier = Modifier
+                                .height(36.dp)
+                                .testTag("open_butchery_workspace_button")
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 10.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Scale,
+                                    contentDescription = "Open Butchery POS",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = "Butchery",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
+                        }
+                    }
+
                     if (canManageTeam) {
                         IconButton(onClick = onManageStaff, modifier = Modifier.size(40.dp).testTag("staff_management_top_button")) {
                             Icon(Icons.Default.Badge, contentDescription = "Staff Management", tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1345,26 +1611,26 @@ private fun LeanTopBar(
                     // Barcode Scanner button
                     Surface(
                         onClick = onOpenScanner,
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = RoundedCornerShape(20.dp),
+                        color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.height(40.dp).testTag("top_scanner_button")
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 11.dp, vertical = 8.dp)
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.QrCodeScanner,
                                 contentDescription = "Open scanner",
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(18.dp)
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(17.dp)
                             )
-                            Spacer(Modifier.width(4.dp))
+                            Spacer(Modifier.width(5.dp))
                             Text(
                                 "Scan",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                color = MaterialTheme.colorScheme.onPrimary
                             )
                         }
                     }
@@ -1885,774 +2151,6 @@ private fun ShelfEmptyState(
     }
 }
 
-private data class CounterProductSummary(
-    val productName: String,
-    val unitName: String,
-    val totalQuantity: Int,
-    val totalKsh: Long
-)
-
-private data class CounterWaiterSummary(
-    val waiterName: String,
-    val itemsServed: Int,
-    val totalKsh: Long,
-    val tablesServed: List<String>
-)
-
-private data class ServiceCounterReportData(
-    val counterId: String,
-    val counterName: String,
-    val totalItems: Int,
-    val totalKsh: Long,
-    val salesCount: Int,
-    val products: List<CounterProductSummary>,
-    val waiters: List<CounterWaiterSummary>
-)
-
-/**
- * Reports Screen
- * Focused on sales performance: revenue, drinks sold, top products, and counters.
- */
-@Composable
-private fun ReportMetricCard(
-    label: String,
-    value: String,
-    containerColor: Color,
-    contentColor: Color,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
-        color = containerColor
-    ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Text(label, fontSize = 11.sp, color = contentColor.copy(alpha = 0.8f))
-            Text(value, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = contentColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-    }
-}
-
-@Composable
-private fun CounterReportScreen(
-    modifier: Modifier,
-    counters: List<ServiceCounter>,
-    registeredWaiterEmails: Set<String>,
-    sales: List<SaleEntity>,
-    remoteRows: List<com.alvinb.counterpos.data.remote.CounterReportRow>,
-    isLoading: Boolean,
-    reportFilter: String,
-    reportCounterFilter: String,
-    reportPaymentFilter: String,
-    onSetReportFilter: (String) -> Unit,
-    onSetReportPaymentFilter: (String) -> Unit,
-    onSetReportCounterFilter: (String) -> Unit,
-    onRefresh: () -> Unit,
-    onOpenRecordDispensation: () -> Unit,
-    onQuickDispenseForCounter: (ServiceCounter) -> Unit,
-    onExportPdf: () -> Unit,
-    onSharePdf: () -> Unit
-) {
-    val context = LocalContext.current
-    val clipboard = LocalClipboardManager.current
-    val todayStart = remember { startOfReportDay(System.currentTimeMillis()) }
-
-    val effectiveCounters = counters
-
-    val counterReports = remember(effectiveCounters, registeredWaiterEmails, sales, remoteRows, reportFilter, reportPaymentFilter) {
-        val periodSales = if (reportFilter == "today") {
-            sales.filter { !it.undone && it.createdAt >= todayStart }
-        } else {
-            sales.filter { !it.undone }
-        }
-        val effectiveSales = when (reportPaymentFilter) {
-            "cash", "mpesa" -> periodSales.filter { it.paymentMethod.equals(reportPaymentFilter, ignoreCase = true) }
-            else -> periodSales
-        }
-
-        effectiveCounters.map { counter ->
-            val matchingSales = effectiveSales.filter { sale ->
-                sale.counterId == counter.id ||
-                sale.counterName.equals(counter.name, ignoreCase = true) ||
-                (effectiveCounters.size == 1 && (sale.counterId.isNullOrBlank() || sale.counterId == "unassigned"))
-            }
-
-            val productsMap = matchingSales.groupBy { it.productName to it.unitName }
-                .map { (key, group) ->
-                    CounterProductSummary(
-                        productName = key.first,
-                        unitName = key.second,
-                        totalQuantity = group.sumOf { it.quantity },
-                        totalKsh = group.sumOf { it.totalKsh.toLong() }
-                    )
-                }.sortedByDescending { it.totalQuantity }
-
-            val waitersMap = matchingSales
-                .filter { sale ->
-                    val waiter = sale.waiterName?.trim()
-                    if (waiter.isNullOrBlank()) false
-                    else if (registeredWaiterEmails.isEmpty()) true
-                    else {
-                        val low = waiter.lowercase(Locale.ROOT)
-                        low in registeredWaiterEmails || registeredWaiterEmails.any { low.contains(it) || it.contains(low) }
-                    }
-                }
-                .groupBy { sale -> sale.waiterName!!.trim() }
-                .map { (waiter, group) ->
-                    val tables = group.mapNotNull { it.tableName?.takeIf(String::isNotBlank) }.distinct()
-                    CounterWaiterSummary(
-                        waiterName = waiter,
-                        itemsServed = group.sumOf { it.quantity },
-                        totalKsh = group.sumOf { it.totalKsh.toLong() },
-                        tablesServed = tables
-                    )
-                }.sortedByDescending { it.itemsServed }
-
-            val localItems = matchingSales.sumOf { it.quantity }
-            val localKsh = matchingSales.sumOf { it.totalKsh.toLong() }
-            val localSalesCount = matchingSales.size
-
-            val remoteMatch = remoteRows.firstOrNull {
-                it.counterId == counter.id || it.counterName.equals(counter.name, ignoreCase = true)
-            }
-            val finalItems = if (localItems > 0) localItems else (remoteMatch?.units?.toInt() ?: 0)
-            val finalKsh = if (localKsh > 0L) localKsh else (remoteMatch?.revenueKsh ?: 0L)
-            val finalSalesCount = if (localSalesCount > 0) localSalesCount else (remoteMatch?.saleCount?.toInt() ?: 0)
-
-            ServiceCounterReportData(
-                counterId = counter.id,
-                counterName = if (effectiveCounters.size == 1) "Sales" else counter.name,
-                totalItems = finalItems,
-                totalKsh = finalKsh,
-                salesCount = finalSalesCount,
-                products = productsMap,
-                waiters = waitersMap
-            )
-        }
-    }
-
-    val visibleReports = remember(counterReports, reportCounterFilter) {
-        if (reportCounterFilter == "all") counterReports
-        else counterReports.filter { it.counterId == reportCounterFilter }
-    }
-
-    val totalClubUnits = counterReports.sumOf { it.totalItems }
-    val totalClubRevenue = counterReports.sumOf { it.totalKsh }
-    val totalSalesCount = counterReports.sumOf { it.salesCount }
-    val periodSalesForTotals = if (reportFilter == "today") {
-        sales.filter { !it.undone && it.createdAt >= todayStart }
-    } else sales.filter { !it.undone }
-    val cashTotal = periodSalesForTotals.filter { it.paymentMethod.equals("cash", true) }.sumOf { it.totalKsh.toLong() }
-    val mpesaTotal = periodSalesForTotals.filter { it.paymentMethod.equals("mpesa", true) }.sumOf { it.totalKsh.toLong() }
-    val topProducts = remember(counterReports) {
-        counterReports.flatMap { it.products }
-            .groupBy { it.productName to it.unitName }
-            .map { (key, rows) ->
-                CounterProductSummary(
-                    productName = key.first,
-                    unitName = key.second,
-                    totalQuantity = rows.sumOf { it.totalQuantity },
-                    totalKsh = rows.sumOf { it.totalKsh }
-                )
-            }
-            .sortedByDescending { it.totalQuantity }
-            .take(6)
-    }
-
-    fun copyShareableReport() {
-        val dateLabel = if (reportFilter == "today") "Today (${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date())})" else "All-Time"
-        val sb = StringBuilder()
-        sb.appendLine("🍹 CLUB MULTI-COUNTER DISPENSATION REPORT")
-        sb.appendLine("Period: $dateLabel")
-        sb.appendLine("Total Drinks Dispensed: $totalClubUnits")
-        sb.appendLine("Total Revenue: ${kshLong(totalClubRevenue)}")
-        sb.appendLine("Cash: ${kshLong(cashTotal)}")
-        sb.appendLine("M-Pesa: ${kshLong(mpesaTotal)}")
-        sb.appendLine("Sales: $totalSalesCount | Counters: ${counterReports.size}")
-        sb.appendLine("========================================")
-        counterReports.forEach { c ->
-            sb.appendLine("\n📍 ${c.counterName.uppercase()}:")
-            sb.appendLine("Total: ${c.totalItems} drinks · ${kshLong(c.totalKsh)}")
-            if (c.products.isNotEmpty()) {
-                sb.appendLine("Products Taken:")
-                c.products.forEach { p ->
-                    sb.appendLine("  • ${p.productName} (${p.unitName}): ${p.totalQuantity} taken · ${kshLong(p.totalKsh)}")
-                }
-            } else {
-                sb.appendLine("  (No products dispensed yet)")
-            }
-            if (c.waiters.isNotEmpty()) {
-                sb.appendLine("Waiters Serving from this counter:")
-                c.waiters.forEach { w ->
-                    val tablesText = if (w.tablesServed.isNotEmpty()) " (Served: ${w.tablesServed.joinToString(", ")})" else ""
-                    sb.appendLine("  👤 ${w.waiterName}: ${w.itemsServed} drinks · ${kshLong(w.totalKsh)}$tablesText")
-                }
-            }
-        }
-        clipboard.setText(AnnotatedString(sb.toString()))
-        Toast.makeText(context, "Counter report copied to clipboard", Toast.LENGTH_SHORT).show()
-    }
-
-    LazyColumn(
-        modifier = modifier,
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text("Reports", fontSize = 25.sp, fontWeight = FontWeight.Bold)
-                    Text("The numbers that matter", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                IconButton(onClick = onRefresh, enabled = !isLoading) {
-                    if (isLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Default.Refresh, contentDescription = "Refresh reports")
-                }
-            }
-        }
-
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                listOf("today" to "Today", "all" to "All-time").forEach { (value, label) ->
-                    FilterChip(
-                        selected = reportFilter == value,
-                        onClick = { onSetReportFilter(value) },
-                        label = { Text(label, fontSize = 12.sp) }
-                    )
-                }
-            }
-        }
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                listOf("all" to "All payments", "cash" to "Cash", "mpesa" to "M-Pesa").forEach { (value, label) ->
-                    FilterChip(
-                        selected = reportPaymentFilter == value,
-                        onClick = { onSetReportPaymentFilter(value) },
-                        label = { Text(label, fontSize = 12.sp) }
-                    )
-                }
-            }
-        }
-
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ReportMetricCard("Revenue", kshLong(totalClubRevenue), MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer, Modifier.weight(1.2f))
-                ReportMetricCard("Drinks", totalClubUnits.toString(), MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant, Modifier.weight(0.8f))
-                ReportMetricCard("Sales", totalSalesCount.toString(), MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer, Modifier.weight(0.8f))
-            }
-        }
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ReportMetricCard("Cash", kshLong(cashTotal), MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant, Modifier.weight(1f))
-                ReportMetricCard("M-Pesa", kshLong(mpesaTotal), MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer, Modifier.weight(1f))
-            }
-        }
-
-        item { Text("Top drinks", fontSize = 16.sp, fontWeight = FontWeight.Bold) }
-        if (topProducts.isEmpty()) {
-            item { EmptyStateMessage("No sales recorded for this period.") }
-        } else {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
-                        topProducts.forEachIndexed { index, product ->
-                            Row(
-                                Modifier.fillMaxWidth().padding(vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("${index + 1}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.width(24.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text(product.productName, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(product.unitName, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text("${product.totalQuantity} sold", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                    Text(kshLong(product.totalKsh), fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
-                                }
-                            }
-                            if (index < topProducts.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-                        }
-                    }
-                }
-            }
-        }
-
-        if (counterReports.size > 1) {
-            item { Text("By counter", fontSize = 16.sp, fontWeight = FontWeight.Bold) }
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
-                        counterReports.sortedByDescending { it.totalKsh }.forEachIndexed { index, counter ->
-                            Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(counter.counterName, fontWeight = FontWeight.SemiBold)
-                                    Text("${counter.totalItems} drinks · ${counter.salesCount} sales", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                                Text(kshLong(counter.totalKsh), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                            }
-                            if (index < counterReports.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-                        }
-                    }
-                }
-            }
-        }
-
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                IconButton(onClick = onSharePdf) {
-                    Icon(Icons.Default.Share, contentDescription = "Share report")
-                }
-                IconButton(onClick = onExportPdf) {
-                    Icon(Icons.Default.FileDownload, contentDescription = "Download report PDF")
-                }
-            }
-        }
-    }
-}
-
-private fun kshLong(value: Long): String = "KSh " + NumberFormat.getIntegerInstance(Locale.US).format(value)
-
-@Composable
-private fun FullscreenSalesScreen(
-    modifier: Modifier,
-    sales: List<SaleEntity>,
-    todaySummary: Pair<Int, Int>,
-    onUndo: () -> Unit,
-    onExportPdf: (Long, Long) -> Unit,
-    onSharePdf: (Long, Long) -> Unit
-) {
-    var showDateRange by remember { mutableStateOf(false) }
-    var shareAfterDateSelection by remember { mutableStateOf(false) }
-    var dateFilter by remember { mutableStateOf("today") }
-    var paymentFilter by remember { mutableStateOf("all") }
-    var newestFirst by remember { mutableStateOf(true) }
-    val todayStart = remember { startOfReportDay(System.currentTimeMillis()) }
-    val filteredSales = remember(sales, dateFilter, paymentFilter, newestFirst) {
-        sales.asSequence()
-            .filter { dateFilter != "today" || it.createdAt >= todayStart }
-            .filter { paymentFilter == "all" || it.paymentMethod.equals(paymentFilter, ignoreCase = true) }
-            .sortedWith(if (newestFirst) compareByDescending<SaleEntity> { it.createdAt }.thenByDescending { it.id }
-                else compareBy<SaleEntity> { it.createdAt }.thenBy { it.id })
-            .toList()
-    }
-    LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text("Sales", fontSize = 23.sp, fontWeight = FontWeight.Bold)
-                Text("Today’s performance and recent receipts", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text("Today's Revenue", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                        Text(ksh(todaySummary.first), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                    }
-                }
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text("Units / Bottles Sold", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(todaySummary.second.toString(), fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = onUndo,
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 9.dp)
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(5.dp))
-                    Text("Undo sale", fontSize = 11.sp, maxLines = 1)
-                }
-                OutlinedButton(
-                    onClick = { shareAfterDateSelection = true; showDateRange = true },
-                    modifier = Modifier.weight(0.5f),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 9.dp)
-                ) {
-                    Icon(Icons.Default.Share, contentDescription = "Share sales", modifier = Modifier.size(18.dp))
-                }
-                OutlinedButton(
-                    onClick = { shareAfterDateSelection = false; showDateRange = true },
-                    modifier = Modifier.weight(0.5f),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 9.dp)
-                ) {
-                    Icon(Icons.Default.FileDownload, contentDescription = "Download sales PDF", modifier = Modifier.size(18.dp))
-                }
-            }
-        }
-        item {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(9.dp)
-                ) {
-                    Text("Filter receipts", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SalesFilterDropdown(
-                            label = "Date range",
-                            selectedValue = dateFilter,
-                            options = listOf("today" to "Today", "all" to "All dates"),
-                            modifier = Modifier.weight(1f),
-                            onSelect = { dateFilter = it }
-                        )
-                        SalesFilterDropdown(
-                            label = "Sort order",
-                            selectedValue = if (newestFirst) "newest" else "oldest",
-                            options = listOf("newest" to "Newest first", "oldest" to "Oldest first"),
-                            modifier = Modifier.weight(1f),
-                            onSelect = { newestFirst = it == "newest" }
-                        )
-                    }
-                    SalesFilterDropdown(
-                        label = "Payment method",
-                        selectedValue = paymentFilter,
-                        options = listOf("all" to "All payments", "cash" to "Cash", "mpesa" to "M-Pesa"),
-                        modifier = Modifier.fillMaxWidth(),
-                        onSelect = { paymentFilter = it }
-                    )
-                }
-            }
-        }
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Recent receipts", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                    Text("${filteredSales.size}", modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
-        if (filteredSales.isEmpty()) {
-            item {
-                EmptyStateMessage(
-                    if (sales.isEmpty()) "No sales made yet. Go to POS tab to sell products."
-                    else "No receipts match these date and payment filters."
-                )
-            }
-        } else {
-            items(filteredSales, key = { it.id }) { sale -> SaleReceiptRow(sale = sale) }
-        }
-    }
-    if (showDateRange) {
-        SalesDateRangeDialog(
-            onDismiss = { showDateRange = false },
-            onExport = { start, end ->
-                showDateRange = false
-                if (shareAfterDateSelection) onSharePdf(start, end) else onExportPdf(start, end)
-            }
-        )
-    }
-}
-
-@Composable
-private fun SalesFilterDropdown(
-    label: String,
-    selectedValue: String,
-    options: List<Pair<String, String>>,
-    modifier: Modifier = Modifier,
-    onSelect: (String) -> Unit
-) {
-    var expanded by remember { mutableStateOf(false) }
-    val selectedLabel = options.firstOrNull { it.first == selectedValue }?.second ?: selectedValue
-    Box(modifier = modifier) {
-        OutlinedButton(
-            onClick = { expanded = true },
-            modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
-            contentPadding = PaddingValues(horizontal = 11.dp, vertical = 6.dp),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(1.dp)
-            ) {
-                Text(label, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                Text(selectedLabel, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(18.dp))
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            options.forEach { (value, optionLabel) ->
-                DropdownMenuItem(
-                    text = { Text(optionLabel) },
-                    onClick = {
-                        onSelect(value)
-                        expanded = false
-                    },
-                    trailingIcon = if (value == selectedValue) {
-                        { Icon(Icons.Default.Check, contentDescription = "Selected") }
-                    } else null
-                )
-            }
-        }
-    }
-}
-
-
-@Composable
-private fun SalesDateRangeDialog(
-    onDismiss: () -> Unit,
-    onExport: (Long, Long) -> Unit
-) {
-    val context = LocalContext.current
-    var start by remember { mutableStateOf(startOfReportDay(System.currentTimeMillis())) }
-    var end by remember { mutableStateOf(endOfReportDay(System.currentTimeMillis())) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Export sales PDF") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Choose one day or any date range.", fontSize = 13.sp)
-                OutlinedButton(onClick = {
-                    val cal = Calendar.getInstance().apply { timeInMillis = start }
-                    DatePickerDialog(context, { _, year, month, day ->
-                        start = startOfReportDay(year, month, day)
-                    }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)).show()
-                }, modifier = Modifier.fillMaxWidth()) {
-                    Text("From: ${formatReportDate(start)}")
-                }
-                OutlinedButton(onClick = {
-                    val cal = Calendar.getInstance().apply { timeInMillis = end }
-                    DatePickerDialog(context, { _, year, month, day ->
-                        end = endOfReportDay(year, month, day)
-                    }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)).show()
-                }, modifier = Modifier.fillMaxWidth()) {
-                    Text("To: ${formatReportDate(end)}")
-                }
-                if (end < start) {
-                    Text("The end date must be on or after the start date.", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(enabled = end >= start, onClick = { onExport(start, end) }) { Text("Create PDF") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
-}
-
-private fun startOfReportDay(time: Long): Long = Calendar.getInstance().apply {
-    timeInMillis = time
-    set(Calendar.HOUR_OF_DAY, 0)
-    set(Calendar.MINUTE, 0)
-    set(Calendar.SECOND, 0)
-    set(Calendar.MILLISECOND, 0)
-}.timeInMillis
-
-private fun endOfReportDay(time: Long): Long = Calendar.getInstance().apply {
-    timeInMillis = time
-    set(Calendar.HOUR_OF_DAY, 23)
-    set(Calendar.MINUTE, 59)
-    set(Calendar.SECOND, 59)
-    set(Calendar.MILLISECOND, 999)
-}.timeInMillis
-
-private fun startOfReportDay(year: Int, month: Int, day: Int): Long = Calendar.getInstance().apply {
-    set(year, month, day, 0, 0, 0)
-    set(Calendar.MILLISECOND, 0)
-}.timeInMillis
-
-private fun endOfReportDay(year: Int, month: Int, day: Int): Long = Calendar.getInstance().apply {
-    set(year, month, day, 23, 59, 59)
-    set(Calendar.MILLISECOND, 999)
-}.timeInMillis
-
-private fun formatReportDate(time: Long): String = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(time))
-
-private fun buildSalesPdf(sales: List<SaleEntity>, start: Long, end: Long, title: String): ByteArray {
-    val document = PdfDocument()
-    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    val navy = android.graphics.Color.rgb(25, 32, 48)
-    val accent = android.graphics.Color.rgb(38, 125, 105)
-    val muted = android.graphics.Color.rgb(100, 108, 120)
-    val rule = android.graphics.Color.rgb(225, 228, 233)
-    val soft = android.graphics.Color.rgb(244, 247, 248)
-    val activeSales = sales.filterNot { it.undone }.sortedWith(compareBy<SaleEntity> { it.createdAt }.thenBy { it.id })
-    val cashTotal = activeSales.filter { it.paymentMethod.equals("cash", true) }.sumOf { it.totalKsh.toLong() }
-    val mpesaTotal = activeSales.filter { it.paymentMethod.equals("mpesa", true) }.sumOf { it.totalKsh.toLong() }
-    val grandTotal = activeSales.sumOf { it.totalKsh.toLong() }
-    val otherTotal = grandTotal - cashTotal - mpesaTotal
-    val integerFormat = NumberFormat.getIntegerInstance(Locale.US)
-    val dateTimeFormat = SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault())
-    var pageNumber = 1
-    var page = document.startPage(PdfDocument.PageInfo.Builder(595, 842, pageNumber).create())
-    var y = 0f
-    fun drawText(
-        text: String,
-        x: Float,
-        baseline: Float,
-        size: Float = 9f,
-        color: Int = navy,
-        bold: Boolean = false,
-        align: Paint.Align = Paint.Align.LEFT
-    ) {
-        paint.textSize = size
-        paint.color = color
-        paint.typeface = if (bold) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
-        paint.textAlign = align
-        page.canvas.drawText(text, x, baseline, paint)
-    }
-    fun drawRule(atY: Float) {
-        paint.color = rule
-        paint.strokeWidth = 1f
-        page.canvas.drawLine(36f, atY, 559f, atY, paint)
-    }
-    fun fillRect(left: Float, top: Float, right: Float, bottom: Float, color: Int) {
-        paint.color = color
-        page.canvas.drawRect(left, top, right, bottom, paint)
-    }
-    fun money(value: Long): String = "KSh ${integerFormat.format(value)}"
-    fun paymentLabel(method: String): String = when (method.lowercase(Locale.ROOT)) {
-        "mpesa" -> "M-Pesa"
-        "cash" -> "Cash"
-        else -> method.replaceFirstChar { it.uppercase(Locale.getDefault()) }.ifBlank { "Other" }
-    }
-    fun fittingText(value: String, maxWidth: Float, size: Float): String {
-        paint.textSize = size
-        paint.typeface = android.graphics.Typeface.DEFAULT
-        var result = value
-        while (result.isNotEmpty() && paint.measureText(result) > maxWidth) {
-            result = result.dropLast(1)
-        }
-        return if (result.length < value.length && result.isNotEmpty()) result.dropLast(1) + "…" else result
-    }
-    fun drawTableHeader() {
-        fillRect(36f, y, 559f, y + 25f, navy)
-        drawText("DATE / TIME", 44f, y + 16f, 7.5f, android.graphics.Color.WHITE, true)
-        drawText("PRODUCT / UNIT", 132f, y + 16f, 7.5f, android.graphics.Color.WHITE, true)
-        drawText("PAYMENT", 350f, y + 16f, 7.5f, android.graphics.Color.WHITE, true)
-        drawText("QTY", 432f, y + 16f, 7.5f, android.graphics.Color.WHITE, true, Paint.Align.RIGHT)
-        drawText("AMOUNT", 551f, y + 16f, 7.5f, android.graphics.Color.WHITE, true, Paint.Align.RIGHT)
-        y += 25f
-    }
-    fun drawFooter() {
-        drawRule(808f)
-        drawText("Generated by Counter POS · ${SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault()).format(Date())}", 36f, 824f, 7.5f, muted)
-        drawText("Page $pageNumber", 559f, 824f, 7.5f, muted, align = Paint.Align.RIGHT)
-    }
-    fun startDetailPage(continued: Boolean) {
-        pageNumber += 1
-        page = document.startPage(PdfDocument.PageInfo.Builder(595, 842, pageNumber).create())
-        y = 42f
-        drawText("COUNTER POS", 36f, y, 8f, accent, true)
-        drawText(if (continued) "$title · continued" else "TRANSACTION DETAIL", 36f, y + 23f, 15f, navy, true)
-        drawText("${formatReportDate(start)} — ${formatReportDate(end)}", 559f, y + 21f, 8f, muted, align = Paint.Align.RIGHT)
-        y += 38f
-        drawTableHeader()
-    }
-
-    y = 42f
-    drawText("COUNTER POS", 36f, y, 9f, accent, true)
-    drawText(title, 36f, y + 30f, 23f, navy, true)
-    drawText("Sales report · ${formatReportDate(start)} — ${formatReportDate(end)}", 36f, y + 49f, 9f, muted)
-    y += 70f
-    drawRule(y)
-    y += 21f
-    drawText("PAYMENT SUMMARY", 36f, y, 8f, accent, true)
-    y += 10f
-    val cardTop = y
-    val cardBottom = cardTop + 56f
-    val cardWidth = 166f
-    val cardGap = 9.5f
-    val summaryCards = listOf(
-        Triple("CASH SUBTOTAL", cashTotal, android.graphics.Color.rgb(237, 243, 241)),
-        Triple("M-PESA SUBTOTAL", mpesaTotal, android.graphics.Color.rgb(235, 241, 248)),
-        Triple("GRAND TOTAL", grandTotal, android.graphics.Color.rgb(225, 239, 234))
-    )
-    summaryCards.forEachIndexed { index, (label, total, background) ->
-        val left = 36f + index * (cardWidth + cardGap)
-        fillRect(left, cardTop, left + cardWidth, cardBottom, background)
-        drawText(label, left + 10f, cardTop + 18f, 7.5f, muted, true)
-        drawText(money(total), left + 10f, cardTop + 41f, 12f, navy, true)
-    }
-    y = cardBottom + 18f
-    drawText("Transactions: ${activeSales.size}", 36f, y, 8.5f, muted)
-    drawText("Units sold: ${activeSales.sumOf { it.quantity }}", 180f, y, 8.5f, muted)
-    if (otherTotal != 0L) drawText("Other payments: ${money(otherTotal)}", 335f, y, 8.5f, muted)
-    y += 18f
-    drawText("All active transactions are included so payment subtotals reconcile to the grand total.", 36f, y, 7.5f, muted)
-    y += 22f
-    drawTableHeader()
-
-    activeSales.forEachIndexed { index, sale ->
-        if (y + 39f > 795f) {
-            drawFooter()
-            document.finishPage(page)
-            startDetailPage(continued = true)
-        }
-        if (index % 2 == 1) fillRect(36f, y, 559f, y + 39f, soft)
-        drawText(dateTimeFormat.format(Date(sale.createdAt)), 44f, y + 16f, 7.5f, navy)
-        drawText(fittingText(sale.productName, 207f, 8.5f), 132f, y + 15f, 8.5f, navy, true)
-        val unitDetail = "${sale.quantity} × ${sale.unitName} @ ${money(sale.unitPriceKsh.toLong())}"
-        drawText(fittingText(unitDetail, 207f, 7.2f), 132f, y + 29f, 7.2f, muted)
-        drawText(fittingText(paymentLabel(sale.paymentMethod), 62f, 7.5f), 350f, y + 17f, 7.5f, navy)
-        drawText(sale.quantity.toString(), 432f, y + 17f, 8f, navy, align = Paint.Align.RIGHT)
-        drawText(money(sale.totalKsh.toLong()), 551f, y + 17f, 8f, navy, true, Paint.Align.RIGHT)
-        drawRule(y + 39f)
-        y += 39f
-    }
-
-    if (y + 58f > 795f) {
-        drawFooter()
-        document.finishPage(page)
-        startDetailPage(continued = true)
-    }
-    y += 15f
-    drawText("Cash subtotal", 395f, y, 8.5f, muted)
-    drawText(money(cashTotal), 551f, y, 8.5f, navy, true, Paint.Align.RIGHT)
-    y += 17f
-    drawText("M-Pesa subtotal", 395f, y, 8.5f, muted)
-    drawText(money(mpesaTotal), 551f, y, 8.5f, navy, true, Paint.Align.RIGHT)
-    if (otherTotal != 0L) {
-        y += 17f
-        drawText("Other payments", 395f, y, 8.5f, muted)
-        drawText(money(otherTotal), 551f, y, 8.5f, navy, true, Paint.Align.RIGHT)
-    }
-    y += 20f
-    drawRule(y)
-    y += 17f
-    drawText("GRAND TOTAL", 395f, y, 10f, accent, true)
-    drawText(money(grandTotal), 551f, y, 10f, accent, true, Paint.Align.RIGHT)
-    drawFooter()
-    document.finishPage(page)
-    val output = ByteArrayOutputStream()
-    document.writeTo(output)
-    document.close()
-    return output.toByteArray()
-}
 
 private fun sharePdf(context: android.content.Context, bytes: ByteArray, filename: String) {
     val directory = File(context.cacheDir, "shared_reports").apply { mkdirs() }
@@ -2680,9 +2178,10 @@ private fun ProductSellCard(
 
     Card(
         onClick = onClick,
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(12.dp)) {
@@ -2691,9 +2190,9 @@ private fun ProductSellCard(
                     .fillMaxWidth()
                     .height(122.dp)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .background(SerenityTokens.ThumbnailFrame)
             ) {
-                ProductThumbnail(product, Modifier.fillMaxSize().padding(5.dp))
+                ProductThumbnail(product, Modifier.fillMaxSize().padding(6.dp))
                 if (units.isNotEmpty() && units.all { it.stockUnitsPerSale == 0 }) {
                     Surface(
                         modifier = Modifier.align(Alignment.TopEnd).padding(7.dp),
@@ -2765,13 +2264,14 @@ private fun ProductSellCard(
                         product.suggestedPriceKsh > 0 -> "Suggested ${ksh(product.suggestedPriceKsh)}"
                         else -> "Price not set"
                     },
+                    fontFamily = SpaceGroteskFontFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
                     color = if (product.sellingPriceKsh > 0 || product.suggestedPriceKsh > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                 )
 
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(14.dp),
                     color = MaterialTheme.colorScheme.primaryContainer
                 ) {
                     Text(
@@ -2819,11 +2319,11 @@ private fun StockProductCard(
     val cardBorder = when {
         outOfStock -> BorderStroke(1.5.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.8f))
         lowStock -> BorderStroke(1.5.dp, MaterialTheme.colorScheme.secondary)
-        else -> null
+        else -> BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     }
 
     Card(
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = cardContainerColor),
         border = cardBorder,
         elevation = CardDefaults.cardElevation(defaultElevation = if (outOfStock || lowStock) 2.dp else 1.dp),
@@ -2843,9 +2343,9 @@ private fun StockProductCard(
                     product,
                     Modifier
                         .size(76.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(2.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(SerenityTokens.ThumbnailFrame)
+                        .padding(4.dp)
                         .clickable(enabled = canEditProducts, onClick = onChangePhoto)
                 )
                 if (canEditProducts) {
@@ -3087,8 +2587,9 @@ private fun CatalogProductCard(
     onAdd: () -> Unit
 ) {
     Card(
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(
             Modifier
@@ -3101,9 +2602,9 @@ private fun CatalogProductCard(
                 product,
                 Modifier
                     .size(60.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(2.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(SerenityTokens.ThumbnailFrame)
+                    .padding(3.dp)
             )
 
             Column(Modifier.weight(1f)) {
@@ -4584,67 +4085,6 @@ private fun StockIndicatorPill(
 }
 
 @Composable
-private fun SaleReceiptRow(sale: SaleEntity) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.primaryContainer,
-                modifier = Modifier.size(42.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        Icons.Default.LocalDrink,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-
-            Column(Modifier.weight(1f)) {
-                Text(sale.productName, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                Text(
-                    "${sale.quantity} × ${sale.unitName} @ ${ksh(sale.unitPriceKsh)} · ${formatSaleTime(sale.createdAt)}",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    when (sale.paymentMethod.lowercase(Locale.ROOT)) {
-                        "mpesa" -> "M-Pesa"
-                        "cash" -> "Cash"
-                        else -> sale.paymentMethod.replaceFirstChar { it.uppercase(Locale.getDefault()) }
-                    },
-                    color = if (sale.paymentMethod.equals("mpesa", ignoreCase = true)) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                if (sale.undone) {
-                    Text("REFUNDED / UNDONE", color = MaterialTheme.colorScheme.error, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-
-            Text(
-                ksh(sale.totalKsh),
-                fontWeight = FontWeight.Bold,
-                fontSize = 15.sp,
-                color = if (sale.undone) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary
-            )
-        }
-    }
-}
-
-@Composable
 internal fun ProductThumbnail(product: ProductEntity, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val imageId = remember(product.imageAssetName) {
@@ -4713,7 +4153,7 @@ internal fun ProductThumbnail(product: ProductEntity, modifier: Modifier = Modif
 }
 
 @Composable
-private fun EmptyStateMessage(message: String) {
+internal fun EmptyStateMessage(message: String) {
     Box(
         Modifier
             .fillMaxWidth()

@@ -38,18 +38,39 @@ class AdminBillingPresentationTest {
         )
     }
 
+    @Test
+    fun phoneDisplayFormatsOwnerAndFallbackMpesaNumbers() {
+        assertEquals("+254 712 345 678", business(status = "active", ownerPhone = "254712345678").displayPhoneLabel())
+        assertEquals("+254 712 345 678", business(status = "active", ownerPhone = "0712345678").displayPhoneLabel())
+        assertEquals("+254 722 111 222 (M-Pesa)", business(status = "active", paymentPhone = "254722111222").displayPhoneLabel())
+        assertEquals("No phone on file", business(status = "active").displayPhoneLabel())
+    }
+
+    @Test
+    fun businessTypeDistinguishesLiquorStoreFromClub() {
+        assertEquals(true, business(status = "active", businessType = "counter_seller").isLiquorStoreBusiness())
+        assertEquals(true, business(status = "active", businessType = "liquor_store").isLiquorStoreBusiness())
+        assertEquals("Liquor Store", business(status = "active", businessType = "counter_seller").businessTypeLabel())
+        assertEquals(false, business(status = "active", businessType = "big_club").isLiquorStoreBusiness())
+        assertEquals(false, business(status = "active", businessType = "club").isLiquorStoreBusiness())
+        assertEquals("Club", business(status = "active", businessType = "big_club").businessTypeLabel())
+    }
+
     private fun business(
         status: String,
         lifecycle: String = "active",
+        businessType: String = "big_club",
         receipt: String? = null,
         paidUntil: String? = null,
         paymentAt: String? = null,
-        locked: Boolean = false
+        locked: Boolean = false,
+        ownerPhone: String? = null,
+        paymentPhone: String? = null
     ) = AdminBusiness(
         shopId = "shop-1",
         shopName = "Sample Shop",
         status = lifecycle,
-        businessType = "big_club",
+        businessType = businessType,
         businessSize = "medium",
         featureFlags = emptySet(),
         ownerEmail = "owner@example.com",
@@ -65,6 +86,8 @@ class AdminBillingPresentationTest {
         subscriptionEndsAt = paidUntil,
         lastPaymentAt = paymentAt,
         lastPaymentReceipt = receipt,
-        paymentLockActive = locked
+        lastPaymentPhone = paymentPhone,
+        paymentLockActive = locked,
+        ownerPhone = ownerPhone
     )
 }

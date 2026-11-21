@@ -104,7 +104,8 @@ data class AdminBusiness(
     val paymentLockActive: Boolean = false,
     val paymentLockAmountKsh: Int = 0,
     val paymentLockReason: String? = null,
-    val paymentLockStartedAt: String? = null
+    val paymentLockStartedAt: String? = null,
+    val ownerPhone: String? = null
 )
 
 data class DarajaStkResponse(
@@ -191,6 +192,16 @@ internal fun shouldClearSessionForRefreshFailure(statusCode: Int, message: Strin
     return normalized.contains("refresh") && listOf(
         "invalid", "expired", "not found", "not_found", "already used", "already_used", "revoked", "invalid_grant"
     ).any(normalized::contains)
+}
+
+internal fun shouldFallbackFromApplyPosOperation(error: Throwable): Boolean {
+    if (error !is SupabaseApiException) return false
+    if (error is SupabaseUnauthorizedException) return false
+    if (error.statusCode == HttpURLConnection.HTTP_NOT_FOUND || error.statusCode == 300) return true
+    val msg = error.message.orEmpty().lowercase()
+    return msg.contains("could not find the function") ||
+        msg.contains("pgrst202") ||
+        (msg.contains("apply_pos_operation") && msg.contains("not found"))
 }
 
 class SupabaseRestClient(context: Context) {
@@ -683,6 +694,24 @@ class SupabaseRestClient(context: Context) {
         return ServiceCounter(row.optString("id", counterId), row.optString("name", name.trim()), row.optBoolean("active", true))
     }
 
+    suspend fun deleteServiceCounter(shopId: String, counterId: String): JSONObject {
+        return try {
+            rpcObjectOrEmpty(
+                "delete_service_counter",
+                JSONObject().put("_shop", shopId).put("_counter", counterId)
+            )
+        } catch (error: Exception) {
+            if (error is SupabaseApiException && error.statusCode == 404) {
+                patch(
+                    "service_counters?id=eq.$counterId&shop_id=eq.$shopId",
+                    JSONObject().put("active", false)
+                )
+            } else {
+                throw error
+            }
+        }
+    }
+
     suspend fun counterSalesReport(shopId: String, fromIso: String, toIso: String): List<CounterReportRow> = buildList {
         val rows = rpcArray("counter_sales_report", JSONObject().put("_shop", shopId).put("_from", fromIso).put("_to", toIso))
         for (index in 0 until rows.length()) rows.optJSONObject(index)?.let { row ->
@@ -903,8 +932,13 @@ class SupabaseRestClient(context: Context) {
                     .put("_kind", kind)
                     .put("_payload", payload)
             )
-        } catch (_: Exception) {
-            dispatchPosOperation(shopId, kind, payload)
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            if (shouldFallbackFromApplyPosOperation(error)) {
+                dispatchPosOperation(shopId, kind, payload)
+            } else {
+                throw error
+            }
         }
     }
 
@@ -1148,9 +1182,12 @@ class SupabaseRestClient(context: Context) {
 
     suspend fun adminBusinesses(): List<AdminBusiness> {
         val rows = rpcArray("admin_list_businesses", JSONObject())
-        return buildList {
+        val parsed = buildList {
             for (index in 0 until rows.length()) {
                 rows.optJSONObject(index)?.let { row ->
+                    val rpcPhone = row.optNullableString("owner_phone")
+                        ?: row.optNullableString("phone")
+                        ?: row.optNullableString("ownerPhone")
                     add(
                         AdminBusiness(
                             shopId = row.optString("shop_id"),
@@ -1181,11 +1218,54 @@ class SupabaseRestClient(context: Context) {
                             paymentLockActive = row.optBoolean("payment_lock_active", false),
                             paymentLockAmountKsh = row.optInt("payment_lock_amount_ksh", 0),
                             paymentLockReason = row.optNullableString("payment_lock_reason"),
-                            paymentLockStartedAt = row.optNullableString("payment_lock_started_at")
+                            paymentLockStartedAt = row.optNullableString("payment_lock_started_at"),
+                            ownerPhone = rpcPhone
                         )
                     )
                 }
             }
+        }
+        // Enrich owner_phone directly from public.shops if the RPC signature has not yet added owner_phone
+        if (parsed.any { it.ownerPhone.isNullOrBlank() }) {
+            val shopPhones = runCatching {
+                val shopRows = query("shops?select=id,owner_phone")
+                buildMap {
+                    for (index in 0 until shopRows.length()) {
+                        shopRows.optJSONObject(index)?.let { shop ->
+                            val id = shop.optNullableString("id")
+                            val phone = shop.optNullableString("owner_phone")
+                            if (id != null && phone != null) put(id, phone)
+                        }
+                    }
+                }
+            }.getOrNull().orEmpty()
+            if (shopPhones.isNotEmpty()) {
+                return parsed.map { business ->
+                    if (business.ownerPhone.isNullOrBlank()) {
+                        business.copy(ownerPhone = shopPhones[business.shopId] ?: business.lastPaymentPhone)
+                    } else {
+                        business
+                    }
+                }
+            }
+        }
+        return parsed
+    }
+
+    suspend fun adminDeleteBusiness(shopId: String): JSONObject {
+        return try {
+            rpcObjectOrEmpty(
+                "admin_delete_business",
+                JSONObject().put("p_shop_id", shopId)
+            )
+        } catch (error: Exception) {
+            if (error is SupabaseApiException && error.statusCode == 404) {
+                throw IOException(
+                    "Delete business is not enabled on the Supabase backend yet. Apply the latest SQL migration (admin_delete_business) and try again.",
+                    error
+                )
+            }
+            throw error
         }
     }
 
@@ -1219,6 +1299,30 @@ class SupabaseRestClient(context: Context) {
                 .putNullable("_reason", reason)
         )
         return adminBusinesses().firstOrNull { it.shopId == shopId }
+    }
+
+    suspend fun adminSetBusinessType(
+        shopId: String,
+        businessType: String,
+        counterInventoryMode: String? = null
+    ): JSONObject {
+        val payload = JSONObject()
+            .put("p_shop_id", shopId)
+            .put("p_business_type", businessType)
+        if (!counterInventoryMode.isNullOrBlank()) {
+            payload.put("p_counter_inventory_mode", counterInventoryMode)
+        }
+        return try {
+            rpcObjectOrEmpty("admin_set_business_type", payload)
+        } catch (error: Exception) {
+            if (error is SupabaseApiException && error.statusCode == 404) {
+                throw IOException(
+                    "Club elevation is not enabled on the Supabase backend yet. Apply the latest SQL migration (admin_set_business_type) and try again.",
+                    error
+                )
+            }
+            throw error
+        }
     }
 
     suspend fun adminCreateBusiness(

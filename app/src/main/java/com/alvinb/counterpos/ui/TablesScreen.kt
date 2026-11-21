@@ -1,9 +1,13 @@
 package com.alvinb.counterpos.ui
 
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.graphics.Color as AndroidColor
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
+import androidx.core.content.res.ResourcesCompat
+import com.alvinb.counterpos.R
 import android.os.Bundle
 import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
@@ -14,9 +18,11 @@ import android.print.PrintDocumentInfo
 import android.print.PrintManager
 import android.print.pdf.PrintedPdfDocument
 import java.io.FileOutputStream
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,6 +33,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -68,7 +75,6 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -81,6 +87,7 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -90,10 +97,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -135,10 +148,13 @@ internal fun TablesScreen(
     businessName: String = "Counter POS",
     isRefreshingTables: Boolean = false,
     pendingSettlementTableIds: Set<String> = emptySet(),
-    blockedSettlementTableIds: Set<String> = emptySet()
+    blockedSettlementTableIds: Set<String> = emptySet(),
+    searchQuery: String = "",
+    onClearSearch: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val selected = tables.firstOrNull { it.id == selectedTableId }
+    val isDarkSurface = MaterialTheme.colorScheme.background.luminance() < 0.5f
 
     // Dialog & sheet states
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -151,7 +167,6 @@ internal fun TablesScreen(
     var printReceiptOnSettlement by remember { mutableStateOf(true) }
     var tableToDelete by remember { mutableStateOf<DiningTableEntity?>(null) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
-    var tableSearchQuery by remember { mutableStateOf("") }
     var tableStatusFilter by remember { mutableStateOf("all") } // "all", "open", "available"
     var showReceiptPreviewDialog by remember { mutableStateOf(false) }
     var receiptOrdersToPreview by remember { mutableStateOf<List<TableOrderEntity>>(emptyList()) }
@@ -834,316 +849,504 @@ internal fun TablesScreen(
     // -----------------------------------------------------------------
     if (selected == null) {
         // =============================================================
-        // VIEW A: SERVICE FLOOR OVERVIEW (TABLE LIST / GRID)
+        // VIEW A: SERENITY FLOOR CANVAS + QUICK-BILL PREVIEW SHEET
         // =============================================================
+        val activeCount = tables.count { t -> orders.any { it.tableId == t.id && it.settlementId == null } }
+        val activeFloorTotal = orders.filter { it.settlementId == null }.sumOf { it.totalKsh.toLong() }
+        val openBillsCount = activeCount
+        val availableCount = (tables.size - openBillsCount).coerceAtLeast(0)
+
+        val filteredTables = remember(tables, orders, searchQuery, tableStatusFilter) {
+            val cleanQuery = searchQuery.trim()
+            tables.filter { table ->
+                val matchesQuery = cleanQuery.isBlank() || table.name.contains(cleanQuery, ignoreCase = true)
+                val hasOpen = orders.any { it.tableId == table.id && it.settlementId == null }
+                val matchesStatus = when (tableStatusFilter) {
+                    "open" -> hasOpen
+                    "available" -> !hasOpen
+                    else -> true
+                }
+                matchesQuery && matchesStatus
+            }
+        }
+
+        val floorSurfaceColor = if (isDarkSurface) SerenityTokens.FloorSurfaceDark else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.52f)
+        val dotColor = MaterialTheme.colorScheme.outlineVariant
+        val freeCardColor = if (isDarkSurface) SerenityTokens.CardSurfaceDark else MaterialTheme.colorScheme.surface
+        val freeDashColor = if (isDarkSurface) SerenityTokens.DashedFreeBorderDark else MaterialTheme.colorScheme.outline
+        val freePillColor = if (isDarkSurface) SerenityTokens.FreePillDark else MaterialTheme.colorScheme.surfaceVariant
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .padding(horizontal = 16.dp, vertical = 6.dp)
         ) {
-            // Header: Title, Floor Summary, Add Table
+            // Header: "Floor", Occupancy total, Refresh, + Table pill
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Service Floor", fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
-                    val activeCount = tables.count { t -> orders.any { it.tableId == t.id && it.settlementId == null } }
-                    val activeFloorTotal = orders.filter { it.settlementId == null }.sumOf { it.totalKsh.toLong() }
                     Text(
-                        if (activeCount > 0) "$activeCount occupied · Floor: ${ksh(activeFloorTotal)}" else "${tables.size} tables · All available",
+                        text = "Floor",
+                        fontSize = 28.sp,
+                        fontFamily = SpaceGroteskFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = (-0.5).sp,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = if (activeCount > 0) "$activeCount occupied · ${ksh(activeFloorTotal)} on open bills" else "${tables.size} tables · All available",
                         fontSize = 13.sp,
                         color = if (activeCount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = if (activeCount > 0) FontWeight.SemiBold else FontWeight.Normal
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
-                IconButton(onClick = onRefresh, modifier = Modifier.size(40.dp).testTag("tables_refresh_button")) {
+                IconButton(
+                    onClick = onRefresh,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("tables_refresh_button")
+                ) {
                     if (isRefreshingTables) {
-                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.primary)
                     } else {
                         Icon(Icons.Default.Refresh, contentDescription = "Refresh floor", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                Spacer(Modifier.width(6.dp))
                 if (canManageTables) {
+                    Spacer(Modifier.width(4.dp))
                     Button(
                         onClick = { newTableName = ""; showCreateDialog = true },
                         enabled = !isCreatingTable,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.testTag("add_table_button")
+                        shape = RoundedCornerShape(22.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                        modifier = Modifier
+                            .height(44.dp)
+                            .testTag("add_table_button")
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Text("Add table", modifier = Modifier.padding(start = 4.dp), fontWeight = FontWeight.Bold)
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(17.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Table", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
                 }
             }
 
-            // Search Bar
-            if (tables.size > 2) {
-                OutlinedTextField(
-                    value = tableSearchQuery,
-                    onValueChange = { tableSearchQuery = it },
-                    placeholder = { Text("Search tables...", fontSize = 13.sp) },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp)
-                        .testTag("table_search_input")
-                )
+            if (searchQuery.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                    modifier = Modifier.fillMaxWidth().testTag("table_active_search_banner")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Search,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "Table search: \"$searchQuery\" (${filteredTables.size})",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        TextButton(
+                            onClick = onClearSearch,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.testTag("table_clear_search_button")
+                        ) {
+                            Text("Clear", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
             }
 
-            // Status Filter Tabs
+            // Segmented Pill Filter Bar (All · Open bills · Available)
             if (tables.isNotEmpty()) {
-                val openBillsCount = tables.count { t -> orders.any { it.tableId == t.id && it.settlementId == null } }
-                val availableCount = tables.size - openBillsCount
-
-                Row(
+                Spacer(Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(22.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 8.dp)
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        .height(44.dp)
                 ) {
-                    FilterChip(
-                        selected = tableStatusFilter == "all",
-                        onClick = { tableStatusFilter = "all" },
-                        label = { Text("All (${tables.size})") }
-                    )
-                    FilterChip(
-                        selected = tableStatusFilter == "open",
-                        onClick = { tableStatusFilter = "open" },
-                        label = { Text("Open Bills ($openBillsCount)") },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                            selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    )
-                    FilterChip(
-                        selected = tableStatusFilter == "available",
-                        onClick = { tableStatusFilter = "available" },
-                        label = { Text("Available ($availableCount)") }
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        listOf(
+                            Triple("all", "All · ${tables.size}", "filter_all_tables"),
+                            Triple("open", "Open bills · $openBillsCount", "filter_open_tables"),
+                            Triple("available", "Available · $availableCount", "filter_available_tables")
+                        ).forEach { (key, label, tag) ->
+                            val isSelected = tableStatusFilter == key
+                            Surface(
+                                onClick = { tableStatusFilter = key },
+                                shape = RoundedCornerShape(18.dp),
+                                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .testTag(tag)
+                            ) {
+                                Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 6.dp)) {
+                                    Text(
+                                        text = label,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
             if (!actionError.isNullOrBlank() && !showCreateDialog) {
-                Text(actionError, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(vertical = 4.dp))
+                Text(actionError, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
             }
 
-            val filteredTables = remember(tables, orders, tableSearchQuery, tableStatusFilter) {
-                tables.filter { table ->
-                    val matchesQuery = tableSearchQuery.isBlank() || table.name.contains(tableSearchQuery, ignoreCase = true)
-                    val hasOpen = orders.any { it.tableId == table.id && it.settlementId == null }
-                    val matchesStatus = when (tableStatusFilter) {
-                        "open" -> hasOpen
-                        "available" -> !hasOpen
-                        else -> true
-                    }
-                    matchesQuery && matchesStatus
-                }
-            }
+            Spacer(Modifier.height(10.dp))
 
-            if (tables.isEmpty() && isRefreshingTables) {
-                Box(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator()
-                        Text("Checking for tables…", modifier = Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            } else if (tables.isEmpty()) {
-                // Empty Floor State
+            // Dot-Grid Architectural Floor Canvas
+            Surface(
+                shape = RoundedCornerShape(28.dp),
+                color = floorSurfaceColor,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
                 Box(
                     modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    contentAlignment = Alignment.Center
+                        .fillMaxSize()
+                        .drawBehind {
+                            val step = 22.dp.toPx()
+                            val dotRadius = 1.15.dp.toPx()
+                            var x = step * 0.7f
+                            while (x < size.width) {
+                                var y = step * 0.7f
+                                while (y < size.height) {
+                                    drawCircle(color = dotColor, radius = dotRadius, center = Offset(x, y))
+                                    y += step
+                                }
+                                x += step
+                            }
+                        }
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(24.dp)
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.size(76.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    Icons.Default.TableRestaurant,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(38.dp)
+                    if (tables.isEmpty() && isRefreshingTables) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                                Text(
+                                    "Checking for tables…",
+                                    modifier = Modifier.padding(top = 12.dp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
-                        Spacer(Modifier.height(16.dp))
-                        Text("No Tables on the Floor", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                        Text(
-                            "Create dining, bar, or VIP tables to start taking orders, running guest checks, and printing receipts.",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-                        )
-                        Spacer(Modifier.height(16.dp))
-                        if (canManageTables) {
-                            Button(
-                                onClick = { newTableName = ""; showCreateDialog = true },
-                                enabled = !isCreatingTable,
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.testTag("empty_add_table_button")
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(20.dp))
-                                Text("Add First Table", modifier = Modifier.padding(start = 6.dp), fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-                }
-            } else if (filteredTables.isEmpty()) {
-                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Text("No tables match your filter.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            } else {
-                // Responsive Grid of Table Cards
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 160.dp),
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentPadding = PaddingValues(top = 4.dp, bottom = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(filteredTables, key = { it.id }) { table ->
-                        val lines = orders.filter { it.tableId == table.id && it.settlementId == null }
-                        val total = lines.sumOf { it.totalKsh.toLong() }
-                        val hasOrders = lines.isNotEmpty()
-                        val settlementPending = table.id in pendingSettlementTableIds
-                        val settlementBlocked = table.id in blockedSettlementTableIds
-
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onOpenTable(table) }
-                                .testTag("table_card_${table.id}"),
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (hasOrders) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surface
-                            ),
-                            shape = RoundedCornerShape(16.dp),
-                            border = if (hasOrders) androidx.compose.foundation.BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                        ) {
+                    } else if (tables.isEmpty()) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp)
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.padding(24.dp)
                             ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    modifier = Modifier.size(76.dp)
                                 ) {
-                                    // Status pill
-                                    Surface(
-                                        shape = RoundedCornerShape(6.dp),
-                                        color = when {
-                                            settlementBlocked -> MaterialTheme.colorScheme.errorContainer
-                                            settlementPending -> MaterialTheme.colorScheme.tertiaryContainer
-                                            hasOrders -> MaterialTheme.colorScheme.primary
-                                            else -> MaterialTheme.colorScheme.surfaceVariant
-                                        }
-                                    ) {
-                                        Text(
-                                            when {
-                                                settlementBlocked -> "SYNC ISSUE"
-                                                settlementPending -> "SYNCING"
-                                                hasOrders -> "ACTIVE"
-                                                else -> "FREE"
-                                            },
-                                            color = when {
-                                                settlementBlocked -> MaterialTheme.colorScheme.onErrorContainer
-                                                settlementPending -> MaterialTheme.colorScheme.onTertiaryContainer
-                                                hasOrders -> MaterialTheme.colorScheme.onPrimary
-                                                else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                            },
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Black,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            Icons.Default.TableRestaurant,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(38.dp)
                                         )
                                     }
+                                }
+                                Spacer(Modifier.height(16.dp))
+                                Text("No Tables on the Floor", fontSize = 20.sp, fontFamily = SpaceGroteskFontFamily, fontWeight = FontWeight.Bold)
+                                Text(
+                                    "Create dining, bar, or VIP tables to start taking orders, running guest checks, and printing receipts.",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                                )
+                                Spacer(Modifier.height(14.dp))
+                                if (canManageTables) {
+                                    Button(
+                                        onClick = { newTableName = ""; showCreateDialog = true },
+                                        enabled = !isCreatingTable,
+                                        shape = RoundedCornerShape(22.dp),
+                                        modifier = Modifier.height(48.dp).testTag("empty_add_table_button")
+                                    ) {
+                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(20.dp))
+                                        Text("Add First Table", modifier = Modifier.padding(start = 6.dp), fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    } else if (filteredTables.isEmpty()) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.padding(24.dp)
+                            ) {
+                                Text(
+                                    text = if (searchQuery.isNotBlank()) "No tables match \"$searchQuery\"." else "No tables match your filter.",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center
+                                )
+                                if (searchQuery.isNotBlank()) {
+                                    OutlinedButton(onClick = onClearSearch, shape = RoundedCornerShape(18.dp)) {
+                                        Text("Clear search", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        LazyVerticalGrid(
+                            columns = GridCells.Adaptive(minSize = 148.dp),
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(14.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            items(filteredTables, key = { it.id }) { table ->
+                                val lines = orders.filter { it.tableId == table.id && it.settlementId == null }
+                                val total = lines.sumOf { it.totalKsh.toLong() }
+                                val hasOrders = lines.isNotEmpty()
+                                val settlementPending = table.id in pendingSettlementTableIds
+                                val settlementBlocked = table.id in blockedSettlementTableIds
 
-                                    if (!hasOrders && canDeleteTables) {
-                                        IconButton(
-                                            onClick = {
-                                                tableToDelete = table
-                                                showDeleteConfirmDialog = true
-                                            },
-                                            modifier = Modifier
-                                                .size(28.dp)
-                                                .testTag("delete_table_${table.id}")
+                                if (hasOrders) {
+                                    val nodeBorderColor = when {
+                                        settlementBlocked -> MaterialTheme.colorScheme.error
+                                        settlementPending -> MaterialTheme.colorScheme.secondary
+                                        else -> MaterialTheme.colorScheme.primary
+                                    }
+                                    val innerGlowBrush = if (isDarkSurface) {
+                                        Brush.radialGradient(
+                                            colors = listOf(SerenityTokens.GlowNodeInner, SerenityTokens.GlowDark)
+                                        )
+                                    } else {
+                                        Brush.radialGradient(
+                                            colors = listOf(
+                                                MaterialTheme.colorScheme.primaryContainer,
+                                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                                            )
+                                        )
+                                    }
+                                    val haloColor = nodeBorderColor.copy(alpha = 0.14f)
+
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .aspectRatio(1f)
+                                            .clip(CircleShape)
+                                            .drawBehind {
+                                                drawCircle(color = haloColor, radius = size.minDimension * 0.5f)
+                                            }
+                                            .padding(6.dp)
+                                            .clip(CircleShape)
+                                            .background(innerGlowBrush)
+                                            .border(
+                                                width = 2.dp,
+                                                color = nodeBorderColor,
+                                                shape = CircleShape
+                                            )
+                                            .clickable { onOpenTable(table) }
+                                            .testTag("table_card_${table.id}"),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                                            modifier = Modifier.padding(10.dp)
                                         ) {
-                                            Icon(
-                                                Icons.Default.DeleteOutline,
-                                                contentDescription = "Delete ${table.name}",
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                                modifier = Modifier.size(16.dp)
+                                            Surface(
+                                                shape = RoundedCornerShape(99.dp),
+                                                color = when {
+                                                    settlementBlocked -> MaterialTheme.colorScheme.error
+                                                    settlementPending -> MaterialTheme.colorScheme.secondary
+                                                    else -> MaterialTheme.colorScheme.primary
+                                                }
+                                            ) {
+                                                Text(
+                                                    text = when {
+                                                        settlementBlocked -> "SYNC ISSUE"
+                                                        settlementPending -> "SYNCING"
+                                                        else -> "ACTIVE"
+                                                    },
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.Black,
+                                                    letterSpacing = 0.8.sp,
+                                                    color = when {
+                                                        settlementBlocked -> MaterialTheme.colorScheme.onError
+                                                        settlementPending -> MaterialTheme.colorScheme.onSecondary
+                                                        else -> MaterialTheme.colorScheme.onPrimary
+                                                    },
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                                )
+                                            }
+
+                                            Text(
+                                                text = table.name,
+                                                fontFamily = SpaceGroteskFontFamily,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 17.sp,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                textAlign = TextAlign.Center
+                                            )
+
+                                            Text(
+                                                text = ksh(total),
+                                                fontFamily = SpaceGroteskFontFamily,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 15.sp,
+                                                color = nodeBorderColor,
+                                                maxLines = 1
+                                            )
+
+                                            Text(
+                                                text = "${lines.size} item${if (lines.size == 1) "" else "s"}",
+                                                fontSize = 10.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
                                     }
-                                }
-
-                                Spacer(Modifier.height(8.dp))
-
-                                // Table Name
-                                Text(
-                                    table.name,
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-
-                                Spacer(Modifier.height(4.dp))
-
-                                if (hasOrders) {
-                                    // Running Bill Amount
-                                    Text(
-                                        ksh(total),
-                                        fontSize = 18.sp,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    Text(
-                                        "${lines.size} item${if (lines.size == 1) "" else "s"}",
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
                                 } else {
-                                    Text(
-                                        "Ready for guests",
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Spacer(Modifier.height(18.dp))
-                                }
+                                    // Free Table: Dashed Rounded-Rectangle Card with Warm Amber Open CTA
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .aspectRatio(1f)
+                                            .padding(4.dp)
+                                            .clip(RoundedCornerShape(24.dp))
+                                            .background(freeCardColor)
+                                            .drawBehind {
+                                                val strokeWidth = 1.5.dp.toPx()
+                                                val dash = PathEffect.dashPathEffect(floatArrayOf(12f, 10f), 0f)
+                                                drawRoundRect(
+                                                    color = freeDashColor,
+                                                    style = Stroke(width = strokeWidth, pathEffect = dash),
+                                                    cornerRadius = CornerRadius(24.dp.toPx(), 24.dp.toPx())
+                                                )
+                                            }
+                                            .clickable { onOpenTable(table) }
+                                            .padding(12.dp)
+                                            .testTag("table_card_${table.id}")
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.fillMaxSize(),
+                                            verticalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(99.dp),
+                                                    color = freePillColor
+                                                ) {
+                                                    Text(
+                                                        text = "FREE",
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        letterSpacing = 0.8.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                                    )
+                                                }
+                                                if (canDeleteTables) {
+                                                    IconButton(
+                                                        onClick = {
+                                                            tableToDelete = table
+                                                            showDeleteConfirmDialog = true
+                                                        },
+                                                        modifier = Modifier
+                                                            .size(32.dp)
+                                                            .testTag("delete_table_${table.id}")
+                                                    ) {
+                                                        Icon(
+                                                            Icons.Default.DeleteOutline,
+                                                            contentDescription = "Delete ${table.name}",
+                                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
 
-                                Spacer(Modifier.height(10.dp))
+                                            Column {
+                                                Text(
+                                                    text = table.name,
+                                                    fontFamily = SpaceGroteskFontFamily,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 17.sp,
+                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    text = "Ready for guests",
+                                                    fontSize = 11.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
 
-                                // Action Button
-                                Button(
-                                    onClick = { onOpenTable(table) },
-                                    modifier = Modifier.fillMaxWidth().height(36.dp),
-                                    shape = RoundedCornerShape(8.dp),
-                                    colors = if (hasOrders) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary) else ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer),
-                                    contentPadding = PaddingValues(horizontal = 8.dp)
-                                ) {
-                                    Text(
-                                        if (hasOrders) "Manage Check" else "+ Open Table",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
+                                            Button(
+                                                onClick = { onOpenTable(table) },
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(34.dp),
+                                                shape = RoundedCornerShape(17.dp),
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = MaterialTheme.colorScheme.secondary,
+                                                    contentColor = MaterialTheme.colorScheme.onSecondary
+                                                ),
+                                                contentPadding = PaddingValues(horizontal = 8.dp)
+                                            ) {
+                                                Text(
+                                                    text = "+ Open table",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1153,8 +1356,10 @@ internal fun TablesScreen(
         }
     } else {
         // =============================================================
-        // VIEW B: TABLE CHECK DETAIL (MANAGE BILL & PRINT RECEIPT)
+        // VIEW B: TABLE CHECK DETAIL (SERENITY STYLING + FULL CONTROLS)
         // =============================================================
+        BackHandler(enabled = true) { onBackToTables() }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -1165,11 +1370,18 @@ internal fun TablesScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onBackToTables, modifier = Modifier.testTag("back_to_tables_button")) {
+                IconButton(onClick = onBackToTables, modifier = Modifier.minimumInteractiveComponentSize().testTag("back_to_tables_button")) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to tables")
                 }
                 Column(Modifier.weight(1f)) {
-                    Text(selected.name, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        selected.name,
+                        fontSize = 21.sp,
+                        fontFamily = SpaceGroteskFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Text(
                         if (currentOrders.isNotEmpty()) "${currentOrders.size} active item${if (currentOrders.size == 1) "" else "s"} · ${ksh(tableTotal)}" else "Table is available",
                         fontSize = 12.sp,
@@ -1180,10 +1392,10 @@ internal fun TablesScreen(
 
                 // Table switcher previous / next
                 if (tables.size > 1) {
-                    IconButton(onClick = { onNextTable(-1) }, modifier = Modifier.testTag("prev_table_button")) {
+                    IconButton(onClick = { onNextTable(-1) }, modifier = Modifier.minimumInteractiveComponentSize().testTag("prev_table_button")) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous table", modifier = Modifier.size(18.dp))
                     }
-                    IconButton(onClick = { onNextTable(1) }, modifier = Modifier.testTag("next_table_button")) {
+                    IconButton(onClick = { onNextTable(1) }, modifier = Modifier.minimumInteractiveComponentSize().testTag("next_table_button")) {
                         Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next table", modifier = Modifier.size(18.dp))
                     }
                 }
@@ -1196,7 +1408,7 @@ internal fun TablesScreen(
                         showReceiptPreviewDialog = true
                     },
                     enabled = currentOrders.isNotEmpty(),
-                    modifier = Modifier.testTag("print_table_receipt_button")
+                    modifier = Modifier.minimumInteractiveComponentSize().testTag("print_table_receipt_button")
                 ) {
                     Icon(
                         Icons.AutoMirrored.Filled.ReceiptLong,
@@ -1212,7 +1424,7 @@ internal fun TablesScreen(
                             tableToDelete = selected
                             showDeleteConfirmDialog = true
                         },
-                        modifier = Modifier.testTag("delete_current_table_button")
+                        modifier = Modifier.minimumInteractiveComponentSize().testTag("delete_current_table_button")
                     ) {
                         Icon(
                             Icons.Default.DeleteOutline,
@@ -1251,15 +1463,15 @@ internal fun TablesScreen(
 
                 if (canManageTables) {
                     Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
                         modifier = Modifier
                             .clickable { newTableName = ""; showCreateDialog = true }
                             .padding(horizontal = 4.dp, vertical = 2.dp)
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
                         ) {
                             Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
                             Text("New", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 2.dp))
@@ -1271,9 +1483,11 @@ internal fun TablesScreen(
             // Active Bill vs Settled Receipts Tabs
             TabRow(
                 selectedTabIndex = tableDetailTab,
+                containerColor = MaterialTheme.colorScheme.surface,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 4.dp)
+                    .clip(RoundedCornerShape(14.dp))
             ) {
                 Tab(
                     selected = tableDetailTab == 0,
@@ -1292,9 +1506,6 @@ internal fun TablesScreen(
             }
 
             if (tableDetailTab == 0) {
-                // =====================================================
-                // ACTIVE RUNNING CHECK TAB
-                // =====================================================
                 if (currentOrders.isEmpty()) {
                     Box(
                         modifier = Modifier
@@ -1313,7 +1524,7 @@ internal fun TablesScreen(
                                 modifier = Modifier.size(48.dp)
                             )
                             Spacer(Modifier.height(10.dp))
-                            Text("No Items on This Table", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                            Text("No Items on This Table", fontSize = 17.sp, fontFamily = SpaceGroteskFontFamily, fontWeight = FontWeight.Bold)
                             Text(
                                 "Tap 'Add item' or 'Scan barcode' below to start the guest check.",
                                 fontSize = 13.sp,
@@ -1329,13 +1540,14 @@ internal fun TablesScreen(
                             .weight(1f)
                             .fillMaxWidth(),
                         contentPadding = PaddingValues(vertical = 6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(currentOrders, key = { it.id }) { line ->
                             val product = productsByCode[line.catalogCode]
                             Card(
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                shape = RoundedCornerShape(12.dp)
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                shape = RoundedCornerShape(16.dp)
                             ) {
                                 Row(
                                     modifier = Modifier
@@ -1343,8 +1555,8 @@ internal fun TablesScreen(
                                         .padding(horizontal = 12.dp, vertical = 10.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    TableProductThumbnail(product = product, modifier = Modifier.size(42.dp))
-                                    Spacer(Modifier.width(10.dp))
+                                    TableProductThumbnail(product = product, modifier = Modifier.size(46.dp))
+                                    Spacer(Modifier.width(12.dp))
                                     Column(Modifier.weight(1f)) {
                                         Text(line.productName, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         val counterLabel = if (showCounterLabels) line.counterName?.takeIf { it.isNotBlank() } else null
@@ -1360,38 +1572,45 @@ internal fun TablesScreen(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                         if (attribution.isNotBlank()) {
-                                            Text(attribution, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                                            Text(attribution, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f))
                                         }
                                     }
-                                    Text(ksh(line.totalKsh), fontWeight = FontWeight.Black, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
+                                    Text(
+                                        ksh(line.totalKsh),
+                                        fontFamily = SpaceGroteskFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 16.sp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
                                 }
                             }
                         }
                     }
                 }
 
-                // Unified Compact Footer: Running Total & Actions
+                // Unified Compact Footer: Running Total & Pill Actions
                 Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    shape = RoundedCornerShape(22.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 4.dp, bottom = 4.dp)
+                        .padding(top = 6.dp, bottom = 4.dp)
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Check Total", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Total due", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(
                                 ksh(tableTotal),
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Black,
+                                fontSize = 20.sp,
+                                fontFamily = SpaceGroteskFontFamily,
+                                fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
                             )
                             Text(
@@ -1406,18 +1625,18 @@ internal fun TablesScreen(
                         ) {
                             OutlinedButton(
                                 onClick = onScanProduct,
-                                shape = RoundedCornerShape(10.dp),
+                                shape = RoundedCornerShape(20.dp),
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                                modifier = Modifier.testTag("scan_barcode_table_button")
+                                modifier = Modifier.height(42.dp).testTag("scan_barcode_table_button")
                             ) {
                                 Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Text("Scan", fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp))
                             }
                             Button(
                                 onClick = { productQuery = ""; showProductPicker = true },
-                                shape = RoundedCornerShape(10.dp),
+                                shape = RoundedCornerShape(20.dp),
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                modifier = Modifier.testTag("add_product_to_table_button")
+                                modifier = Modifier.height(42.dp).testTag("add_product_to_table_button")
                             ) {
                                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Text("Add Item", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp))
@@ -1427,11 +1646,14 @@ internal fun TablesScreen(
                             if (canSettleTables && currentOrders.isNotEmpty()) {
                                 Button(
                                     onClick = { selectedPaymentMethod = "cash"; showSettlementDialog = true },
-                                    shape = RoundedCornerShape(10.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                                    shape = RoundedCornerShape(20.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.secondary,
+                                        contentColor = MaterialTheme.colorScheme.onSecondary
+                                    ),
                                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                                     enabled = !isSettlingTable && !settlementPending && !settlementBlocked,
-                                    modifier = Modifier.testTag("settle_bill_button")
+                                    modifier = Modifier.height(42.dp).testTag("settle_bill_button")
                                 ) {
                                     if (isSettlingTable) {
                                         CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
@@ -1449,9 +1671,7 @@ internal fun TablesScreen(
                     }
                 }
             } else {
-                // =====================================================
                 // PAST SETTLED RECEIPTS TAB (RE-PRINT HISTORIC RECEIPTS)
-                // =====================================================
                 val groupedSettled = remember(settledOrders) {
                     settledOrders.groupBy { it.settlementId ?: "settled_${it.servedAt}" }
                 }
@@ -1483,8 +1703,9 @@ internal fun TablesScreen(
                             val settleTime = groupOrders.firstOrNull()?.servedAt ?: System.currentTimeMillis()
 
                             Card(
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                                shape = RoundedCornerShape(12.dp)
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                shape = RoundedCornerShape(16.dp)
                             ) {
                                 Column(
                                     modifier = Modifier
@@ -1500,12 +1721,17 @@ internal fun TablesScreen(
                                             Text("Settled Check", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                             Text(SimpleDateFormat("h:mm a · dd MMM", Locale.getDefault()).format(Date(settleTime)), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
-                                        Text(ksh(groupTotal), fontWeight = FontWeight.Black, fontSize = 18.sp, color = MaterialTheme.colorScheme.primary)
+                                        Text(
+                                            ksh(groupTotal),
+                                            fontFamily = SpaceGroteskFontFamily,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 18.sp,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
                                     }
 
                                     Spacer(Modifier.height(8.dp))
 
-                                    // Item summary
                                     groupOrders.take(3).forEach { order ->
                                         Text(
                                             "• ${order.quantity} × ${order.productName} (${ksh(order.totalKsh)})",
@@ -1531,7 +1757,7 @@ internal fun TablesScreen(
                                                 receiptPaymentMethod = "PAID"
                                                 showReceiptPreviewDialog = true
                                             },
-                                            shape = RoundedCornerShape(8.dp)
+                                            shape = RoundedCornerShape(20.dp)
                                         ) {
                                             Icon(Icons.Default.Print, contentDescription = null, modifier = Modifier.size(16.dp))
                                             Text("View & Print Receipt", modifier = Modifier.padding(start = 4.dp), fontSize = 12.sp)
@@ -1551,8 +1777,9 @@ internal fun TablesScreen(
 private fun TableProductThumbnail(product: ProductEntity?, modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(9.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant
+        shape = RoundedCornerShape(11.dp),
+        color = SerenityTokens.ThumbnailFrame,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Box(Modifier.fillMaxSize().padding(3.dp), contentAlignment = Alignment.Center) {
             if (product != null) {
@@ -1561,7 +1788,7 @@ private fun TableProductThumbnail(product: ProductEntity?, modifier: Modifier = 
                 Icon(
                     Icons.Default.Inventory2,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    tint = Color(0xFF475569),
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -1622,127 +1849,157 @@ private class TableReceiptPrintAdapter(
 
         val canvas = page.canvas
         val width = page.info.pageWidth.toFloat()
-        val margin = 28f
+        val margin = 24f
 
-        val textPaint = Paint().apply {
-            color = AndroidColor.BLACK
-            textSize = 10f
-            isAntiAlias = true
+        val deepForest = AndroidColor.rgb(11, 46, 36)
+        val emerald = AndroidColor.rgb(8, 127, 91)
+        val mint = AndroidColor.rgb(94, 230, 176)
+        val mintSoft = AndroidColor.rgb(231, 248, 241)
+        val amberSoft = AndroidColor.rgb(255, 246, 229)
+        val amber = AndroidColor.rgb(217, 119, 6)
+        val zebra = AndroidColor.rgb(245, 250, 247)
+        val border = AndroidColor.rgb(215, 228, 222)
+        val ink = AndroidColor.rgb(20, 34, 29)
+        val muted = AndroidColor.rgb(91, 110, 102)
+
+        val displayFont = runCatching { ResourcesCompat.getFont(context, R.font.space_grotesk) }.getOrNull() ?: Typeface.DEFAULT
+        val bodyFont = runCatching { ResourcesCompat.getFont(context, R.font.inter) }.getOrNull() ?: Typeface.DEFAULT
+        val logoBitmap = runCatching { BitmapFactory.decodeResource(context.resources, R.drawable.ic_counterpos_logo) }.getOrNull()
+
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = ink
+            textSize = 9.5f
+            typeface = bodyFont
         }
-        val boldPaint = Paint().apply {
-            color = AndroidColor.BLACK
+        val boldPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = ink
             textSize = 10f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            isAntiAlias = true
+            typeface = Typeface.create(bodyFont, Typeface.BOLD)
         }
-        val titlePaint = Paint().apply {
-            color = AndroidColor.BLACK
+        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = AndroidColor.WHITE
             textSize = 15f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            textAlign = Paint.Align.CENTER
-            isAntiAlias = true
+            typeface = Typeface.create(displayFont, Typeface.BOLD)
+            textAlign = Paint.Align.LEFT
         }
-        val centerPaint = Paint().apply {
-            color = AndroidColor.DKGRAY
-            textSize = 9f
+        val centerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = muted
+            textSize = 8.5f
+            typeface = bodyFont
             textAlign = Paint.Align.CENTER
-            isAntiAlias = true
         }
-        val rightPaint = Paint().apply {
-            color = AndroidColor.BLACK
+        val rightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = ink
             textSize = 10f
+            typeface = bodyFont
             textAlign = Paint.Align.RIGHT
-            isAntiAlias = true
         }
-        val rightBoldPaint = Paint().apply {
-            color = AndroidColor.BLACK
-            textSize = 12f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        val rightBoldPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = mint
+            textSize = 12.5f
+            typeface = Typeface.create(displayFont, Typeface.BOLD)
             textAlign = Paint.Align.RIGHT
-            isAntiAlias = true
         }
-        val linePaint = Paint().apply {
-            color = AndroidColor.GRAY
+        val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = border
             strokeWidth = 1f
         }
 
-        var y = 40f
+        // Branded Forest Emerald Header Banner
+        var y = 20f
+        val bannerHeight = 68f
+        fillPaint.color = deepForest
+        canvas.drawRoundRect(RectF(margin, y, width - margin, y + bannerHeight), 10f, 10f, fillPaint)
+        fillPaint.color = mint
+        canvas.drawRect(margin, y + bannerHeight - 3f, width - margin, y + bannerHeight, fillPaint)
 
-        // Title: Business Name
-        canvas.drawText(businessName.uppercase(Locale.ROOT), width / 2f, y, titlePaint)
-        y += 18f
+        // Logo badge inside header
+        fillPaint.color = AndroidColor.WHITE
+        canvas.drawRoundRect(RectF(margin + 12f, y + 14f, margin + 48f, y + 50f), 8f, 8f, fillPaint)
+        if (logoBitmap != null && !logoBitmap.isRecycled) {
+            canvas.drawBitmap(logoBitmap, null, RectF(margin + 15f, y + 17f, margin + 45f, y + 47f), fillPaint)
+        }
 
-        // Subtitle: Table Name
-        boldPaint.textAlign = Paint.Align.CENTER
-        canvas.drawText("Table: $tableName", width / 2f, y, boldPaint)
-        boldPaint.textAlign = Paint.Align.LEFT
-        y += 14f
-
-        // Date & Time
+        val headerTextX = margin + 58f
+        boldPaint.color = mint
+        boldPaint.textSize = 8f
+        canvas.drawText("RECEIPT · COUNTER POS", headerTextX, y + 25f, boldPaint)
+        canvas.drawText(businessName.uppercase(Locale.ROOT), headerTextX, y + 43f, titlePaint)
         val dateStr = SimpleDateFormat("dd MMM yyyy · h:mm a", Locale.getDefault()).format(Date())
-        canvas.drawText(dateStr, width / 2f, y, centerPaint)
-        y += 16f
+        textPaint.color = AndroidColor.rgb(183, 224, 206)
+        textPaint.textSize = 8f
+        canvas.drawText("Table: $tableName  ·  $dateStr", headerTextX, y + 57f, textPaint)
 
-        // Payment status banner
-        if (!paymentMethod.isNullOrBlank()) {
-            val bannerText = "PAID VIA ${paymentMethod.uppercase(Locale.ROOT)}"
-            boldPaint.textAlign = Paint.Align.CENTER
-            canvas.drawText(bannerText, width / 2f, y, boldPaint)
-            boldPaint.textAlign = Paint.Align.LEFT
-            y += 16f
-        } else {
-            canvas.drawText("** GUEST CHECK / UNPAID **", width / 2f, y, centerPaint)
-            y += 16f
-        }
+        y += bannerHeight + 12f
 
-        // Divider
-        canvas.drawLine(margin, y, width - margin, y, linePaint)
-        y += 14f
-
-        // Column Headers
+        // Payment status pill
+        val isPaid = !paymentMethod.isNullOrBlank()
+        fillPaint.color = if (isPaid) mintSoft else amberSoft
+        canvas.drawRoundRect(RectF(margin, y, width - margin, y + 24f), 8f, 8f, fillPaint)
+        boldPaint.textAlign = Paint.Align.CENTER
         boldPaint.textSize = 9f
-        canvas.drawText("ITEM", margin, y, boldPaint)
+        boldPaint.color = if (isPaid) emerald else amber
+        val bannerText = if (isPaid) "PAID VIA ${paymentMethod!!.uppercase(Locale.ROOT)}" else "GUEST CHECK · PAYMENT PENDING"
+        canvas.drawText(bannerText, width / 2f, y + 15.5f, boldPaint)
+        boldPaint.textAlign = Paint.Align.LEFT
+        y += 32f
+
+        // Table Header Bar
+        fillPaint.color = emerald
+        canvas.drawRoundRect(RectF(margin, y, width - margin, y + 22f), 6f, 6f, fillPaint)
+        boldPaint.color = AndroidColor.WHITE
+        boldPaint.textSize = 8.5f
+        canvas.drawText("ITEM", margin + 8f, y + 14.5f, boldPaint)
         val rightHeaderPaint = Paint(rightPaint).apply {
-            textSize = 9f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            color = AndroidColor.WHITE
+            textSize = 8.5f
+            typeface = Typeface.create(bodyFont, Typeface.BOLD)
         }
-        canvas.drawText("TOTAL", width - margin, y, rightHeaderPaint)
-        y += 6f
-        canvas.drawLine(margin, y, width - margin, y, linePaint)
-        y += 14f
+        canvas.drawText("TOTAL", width - margin - 8f, y + 14.5f, rightHeaderPaint)
+        y += 24f
 
-        // Items
-        boldPaint.textSize = 10f
-        for (order in orders) {
+        // Zebra-striped items
+        boldPaint.textSize = 9.5f
+        orders.forEachIndexed { idx, order ->
+            if (idx % 2 == 1) {
+                fillPaint.color = zebra
+                canvas.drawRect(margin, y, width - margin, y + 29f, fillPaint)
+            }
             val name = if (order.productName.length > 30) order.productName.take(28) + "…" else order.productName
-            canvas.drawText(name, margin, y, boldPaint)
-            canvas.drawText(ksh(order.totalKsh), width - margin, y, rightPaint)
-            y += 12f
-            canvas.drawText("${order.quantity} × ${order.unitName} @ ${ksh(order.unitPriceKsh)}", margin, y, textPaint)
-            y += 15f
+            boldPaint.color = ink
+            canvas.drawText(name, margin + 8f, y + 12f, boldPaint)
+            rightPaint.color = ink
+            canvas.drawText(ksh(order.totalKsh), width - margin - 8f, y + 12f, rightPaint)
+            textPaint.color = muted
+            textPaint.textSize = 8.5f
+            canvas.drawText("${order.quantity} × ${order.unitName} @ ${ksh(order.unitPriceKsh)}", margin + 8f, y + 24f, textPaint)
+            canvas.drawLine(margin, y + 29f, width - margin, y + 29f, linePaint)
+            y += 29f
         }
 
-        // Total Divider
-        canvas.drawLine(margin, y, width - margin, y, linePaint)
-        y += 18f
+        y += 10f
 
-        // Total
-        val totalLabelPaint = Paint().apply {
-            color = AndroidColor.BLACK
-            textSize = 12f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            isAntiAlias = true
+        // Colored Total Banner
+        fillPaint.color = deepForest
+        canvas.drawRoundRect(RectF(margin, y, width - margin, y + 34f), 8f, 8f, fillPaint)
+        val totalLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = AndroidColor.WHITE
+            textSize = 11f
+            typeface = Typeface.create(displayFont, Typeface.BOLD)
         }
-        canvas.drawText("TOTAL DUE", margin, y, totalLabelPaint)
-        canvas.drawText(ksh(total), width - margin, y, rightBoldPaint)
-        y += 18f
-        canvas.drawLine(margin, y, width - margin, y, linePaint)
-        y += 20f
+        canvas.drawText("TOTAL DUE", margin + 12f, y + 21f, totalLabelPaint)
+        canvas.drawText(ksh(total), width - margin - 12f, y + 21.5f, rightBoldPaint)
+        y += 50f
 
         // Footer
         canvas.drawText("Thank you for dining with us!", width / 2f, y, centerPaint)
         y += 12f
-        canvas.drawText("Powered by Counter POS", width / 2f, y, centerPaint)
+        boldPaint.color = emerald
+        boldPaint.textSize = 8f
+        boldPaint.textAlign = Paint.Align.CENTER
+        canvas.drawText("$businessName · Powered by Counter POS", width / 2f, y, boldPaint)
+        boldPaint.textAlign = Paint.Align.LEFT
 
         pdf.finishPage(page)
 

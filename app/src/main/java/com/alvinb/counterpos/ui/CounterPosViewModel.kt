@@ -16,6 +16,9 @@ import com.alvinb.counterpos.data.remote.PlatformBillingSettings
 import com.alvinb.counterpos.data.remote.CounterReportRow
 import com.alvinb.counterpos.data.remote.ServiceCounter
 import com.alvinb.counterpos.data.SessionSnapshot
+import com.alvinb.counterpos.data.local.entity.ButcheryConfigEntity
+import com.alvinb.counterpos.data.local.entity.ButcheryCutEntity
+import com.alvinb.counterpos.data.local.entity.ButcherySaleEntity
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.alvinb.counterpos.data.local.entity.SaleEntity
 import com.alvinb.counterpos.data.local.entity.DiningTableEntity
@@ -27,10 +30,15 @@ import com.alvinb.counterpos.data.local.entity.serializeSaleUnits
 import com.alvinb.counterpos.data.model.BusinessHours
 import com.alvinb.counterpos.data.model.DayBusinessHours
 import com.alvinb.counterpos.ui.scanner.ScannerMode
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.CancellationException
@@ -45,6 +53,7 @@ import java.util.regex.Pattern
 
 enum class PosTab { SCAN, STOCK, SALES, REPORTS, TABLES }
 enum class StockMode { MY_STOCK, LIBRARY }
+enum class ButcheryTab { SELL, REPORT, SETTINGS }
 
 data class AdminEnrollmentCredential(
     val businessId: String,
@@ -189,6 +198,7 @@ data class CounterPosUiState(
     val isReady: Boolean = false,
     val startupError: String? = null,
     val pendingSyncCount: Int = 0,
+    val isBackgroundOutboxSyncing: Boolean = false,
     val blockedOutbox: List<OutboxEntity> = emptyList(),
     val transactionLogs: List<OfflineTransactionLogEntity> = emptyList(),
     val isSyncRecoveryOpen: Boolean = false,
@@ -208,14 +218,23 @@ data class CounterPosUiState(
     val subscriptionEntitlement: SubscriptionEntitlement? = null,
     val adminSelectedSubscriptionBusiness: AdminBusiness? = null,
     val isUpdatingSubscription: Boolean = false,
+    val isDeletingAdminBusiness: Boolean = false,
+    val isUpdatingAdminPhone: Boolean = false,
+    val isUpdatingAdminBusinessType: Boolean = false,
+    val isManagingCounters: Boolean = false,
     val platformBillingSettings: PlatformBillingSettings? = null,
     val isLoadingPlatformBillingSettings: Boolean = false,
-    val isSavingPlatformBillingSettings: Boolean = false
+    val isSavingPlatformBillingSettings: Boolean = false,
+
+    // Butchery Add-On Workspace
+    val isButcheryWorkspaceOpen: Boolean = false,
+    val butcheryTab: ButcheryTab = ButcheryTab.SELL
 )
 
 internal fun CounterPosUiState.activeTableIdForSale(): String? =
     selectedTableId.takeIf { tab == PosTab.TABLES }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class CounterPosViewModel(
     private val repository: CounterPosRepository,
     private val connectivityManager: ConnectivityManager,
@@ -231,15 +250,39 @@ class CounterPosViewModel(
     val tableOrders = repository.tableOrders.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val serviceCounters = repository.serviceCounters.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    private val activeShopIdFlow = session
+        .map { it.activeBusiness?.shopId }
+        .distinctUntilChanged()
+
+    val butcheryConfig = activeShopIdFlow
+        .flatMapLatest { shopId ->
+            if (shopId.isNullOrBlank()) flowOf(null) else repository.observeButcheryConfig(shopId)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    val butcheryCuts = activeShopIdFlow
+        .flatMapLatest { shopId ->
+            if (shopId.isNullOrBlank()) flowOf(emptyList()) else repository.observeButcheryCuts(shopId)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val butcherySales = activeShopIdFlow
+        .flatMapLatest { shopId ->
+            if (shopId.isNullOrBlank()) flowOf(emptyList()) else repository.observeButcherySales(shopId)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     private val _uiState = MutableStateFlow(CounterPosUiState(adminAuditEvents = repository.getCachedAdminAuditEvents()))
     val uiState = _uiState.asStateFlow()
     private var mutationInProgress = false
     private var reconnectSyncJob: Job? = null
     private var tableSettlementOutboxJob: Job? = null
     private var transactionLogsJob: Job? = null
+    private var blockedOutboxJob: Job? = null
     private var counterStockJob: Job? = null
     private var loginQrJob: Job? = null
     private var lastSessionKeepAliveAt = 0L
+    private var previousPendingSyncCount = 0
 
     private fun handleStableConnectivityDetected(wasStable: Boolean) {
         refreshSubscriptionEntitlement()
@@ -314,10 +357,16 @@ class CounterPosViewModel(
         }
         runCatching { connectivityManager.registerDefaultNetworkCallback(networkCallback) }
         viewModelScope.launch {
+            repository.isOutboxSyncing.collect { syncing ->
+                _uiState.update { it.copy(isBackgroundOutboxSyncing = syncing) }
+            }
+        }
+        viewModelScope.launch {
             repository.session.collect { sess ->
                 refreshSubscriptionEntitlement(sess)
                 tableSettlementOutboxJob?.cancel()
                 transactionLogsJob?.cancel()
+                blockedOutboxJob?.cancel()
                 if (sess.isPlatformAdmin) {
                     loadAdminBusinesses()
                     loadAdminAuditEvents()
@@ -339,6 +388,11 @@ class CounterPosViewModel(
                 } else {
                     val shopId = sess.activeBusiness.shopId
                     observeSelectedCounterStock(shopId, _uiState.value.selectedCounterId)
+                    blockedOutboxJob = viewModelScope.launch {
+                        repository.observeBlockedOutbox(shopId).collect { items ->
+                            _uiState.update { it.copy(blockedOutbox = items) }
+                        }
+                    }
                     transactionLogsJob = viewModelScope.launch {
                         repository.observeTransactionLogs(shopId).collect { logs ->
                             _uiState.update { it.copy(transactionLogs = logs) }
@@ -366,8 +420,6 @@ class CounterPosViewModel(
                     }
                     businessHoursJob?.cancel()
                     businessHoursJob = viewModelScope.launch {
-                        runCatching { repository.blockedOutboxItems() }
-                            .onSuccess { items -> _uiState.update { it.copy(blockedOutbox = items) } }
                         runCatching { repository.loadBusinessHours() }
                             .onSuccess { hours ->
                                 lastLoadedHoursShopId = shopId
@@ -384,7 +436,17 @@ class CounterPosViewModel(
         }
         viewModelScope.launch {
             repository.pendingSyncCount.collect { count ->
-                _uiState.update { it.copy(pendingSyncCount = count) }
+                val syncedAllOffline = previousPendingSyncCount > 0 &&
+                    count == 0 &&
+                    _uiState.value.isOnline &&
+                    _uiState.value.blockedOutbox.isEmpty()
+                previousPendingSyncCount = count
+                _uiState.update {
+                    it.copy(
+                        pendingSyncCount = count,
+                        notice = if (syncedAllOffline) "All offline transactions synced to Supabase." else it.notice
+                    )
+                }
             }
         }
         viewModelScope.launch {
@@ -486,6 +548,7 @@ class CounterPosViewModel(
         counterStockJob?.cancel()
         tableSettlementOutboxJob?.cancel()
         transactionLogsJob?.cancel()
+        blockedOutboxJob?.cancel()
         businessHoursJob?.cancel()
         super.onCleared()
     }
@@ -656,7 +719,11 @@ class CounterPosViewModel(
         businessSize: String = "medium",
         inventoryMode: String = "shared",
         counterCount: Int = 1,
-        ownerPhone: String = ""
+        ownerPhone: String = "",
+        enrollButchery: Boolean = false,
+        butcheryName: String = "",
+        butcheryBeefOnly: Boolean = false,
+        butcheryBeefPricePerKgKsh: Int = 680
     ) = viewModelScope.launch {
         if (_uiState.value.isAuthenticating || _uiState.value.isCreatingBusiness) return@launch
         val cleanEmail = email.trim()
@@ -747,10 +814,23 @@ class CounterPosViewModel(
                 )
             }
 
-            repository.createBusiness(cleanName, businessType, businessSize, inventoryMode, counterCount, normalizedOwnerPhone)
+            repository.createBusiness(
+                name = cleanName,
+                businessType = businessType,
+                businessSize = businessSize,
+                inventoryMode = inventoryMode,
+                counterCount = counterCount,
+                ownerPhone = normalizedOwnerPhone,
+                enrollButchery = enrollButchery,
+                butcheryName = butcheryName,
+                butcheryBeefOnly = butcheryBeefOnly,
+                butcheryBeefPricePerKgKsh = butcheryBeefPricePerKgKsh
+            )
             _uiState.update {
                 it.copy(
                     isCreatingBusiness = false,
+                    isButcheryWorkspaceOpen = enrollButchery && businessType == "counter_seller",
+                    butcheryTab = ButcheryTab.SELL,
                     startupError = null,
                     notice = "Business profile created. Welcome to $cleanName!"
                 )
@@ -1740,6 +1820,91 @@ class CounterPosViewModel(
         }
     }
 
+    fun adminUpdateBusinessPhone(shopId: String, phone: String) {
+        if (_uiState.value.isUpdatingAdminPhone) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isUpdatingAdminPhone = true, startupError = null) }
+            runCatching { repository.adminUpdateBusinessPhone(shopId, phone) }
+                .onSuccess { updated ->
+                    _adminBusinesses.value = updated
+                    _uiState.update { state ->
+                        state.copy(
+                            isUpdatingAdminPhone = false,
+                            adminSelectedSubscriptionBusiness = state.adminSelectedSubscriptionBusiness
+                                ?.takeIf { it.shopId == shopId }
+                                ?.let { updated.firstOrNull { b -> b.shopId == shopId } }
+                                ?: state.adminSelectedSubscriptionBusiness,
+                            notice = "Client phone number saved"
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update { it.copy(isUpdatingAdminPhone = false, startupError = error.message ?: "Could not update client phone number") }
+                }
+        }
+    }
+
+    fun adminDeleteBusiness(shopId: String, shopName: String) {
+        if (_uiState.value.isDeletingAdminBusiness) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isDeletingAdminBusiness = true, startupError = null) }
+            runCatching { repository.adminDeleteBusiness(shopId) }
+                .onSuccess { updated ->
+                    _adminBusinesses.value = updated
+                    _uiState.update { state ->
+                        state.copy(
+                            isDeletingAdminBusiness = false,
+                            adminSelectedBusinessId = if (state.adminSelectedBusinessId == shopId) null else state.adminSelectedBusinessId,
+                            adminSelectedSubscriptionBusiness = if (state.adminSelectedSubscriptionBusiness?.shopId == shopId) null else state.adminSelectedSubscriptionBusiness,
+                            adminEnrollmentCredential = if (state.adminEnrollmentCredential?.businessId == shopId) null else state.adminEnrollmentCredential,
+                            notice = "$shopName permanently deleted"
+                        )
+                    }
+                    loadAdminAuditEvents()
+                }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            isDeletingAdminBusiness = false,
+                            startupError = error.message ?: "Could not delete business"
+                        )
+                    }
+                }
+        }
+    }
+
+    fun adminElevateToClub(shopId: String) {
+        if (_uiState.value.isUpdatingAdminBusinessType) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isUpdatingAdminBusinessType = true, startupError = null) }
+            runCatching { repository.adminSetBusinessType(shopId, "big_club") }
+                .onSuccess { updated ->
+                    _adminBusinesses.value = updated
+                    val updatedBusiness = updated.firstOrNull { it.shopId == shopId }
+                    _uiState.update { state ->
+                        state.copy(
+                            isUpdatingAdminBusinessType = false,
+                            adminSelectedSubscriptionBusiness = if (state.adminSelectedSubscriptionBusiness?.shopId == shopId) {
+                                updatedBusiness ?: state.adminSelectedSubscriptionBusiness
+                            } else {
+                                state.adminSelectedSubscriptionBusiness
+                            },
+                            notice = "${updatedBusiness?.shopName ?: "Business"} elevated to Club — Tables, Multi-Counter & Analytics enabled."
+                        )
+                    }
+                    loadAdminAuditEvents()
+                }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            isUpdatingAdminBusinessType = false,
+                            startupError = error.message ?: "Could not elevate business to Club"
+                        )
+                    }
+                }
+        }
+    }
+
     fun openAdminEnrollmentScanner(shopId: String, role: String) {
         val business = _adminBusinesses.value.firstOrNull { it.shopId == shopId }
         if (!session.value.isPlatformAdmin) {
@@ -1928,15 +2093,78 @@ class CounterPosViewModel(
     }
 
     fun createServiceCounter(name: String) = viewModelScope.launch {
+        if (_uiState.value.isManagingCounters) return@launch
+        _uiState.update { it.copy(isManagingCounters = true, actionError = null) }
         runCatching { repository.createServiceCounter(name) }
-            .onSuccess { counter -> _uiState.update { it.copy(notice = "Added ${counter.name}.", actionError = null) } }
-            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not add counter") } }
+            .onSuccess { counter ->
+                _uiState.update { state ->
+                    state.copy(
+                        isManagingCounters = false,
+                        selectedCounterId = state.selectedCounterId ?: counter.id,
+                        notice = "Added ${counter.name}.",
+                        actionError = null
+                    )
+                }
+            }
+            .onFailure { error ->
+                _uiState.update {
+                    it.copy(isManagingCounters = false, actionError = error.message ?: "Could not add counter")
+                }
+            }
     }
 
     fun renameServiceCounter(counterId: String, name: String) = viewModelScope.launch {
+        if (_uiState.value.isManagingCounters) return@launch
+        _uiState.update { it.copy(isManagingCounters = true, actionError = null) }
         runCatching { repository.renameServiceCounter(counterId, name) }
-            .onSuccess { _uiState.update { it.copy(notice = "Counter name updated.", actionError = null) } }
-            .onFailure { error -> _uiState.update { it.copy(actionError = error.message ?: "Could not rename counter") } }
+            .onSuccess {
+                _uiState.update {
+                    it.copy(isManagingCounters = false, notice = "Counter name updated.", actionError = null)
+                }
+            }
+            .onFailure { error ->
+                _uiState.update {
+                    it.copy(isManagingCounters = false, actionError = error.message ?: "Could not rename counter")
+                }
+            }
+    }
+
+    fun deleteServiceCounter(counterId: String) = viewModelScope.launch {
+        if (_uiState.value.isManagingCounters) return@launch
+        _uiState.update { it.copy(isManagingCounters = true, actionError = null) }
+        runCatching { repository.deleteServiceCounter(counterId) }
+            .onSuccess { remaining ->
+                val fallbackId = remaining.firstOrNull()?.id
+                val fallbackName = remaining.firstOrNull()?.name
+                var needsStockRefresh = false
+                _uiState.update { state ->
+                    val nextSelectedId = if (state.selectedCounterId == counterId) {
+                        needsStockRefresh = true
+                        fallbackId
+                    } else {
+                        state.selectedCounterId
+                    }
+                    val nextServingId = if (state.selectedServingCounterId == counterId) fallbackId else state.selectedServingCounterId
+                    val nextServingName = if (state.selectedServingCounterId == counterId) fallbackName else state.selectedServingCounterName
+                    state.copy(
+                        isManagingCounters = false,
+                        selectedCounterId = nextSelectedId,
+                        selectedServingCounterId = nextServingId,
+                        selectedServingCounterName = nextServingName,
+                        notice = "Service counter removed.",
+                        actionError = null
+                    )
+                }
+                if (needsStockRefresh && fallbackId != null) {
+                    observeSelectedCounterStock(session.value.activeBusiness?.shopId, fallbackId)
+                    refreshCounterStock(fallbackId)
+                }
+            }
+            .onFailure { error ->
+                _uiState.update {
+                    it.copy(isManagingCounters = false, actionError = error.message ?: "Could not delete counter")
+                }
+            }
     }
 
     fun transferCounterStock(productCode: String, destinationCounterId: String, quantity: Int) = viewModelScope.launch {
@@ -2168,15 +2396,32 @@ class CounterPosViewModel(
         viewModelScope.launch {
             runCatching { repository.retryBlockedOutbox(operationId) }
                 .onSuccess {
-                    runCatching { repository.blockedOutboxItems() }
-                        .onSuccess { items -> _uiState.update { it.copy(blockedOutbox = items) } }
                     _uiState.update { it.copy(retryingOperationId = null, notice = "Saved POS change retried") }
                 }
                 .onFailure { error ->
-                    runCatching { repository.blockedOutboxItems() }
-                        .onSuccess { items -> _uiState.update { it.copy(blockedOutbox = items) } }
                     _uiState.update {
                         it.copy(retryingOperationId = null, syncRecoveryError = error.message ?: "Could not retry this saved change.")
+                    }
+                }
+        }
+    }
+
+    fun retryAllBlockedOutbox() {
+        if (_uiState.value.retryingOperationId != null) return
+        _uiState.update { it.copy(retryingOperationId = "__all__", syncRecoveryError = null) }
+        viewModelScope.launch {
+            runCatching { repository.retryAllBlockedOutbox() }
+                .onSuccess { count ->
+                    _uiState.update {
+                        it.copy(
+                            retryingOperationId = null,
+                            notice = if (count > 0) "Retried $count saved POS change${if (count == 1) "" else "s"}" else it.notice
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(retryingOperationId = null, syncRecoveryError = error.message ?: "Could not retry blocked changes.")
                     }
                 }
         }
@@ -2714,6 +2959,189 @@ class CounterPosViewModel(
             } catch (error: Exception) {
                 _uiState.update { it.copy(actionError = error.message ?: "Could not update the product photo.") }
             }
+        }
+    }
+
+    // ---- Butchery Workspace Actions ----
+    fun openButcheryWorkspace(initialTab: ButcheryTab = ButcheryTab.SELL) {
+        _uiState.update {
+            it.copy(
+                isButcheryWorkspaceOpen = true,
+                butcheryTab = initialTab,
+                isTeamPanelOpen = false
+            )
+        }
+    }
+
+    fun closeButcheryWorkspace() {
+        _uiState.update { it.copy(isButcheryWorkspaceOpen = false) }
+    }
+
+    fun selectButcheryTab(tab: ButcheryTab) {
+        _uiState.update { it.copy(butcheryTab = tab) }
+    }
+
+    fun enrollOrUpdateButchery(
+        enabled: Boolean,
+        butcheryName: String,
+        beefOnlyMode: Boolean,
+        defaultBeefPricePerKgKsh: Int,
+        paymentMethods: List<String>? = null,
+        enabledCategories: List<String>? = null
+    ) {
+        val shopId = session.value.activeBusiness?.shopId ?: return
+        viewModelScope.launch {
+            runCatching {
+                repository.enrollOrUpdateButchery(
+                    shopId = shopId,
+                    enabled = enabled,
+                    butcheryName = butcheryName,
+                    beefOnlyMode = beefOnlyMode,
+                    defaultBeefPricePerKgKsh = defaultBeefPricePerKgKsh,
+                    paymentMethods = paymentMethods,
+                    enabledCategories = enabledCategories
+                )
+            }.onSuccess {
+                _uiState.update {
+                    it.copy(
+                        actionError = null,
+                        notice = if (enabled) "Butchery settings saved" else "Butchery package turned off",
+                        isButcheryWorkspaceOpen = if (!enabled) false else it.isButcheryWorkspaceOpen
+                    )
+                }
+            }.onFailure { err ->
+                _uiState.update { it.copy(actionError = err.message ?: "Could not save butchery settings.") }
+            }
+        }
+    }
+
+    fun applyDefaultBeefPricePerKg(pricePerKgKsh: Int) {
+        applyCategoryPricePerKg(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label, pricePerKgKsh)
+    }
+
+    fun applyCategoryPricePerKg(category: String, pricePerKgKsh: Int) {
+        val shopId = session.value.activeBusiness?.shopId ?: return
+        if (pricePerKgKsh <= 0) return
+        viewModelScope.launch {
+            runCatching { repository.applyCategoryPricePerKg(shopId, category, pricePerKgKsh) }
+                .onSuccess {
+                    _uiState.update {
+                        it.copy(notice = "Updated $category selling price to KES $pricePerKgKsh/kg", actionError = null)
+                    }
+                }
+                .onFailure { err ->
+                    _uiState.update { it.copy(actionError = err.message ?: "Failed to update $category price.") }
+                }
+        }
+    }
+
+    fun updateButcheryCutPrice(cutId: String, pricePerKgKsh: Int) {
+        if (pricePerKgKsh <= 0) return
+        viewModelScope.launch {
+            runCatching { repository.updateButcheryCutPrice(cutId, pricePerKgKsh) }
+                .onSuccess { updated ->
+                    if (updated) _uiState.update { it.copy(notice = "Updated price to KES $pricePerKgKsh/kg", actionError = null) }
+                }
+                .onFailure { err ->
+                    _uiState.update { it.copy(actionError = err.message ?: "Failed to update price.") }
+                }
+        }
+    }
+
+    fun setButcheryCutStockKg(cutId: String, stockKg: Double) {
+        viewModelScope.launch {
+            runCatching { repository.setButcheryCutStockKg(cutId, stockKg) }
+                .onSuccess { updated ->
+                    if (updated) _uiState.update { it.copy(notice = "Updated stock weight", actionError = null) }
+                }
+                .onFailure { err ->
+                    _uiState.update { it.copy(actionError = err.message ?: "Failed to update stock.") }
+                }
+        }
+    }
+
+    fun addButcheryCut(
+        name: String,
+        category: String,
+        pricePerKgKsh: Int,
+        stockKg: Double,
+        iconKey: String
+    ) {
+        val shopId = session.value.activeBusiness?.shopId ?: return
+        viewModelScope.launch {
+            runCatching {
+                repository.addButcheryCut(
+                    shopId = shopId,
+                    name = name,
+                    category = category,
+                    pricePerKgKsh = pricePerKgKsh,
+                    stockKg = stockKg,
+                    iconKey = iconKey
+                )
+            }.onSuccess {
+                _uiState.update { it.copy(notice = "Added ${name.trim()} to Butchery", actionError = null) }
+            }.onFailure { err ->
+                _uiState.update { it.copy(actionError = err.message ?: "Failed to add meat cut.") }
+            }
+        }
+    }
+
+    fun setButcheryCutActive(cutId: String, active: Boolean) {
+        viewModelScope.launch {
+            runCatching { repository.setButcheryCutActive(cutId, active) }
+        }
+    }
+
+    fun recordButcherySale(
+        cut: ButcheryCutEntity,
+        weightGrams: Int,
+        totalKsh: Int,
+        paymentMethod: String,
+        entryMode: String
+    ) {
+        val shopId = session.value.activeBusiness?.shopId ?: return
+        if (weightGrams <= 0 || totalKsh <= 0) {
+            _uiState.update { it.copy(actionError = "Enter a valid weight or KES amount first.") }
+            return
+        }
+        viewModelScope.launch {
+            runCatching {
+                repository.recordButcherySale(
+                    shopId = shopId,
+                    cutId = cut.id,
+                    weightGrams = weightGrams,
+                    totalKsh = totalKsh,
+                    paymentMethod = paymentMethod,
+                    entryMode = entryMode
+                )
+            }.onSuccess { saleId ->
+                if (saleId != null && saleId > 0L) {
+                    val kgLabel = com.alvinb.counterpos.data.butchery.ButcheryPricing.formatWeightKg(weightGrams)
+                    val modeLabel = com.alvinb.counterpos.data.butchery.ButcheryPricing.paymentMethodDisplayLabel(paymentMethod)
+                    _uiState.update {
+                        it.copy(
+                            actionError = null,
+                            notice = "Recorded ${cut.name} ($kgLabel) · KES $totalKsh ($modeLabel)"
+                        )
+                    }
+                } else {
+                    _uiState.update { it.copy(actionError = "Could not record butchery sale.") }
+                }
+            }.onFailure { err ->
+                _uiState.update { it.copy(actionError = err.message ?: "Could not record butchery sale.") }
+            }
+        }
+    }
+
+    fun undoLatestButcherySale() {
+        val shopId = session.value.activeBusiness?.shopId ?: return
+        viewModelScope.launch {
+            runCatching { repository.undoLatestButcherySale(shopId) }
+                .onSuccess { undone ->
+                    _uiState.update {
+                        it.copy(notice = if (undone) "✓ Last butchery sale undone" else "No active butchery sale to undo")
+                    }
+                }
         }
     }
 }

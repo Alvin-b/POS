@@ -7,6 +7,9 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.alvinb.counterpos.data.local.dao.CounterPosDao
+import com.alvinb.counterpos.data.local.entity.ButcheryConfigEntity
+import com.alvinb.counterpos.data.local.entity.ButcheryCutEntity
+import com.alvinb.counterpos.data.local.entity.ButcherySaleEntity
 import com.alvinb.counterpos.data.local.entity.CounterStockEntity
 import com.alvinb.counterpos.data.local.entity.DiningTableEntity
 import com.alvinb.counterpos.data.local.entity.OfflineSessionEntity
@@ -28,9 +31,12 @@ import java.util.concurrent.Executors
         OfflineTransactionLogEntity::class,
         OfflineSessionEntity::class,
         ServiceCounterEntity::class,
-        CounterStockEntity::class
+        CounterStockEntity::class,
+        ButcheryConfigEntity::class,
+        ButcheryCutEntity::class,
+        ButcherySaleEntity::class
     ],
-    version = 12,
+    version = 15,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -202,6 +208,86 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS butchery_config (
+                        shopId TEXT NOT NULL,
+                        enabled INTEGER NOT NULL,
+                        butcheryName TEXT NOT NULL,
+                        beefOnlyMode INTEGER NOT NULL,
+                        defaultBeefPricePerKgKsh INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL,
+                        PRIMARY KEY(shopId)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS butchery_cuts (
+                        id TEXT NOT NULL,
+                        shopId TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        category TEXT NOT NULL,
+                        pricePerKgKsh INTEGER NOT NULL,
+                        stockGrams INTEGER NOT NULL,
+                        iconKey TEXT NOT NULL,
+                        active INTEGER NOT NULL,
+                        sortOrder INTEGER NOT NULL,
+                        PRIMARY KEY(id)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_butchery_cuts_shopId_sortOrder ON butchery_cuts(shopId, sortOrder)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_butchery_cuts_shopId_active ON butchery_cuts(shopId, active)")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS butchery_sales (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        shopId TEXT NOT NULL,
+                        cutId TEXT NOT NULL,
+                        cutName TEXT NOT NULL,
+                        category TEXT NOT NULL,
+                        pricePerKgKsh INTEGER NOT NULL,
+                        weightGrams INTEGER NOT NULL,
+                        totalKsh INTEGER NOT NULL,
+                        paymentMethod TEXT NOT NULL,
+                        entryMode TEXT NOT NULL,
+                        stockDeductedGrams INTEGER NOT NULL,
+                        attendantName TEXT,
+                        createdAt INTEGER NOT NULL,
+                        undone INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_butchery_sales_shopId_createdAt ON butchery_sales(shopId, createdAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_butchery_sales_shopId_undone_createdAt ON butchery_sales(shopId, undone, createdAt)")
+            }
+        }
+
+        internal val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                ensureColumn(
+                    db,
+                    "butchery_config",
+                    "paymentMethodsJson",
+                    "TEXT NOT NULL DEFAULT '[\"M-Pesa\",\"Cash Payment\"]'"
+                )
+            }
+        }
+
+        internal val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                ensureColumn(
+                    db,
+                    "butchery_config",
+                    "enabledCategoriesJson",
+                    "TEXT NOT NULL DEFAULT '[\"Beef\",\"Goat/Mbuzi\",\"Chicken\",\"Liver/Matumbo\",\"Pork\"]'"
+                )
+            }
+        }
+
         private fun ensureColumn(db: SupportSQLiteDatabase, table: String, column: String, declaration: String) {
             val cursor = db.query("PRAGMA table_info($table)")
             val exists = try {
@@ -250,7 +336,10 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_8_9,
                     MIGRATION_9_10,
                     MIGRATION_10_11,
-                    MIGRATION_11_12
+                    MIGRATION_11_12,
+                    MIGRATION_12_13,
+                    MIGRATION_13_14,
+                    MIGRATION_14_15
                 )
                 .build().also { instance = it }
         }

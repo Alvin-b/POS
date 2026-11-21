@@ -30,6 +30,7 @@ class OfflineOutboxWorker(
     workerParams: WorkerParameters
 ) : CoroutineWorker(appContext, workerParams) {
     override suspend fun doWork(): Result {
+        isWorkerRunning = true
         return try {
             if (!isStableInternetConnected(applicationContext)) {
                 return Result.retry()
@@ -41,10 +42,10 @@ class OfflineOutboxWorker(
                 return Result.success()
             }
 
-            // 2. Execute the requested sync profile cleanly under repository serialization.
+            // 2. Refresh expired tokens if needed, then execute the requested sync profile cleanly.
             val mode = inputData.getString(KEY_SYNC_MODE) ?: MODE_FLUSH_OUTBOX
+            counterPosApplication.repository.keepSessionAliveIfStale()
             if (mode == MODE_FULL_SYNC) {
-                counterPosApplication.repository.keepSessionAlive()
                 counterPosApplication.repository.synchronizeWhenOnline(force = false)
             } else {
                 counterPosApplication.repository.flushOutboxViaWorker()
@@ -54,7 +55,13 @@ class OfflineOutboxWorker(
         } catch (exception: CancellationException) {
             throw exception
         } catch (exception: Exception) {
-            if (exception.isTransientSyncFailure()) Result.retry() else Result.failure()
+            when {
+                exception.isPermanentAuthFailure() -> Result.failure()
+                exception.isTransientSyncFailure() -> Result.retry()
+                else -> Result.failure()
+            }
+        } finally {
+            isWorkerRunning = false
         }
     }
 
@@ -69,9 +76,31 @@ class OfflineOutboxWorker(
         const val MODE_FLUSH_OUTBOX = "flush_outbox"
         const val MODE_FULL_SYNC = "full_sync"
         private const val INITIAL_BACKOFF_SECONDS = 15L
+        private val IMMEDIATE_TRIGGERS = setOf(
+            "stable_network_detected",
+            "user_manual_flush",
+            "settle_table_bill",
+            "subscription_restored",
+            "startup"
+        )
+
+        @Volatile
+        internal var isWorkerRunning: Boolean = false
 
         @Volatile
         internal var stabilityCheckOverride: ((Context) -> Boolean)? = null
+
+        internal fun selectUniqueWorkPolicy(
+            triggerSource: String,
+            workerCurrentlyRunning: Boolean
+        ): ExistingWorkPolicy {
+            if (workerCurrentlyRunning) return ExistingWorkPolicy.APPEND_OR_REPLACE
+            return if (triggerSource in IMMEDIATE_TRIGGERS) {
+                ExistingWorkPolicy.REPLACE
+            } else {
+                ExistingWorkPolicy.APPEND_OR_REPLACE
+            }
+        }
 
         /**
          * Verifies that the active network provides both internet transport and
@@ -94,11 +123,22 @@ class OfflineOutboxWorker(
         }
 
         /**
-         * Enqueues a constrained outbox flush task. Uses APPEND_OR_REPLACE so an
-         * active upload is never aborted mid-flight when rapid POS writes arrive.
+         * Enqueues a constrained outbox flush task. Never aborts an active RUNNING
+         * upload mid-flight, while replacing stale backoff-waiting work immediately
+         * when network connectivity is restored or a manual flush is requested.
          */
         fun enqueueOutboxFlush(context: Context, triggerSource: String = "mutation") {
             try {
+                val workManager = WorkManager.getInstance(context.applicationContext)
+                val runningInWorkManager = runCatching {
+                    workManager.getWorkInfosForUniqueWork(WORK_NAME)
+                        .get(100, TimeUnit.MILLISECONDS)
+                        .any { it.state == androidx.work.WorkInfo.State.RUNNING }
+                }.getOrDefault(false)
+                val policy = selectUniqueWorkPolicy(
+                    triggerSource = triggerSource,
+                    workerCurrentlyRunning = isWorkerRunning || runningInWorkManager
+                )
                 val constraints = Constraints.Builder()
                     .setRequiredNetworkType(NetworkType.CONNECTED)
                     .build()
@@ -117,9 +157,9 @@ class OfflineOutboxWorker(
                     )
                     .build()
 
-                WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
+                workManager.enqueueUniqueWork(
                     WORK_NAME,
-                    ExistingWorkPolicy.APPEND_OR_REPLACE,
+                    policy,
                     request
                 )
             } catch (_: Exception) {
@@ -170,7 +210,17 @@ class OfflineOutboxWorker(
             }
         }
 
+        private fun Throwable.isPermanentAuthFailure(): Boolean {
+            var current: Throwable? = this
+            while (current != null) {
+                if (current is com.alvinb.counterpos.data.remote.SupabaseUnauthorizedException) return true
+                current = current.cause
+            }
+            return false
+        }
+
         private fun Exception.isTransientSyncFailure(): Boolean {
+            if (isPermanentAuthFailure()) return false
             var current: Throwable? = this
             while (current != null) {
                 if (current is IOException || current is TimeoutException) return true

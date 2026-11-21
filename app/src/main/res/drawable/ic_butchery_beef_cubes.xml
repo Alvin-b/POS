@@ -1,0 +1,45 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <!-- Back beef cube -->
+    <path
+        android:fillColor="#B71C1C"
+        android:strokeColor="#5D1010"
+        android:strokeWidth="1.3"
+        android:pathData="M18,11 L29,11 L31,18 L20,18 Z" />
+    <path
+        android:fillColor="#8E1616"
+        android:strokeColor="#5D1010"
+        android:strokeWidth="1.3"
+        android:pathData="M20,18 L31,18 L31,25 L20,25 Z" />
+    <!-- Left front beef cube -->
+    <path
+        android:fillColor="#D32F2F"
+        android:strokeColor="#5D1010"
+        android:strokeWidth="1.3"
+        android:pathData="M9,21 L20,21 L22,27 L11,27 Z" />
+    <path
+        android:fillColor="#9A1B1B"
+        android:strokeColor="#5D1010"
+        android:strokeWidth="1.3"
+        android:pathData="M11,27 L22,27 L22,35 L11,35 Z" />
+    <!-- Right front beef cube -->
+    <path
+        android:fillColor="#C62828"
+        android:strokeColor="#5D1010"
+        android:strokeWidth="1.3"
+        android:pathData="M24,22 L36,22 L38,28 L26,28 Z" />
+    <path
+        android:fillColor="#8E1616"
+        android:strokeColor="#5D1010"
+        android:strokeWidth="1.3"
+        android:pathData="M26,28 L38,28 L38,36 L26,36 Z" />
+    <!-- Subtle fat flecks -->
+    <path
+        android:strokeColor="#FFCDD2"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:pathData="M14,24 L18,24 M28,25 L33,25 M23,14 L27,14" />
+</vector>

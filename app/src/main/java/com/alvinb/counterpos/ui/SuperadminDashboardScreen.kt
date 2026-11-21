@@ -37,19 +37,26 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreditCard
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.TableRestaurant
+import androidx.compose.material.icons.filled.Upgrade
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -81,6 +88,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -163,6 +171,8 @@ fun SuperadminDashboardScreen(
     var selectedTab by remember { mutableStateOf(SuperadminTab.PORTFOLIO) }
     var searchQuery by remember { mutableStateOf("") }
     var statusFilter by remember { mutableStateOf("all") }
+    var businessPendingDeletion by remember { mutableStateOf<AdminBusiness?>(null) }
+    var businessPendingElevation by remember { mutableStateOf<AdminBusiness?>(null) }
 
     // Register Tenant Form state
     var regBusinessName by remember { mutableStateOf("") }
@@ -209,9 +219,19 @@ fun SuperadminDashboardScreen(
                 else -> true
             }
             val query = searchQuery.trim()
+            val queryDigits = query.filter(Char::isDigit)
+            val phoneDigits = business.effectivePhone()?.filter(Char::isDigit).orEmpty()
+            val matchesPhoneDigits = queryDigits.length >= 3 && (
+                phoneDigits.contains(queryDigits) ||
+                    (queryDigits.startsWith("0") && phoneDigits.contains("254" + queryDigits.drop(1)))
+                )
             val matchesQuery = query.isBlank() ||
                 business.shopName.contains(query, ignoreCase = true) ||
                 business.ownerEmail.contains(query, ignoreCase = true) ||
+                business.ownerPhone?.contains(query, ignoreCase = true) == true ||
+                business.lastPaymentPhone?.contains(query, ignoreCase = true) == true ||
+                business.displayPhoneLabel().contains(query, ignoreCase = true) ||
+                matchesPhoneDigits ||
                 business.businessType.contains(query, ignoreCase = true)
             matchesFilter && matchesQuery
         }.sortedWith(
@@ -255,6 +275,7 @@ fun SuperadminDashboardScreen(
                     searchQuery = searchQuery,
                     statusFilter = statusFilter,
                     isLoading = state.isLoadingAdminBusinesses,
+                    isDeletingBusiness = state.isDeletingAdminBusiness,
                     hasFreshData = state.hasFreshAdminBusinesses,
                     refreshError = state.adminBusinessesError,
                     selectedBusinessId = state.adminSelectedBusinessId,
@@ -270,6 +291,8 @@ fun SuperadminDashboardScreen(
                     onStatusChange = { shopId, status, fallback ->
                         viewModel.setBusinessStatus(shopId, status, fallback)
                     },
+                    onRequestElevateToClub = { businessPendingElevation = it },
+                    onRequestDeleteBusiness = { businessPendingDeletion = it },
                     onNavigateToRegister = { selectedTab = SuperadminTab.REGISTER },
                     error = error,
                     notice = state.notice,
@@ -339,6 +362,8 @@ fun SuperadminDashboardScreen(
             AdminClientBillingSheet(
                 business = selectedSubBusiness,
                 isUpdating = state.isUpdatingSubscription,
+                isUpdatingPhone = state.isUpdatingAdminPhone,
+                isUpdatingBusinessType = state.isUpdatingAdminBusinessType,
                 onDismiss = viewModel::adminCloseSubscriptionDialog,
                 onSave = { price, endsAt, status, planDays, trialEndsAt, note ->
                     viewModel.adminUpdateShopSubscription(
@@ -362,6 +387,153 @@ fun SuperadminDashboardScreen(
                 },
                 onSetPaymentLock = { locked, amount, reason ->
                     viewModel.adminSetPaymentLock(selectedSubBusiness.shopId, locked, amount, reason)
+                },
+                onUpdatePhone = { phone ->
+                    viewModel.adminUpdateBusinessPhone(selectedSubBusiness.shopId, phone)
+                },
+                onElevateToClub = {
+                    businessPendingElevation = selectedSubBusiness
+                },
+                onRequestDeleteBusiness = {
+                    businessPendingDeletion = selectedSubBusiness
+                }
+            )
+        }
+
+        val targetForElevation = businessPendingElevation
+        if (targetForElevation != null) {
+            AlertDialog(
+                onDismissRequest = { if (!state.isUpdatingAdminBusinessType) businessPendingElevation = null },
+                icon = {
+                    Icon(
+                        imageVector = Icons.Default.Upgrade,
+                        contentDescription = null,
+                        tint = AdminEmerald,
+                        modifier = Modifier.size(32.dp)
+                    )
+                },
+                title = {
+                    Text(
+                        text = "Elevate ${targetForElevation.shopName} to Club?",
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "This upgrades ${targetForElevation.shopName} from Liquor Store to a full Club profile.",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "Unlocks: Floor Table Management, Multiple Counters, Team Working Hours, and Sales Analytics.",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = AdminEmerald
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.adminElevateToClub(targetForElevation.shopId)
+                            businessPendingElevation = null
+                        },
+                        enabled = !state.isUpdatingAdminBusinessType,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AdminEmerald,
+                            contentColor = Color(0xFF022619)
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.testTag("confirm_elevate_to_club_button")
+                    ) {
+                        if (state.isUpdatingAdminBusinessType) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Color(0xFF022619))
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text("Elevate to Club", fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { businessPendingElevation = null },
+                        enabled = !state.isUpdatingAdminBusinessType
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+
+        val targetForDeletion = businessPendingDeletion
+        if (targetForDeletion != null) {
+            AlertDialog(
+                onDismissRequest = { if (!state.isDeletingAdminBusiness) businessPendingDeletion = null },
+                icon = {
+                    Icon(
+                        imageVector = Icons.Default.DeleteForever,
+                        contentDescription = null,
+                        tint = AdminCrimson,
+                        modifier = Modifier.size(32.dp)
+                    )
+                },
+                title = {
+                    Text(
+                        text = "Delete ${targetForDeletion.shopName}?",
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "This permanently removes ${targetForDeletion.shopName}, all staff accounts, inventory, tables, sales receipts, and billing history.",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "Phone: ${targetForDeletion.displayPhoneLabel()}",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = AdminEmerald
+                        )
+                        Text(
+                            text = "This action cannot be undone.",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = AdminCrimson
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.adminDeleteBusiness(targetForDeletion.shopId, targetForDeletion.shopName)
+                            businessPendingDeletion = null
+                        },
+                        enabled = !state.isDeletingAdminBusiness,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AdminCrimson,
+                            contentColor = Color(0xFF3D0611)
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.testTag("confirm_delete_admin_business_button")
+                    ) {
+                        if (state.isDeletingAdminBusiness) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Color(0xFF3D0611))
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text("Delete Permanently", fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { businessPendingDeletion = null },
+                        enabled = !state.isDeletingAdminBusiness
+                    ) {
+                        Text("Cancel")
+                    }
                 }
             )
         }
@@ -493,6 +665,7 @@ private fun SuperadminPortfolioContent(
     searchQuery: String,
     statusFilter: String,
     isLoading: Boolean,
+    isDeletingBusiness: Boolean,
     hasFreshData: Boolean,
     refreshError: String?,
     selectedBusinessId: String?,
@@ -503,6 +676,8 @@ private fun SuperadminPortfolioContent(
     onCreateOwnerPasskey: (String) -> Unit,
     onOpenSubscription: (AdminBusiness) -> Unit,
     onStatusChange: (String, String, String?) -> Unit,
+    onRequestElevateToClub: (AdminBusiness) -> Unit,
+    onRequestDeleteBusiness: (AdminBusiness) -> Unit,
     onNavigateToRegister: () -> Unit,
     error: String?,
     notice: String?,
@@ -577,7 +752,8 @@ private fun SuperadminPortfolioContent(
                                     Text(
                                         text = businesses.size.toString(),
                                         fontSize = 38.sp,
-                                        fontWeight = FontWeight.ExtraBold,
+                                        fontFamily = SpaceGroteskFontFamily,
+                                        fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
                                     Text(
@@ -753,9 +929,11 @@ private fun SuperadminPortfolioContent(
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = onSearchChange,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("admin_search_input"),
                 singleLine = true,
-                placeholder = { Text("Search business name, owner email, or type") },
+                placeholder = { Text("Search business, phone, owner email, or type") },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = AdminEmerald) },
                 trailingIcon = if (searchQuery.isNotBlank()) {
                     {
@@ -806,13 +984,16 @@ private fun SuperadminPortfolioContent(
                 DarkBusinessCard(
                     business = business,
                     isExpanded = selectedBusinessId == business.shopId,
+                    isDeleting = isDeletingBusiness,
                     onToggleExpand = { onSelectBusiness(business.shopId) },
                     onScanOwnerQr = { onScanOwnerQr(business.shopId) },
                     onCreateOwnerPasskey = { onCreateOwnerPasskey(business.shopId) },
                     onOpenSubscription = { onOpenSubscription(business) },
                     onStatusChange = { nextStatus ->
                         onStatusChange(business.shopId, nextStatus, "Updated from Superadmin console")
-                    }
+                    },
+                    onElevateToClub = { onRequestElevateToClub(business) },
+                    onDeleteBusiness = { onRequestDeleteBusiness(business) }
                 )
             }
         }
@@ -912,9 +1093,17 @@ private fun DarkAttentionCard(
                 tint = accent,
                 modifier = Modifier.size(20.dp)
             )
-            Column(modifier = Modifier.weight(1f)) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(business.shopName, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 Text(reason, fontSize = 11.sp, color = AdminMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(
+                    text = business.displayPhoneLabel(),
+                    fontSize = 11.sp,
+                    color = if (business.effectivePhone() != null) AdminEmerald else AdminMuted,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
             Button(
                 onClick = {
@@ -943,15 +1132,20 @@ private fun DarkAttentionCard(
 private fun DarkBusinessCard(
     business: AdminBusiness,
     isExpanded: Boolean,
+    isDeleting: Boolean,
     onToggleExpand: () -> Unit,
     onScanOwnerQr: () -> Unit,
     onCreateOwnerPasskey: () -> Unit,
     onOpenSubscription: () -> Unit,
-    onStatusChange: (String) -> Unit
+    onStatusChange: (String) -> Unit,
+    onElevateToClub: () -> Unit,
+    onDeleteBusiness: () -> Unit
 ) {
+    val context = LocalContext.current
     val billingState = business.billingState()
     val billingColor = adminStateColor(billingState)
     val effectivePrice = business.paymentLockAmountKsh.takeIf { it > 0 } ?: business.subscriptionPriceKsh
+    val effectivePhone = business.effectivePhone()
 
     Surface(
         color = AdminSurface,
@@ -1019,8 +1213,33 @@ private fun DarkBusinessCard(
                         overflow = TextOverflow.Ellipsis
                     )
 
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        modifier = Modifier.testTag("admin_business_phone_${business.shopId}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Phone,
+                            contentDescription = "Client phone",
+                            tint = if (effectivePhone != null) AdminEmerald else AdminMuted,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Text(
+                            text = business.displayPhoneLabel(),
+                            fontSize = 11.sp,
+                            fontWeight = if (effectivePhone != null) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (effectivePhone != null) AdminEmerald else AdminMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 2.dp)) {
                         AdminStatusPill(billingState.label, billingColor)
+                        AdminStatusPill(
+                            label = business.businessTypeLabel(),
+                            color = if (business.isLiquorStoreBusiness()) AdminAmber else AdminSky
+                        )
                         if (business.status.equals("suspended", ignoreCase = true)) {
                             AdminStatusPill("Suspended", AdminAmber)
                         } else if (business.status.equals("closed", ignoreCase = true)) {
@@ -1127,6 +1346,61 @@ private fun DarkBusinessCard(
                             Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("Passkey", fontSize = 11.sp)
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (effectivePhone != null) {
+                            OutlinedButton(
+                                onClick = {
+                                    runCatching {
+                                        val dialIntent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$effectivePhone"))
+                                        context.startActivity(dialIntent)
+                                    }
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, AdminEmerald.copy(alpha = 0.45f))
+                            ) {
+                                Icon(Icons.Default.Call, contentDescription = null, tint = AdminEmerald, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Call Client", fontSize = 11.sp, color = AdminEmerald, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                        OutlinedButton(
+                            onClick = onDeleteBusiness,
+                            enabled = !isDeleting,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("admin_delete_business_button_${business.shopId}"),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, AdminCrimson.copy(alpha = 0.55f))
+                        ) {
+                            Icon(Icons.Default.DeleteForever, contentDescription = null, tint = AdminCrimson, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Delete Business", fontSize = 11.sp, color = AdminCrimson, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    if (business.isLiquorStoreBusiness()) {
+                        OutlinedButton(
+                            onClick = onElevateToClub,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("admin_elevate_to_club_${business.shopId}"),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, AdminEmerald.copy(alpha = 0.55f))
+                        ) {
+                            Icon(Icons.Default.Upgrade, contentDescription = null, tint = AdminEmerald, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Elevate Liquor Store to Club", fontSize = 12.sp, color = AdminEmerald, fontWeight = FontWeight.Bold)
                         }
                     }
                 }

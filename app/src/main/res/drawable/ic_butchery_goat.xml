@@ -1,0 +1,41 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <!-- Goat legs -->
+    <path
+        android:strokeColor="#4A3F35"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round"
+        android:pathData="M16,29 L15,39 M21,29 L21,39 M30,29 L29,39 M35,28 L36,39" />
+    <!-- Goat body -->
+    <path
+        android:fillColor="#EFEAE2"
+        android:strokeColor="#4A3F35"
+        android:strokeWidth="1.5"
+        android:pathData="M14,22 C14,17 21,16 30,17 C35,17.5 38,20 38,24 C38,28 34,30 25,30 C17,30 14,27 14,22 Z" />
+    <!-- Tail -->
+    <path
+        android:fillColor="#D7CCC8"
+        android:strokeColor="#4A3F35"
+        android:strokeWidth="1.2"
+        android:pathData="M37,19 L41,16 L39,21 Z" />
+    <!-- Neck & Head -->
+    <path
+        android:fillColor="#F5F0E8"
+        android:strokeColor="#4A3F35"
+        android:strokeWidth="1.5"
+        android:pathData="M16,20 L12,13 C10,12 7,15 7,18 C7,20 10,21 13,20 L14,23 Z" />
+    <!-- Horns -->
+    <path
+        android:strokeColor="#6D4C41"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M13,12 C14,8 18,7 20,9 M11,13 C11,9 14,8 16,10" />
+    <!-- Eye -->
+    <path
+        android:fillColor="#2D241E"
+        android:pathData="M10.5,15.5 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0" />
+</vector>

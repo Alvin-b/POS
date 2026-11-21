@@ -1,0 +1,29 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <!-- Rolled matumbo / offal cut -->
+    <path
+        android:fillColor="#D7B8A9"
+        android:strokeColor="#5D4037"
+        android:strokeWidth="1.5"
+        android:pathData="M10,20 C10,14 16,12 24,14 C31,16 37,18 37,25 C37,31 30,35 21,34 C13,33 10,26 10,20 Z" />
+    <!-- Honeycomb tripe texture pattern -->
+    <path
+        android:fillColor="#BC8F80"
+        android:strokeColor="#5D4037"
+        android:strokeWidth="1.1"
+        android:pathData="M23,23 C23,18 28,16 33,18 C37,20 38,26 35,30 C31,34 24,31 23,23 Z" />
+    <!-- Spiral inner rings -->
+    <path
+        android:fillColor="#EED7CC"
+        android:strokeColor="#6D4C41"
+        android:strokeWidth="1.1"
+        android:pathData="M26,24 C26,21 29,20 32,21 C34,22 34,26 32,28 C29,29 26,27 26,24 Z" />
+    <path
+        android:strokeColor="#8D6E63"
+        android:strokeWidth="1.1"
+        android:strokeLineCap="round"
+        android:pathData="M14,20 L19,19 M15,25 L20,24 M17,29 L21,29" />
+</vector>

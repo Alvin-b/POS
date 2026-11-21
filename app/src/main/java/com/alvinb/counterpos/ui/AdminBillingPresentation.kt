@@ -39,6 +39,37 @@ internal fun AdminBusiness.paymentRecordLabel(): String = when {
     else -> "No verified payment receipt recorded"
 }
 
+internal fun AdminBusiness.effectivePhone(): String? =
+    ownerPhone?.takeIf(String::isNotBlank) ?: lastPaymentPhone?.takeIf(String::isNotBlank)
+
+internal fun formatDisplayPhone(raw: String?): String? {
+    val clean = raw?.trim()?.takeIf(String::isNotBlank) ?: return null
+    val digits = clean.filter(Char::isDigit)
+    return when {
+        digits.length == 12 && digits.startsWith("254") ->
+            "+${digits.substring(0, 3)} ${digits.substring(3, 6)} ${digits.substring(6, 9)} ${digits.substring(9)}"
+        digits.length == 10 && digits.startsWith("0") ->
+            "+254 ${digits.substring(1, 4)} ${digits.substring(4, 7)} ${digits.substring(7)}"
+        else -> clean
+    }
+}
+
+internal fun AdminBusiness.displayPhoneLabel(): String {
+    val ownerFormatted = formatDisplayPhone(ownerPhone)
+    if (ownerFormatted != null) return ownerFormatted
+    val mpesaFormatted = formatDisplayPhone(lastPaymentPhone)
+    if (mpesaFormatted != null) return "$mpesaFormatted (M-Pesa)"
+    return "No phone on file"
+}
+
+internal fun AdminBusiness.isLiquorStoreBusiness(): Boolean {
+    val type = businessType.trim().lowercase(java.util.Locale.ROOT)
+    return type == "counter_seller" || type == "liquor_store"
+}
+
+internal fun AdminBusiness.businessTypeLabel(): String =
+    if (isLiquorStoreBusiness()) "Liquor Store" else "Club"
+
 private fun String?.adminDate(): String? = this
     ?.takeIf(String::isNotBlank)
     ?.substringBefore('T')

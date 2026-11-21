@@ -1,0 +1,39 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <!-- Outer steak slab shadow -->
+    <path
+        android:fillColor="#7F1D1D"
+        android:pathData="M9,28 C9,19 16,12 26,12 C34,12 40,16 40,22 C40,28 35,34 26,37 C17,39 9,35 9,28 Z" />
+    <!-- Fat trim outer rim -->
+    <path
+        android:fillColor="#FDE2DF"
+        android:strokeColor="#5B1B1B"
+        android:strokeWidth="1.5"
+        android:pathData="M8,24 C8,15 15,9 26,9 C35,9 40,14 40,20 C40,26 35,32 25,34 C16,35 8,31 8,24 Z" />
+    <!-- Rich red steak meat -->
+    <path
+        android:fillColor="#C62828"
+        android:pathData="M11,23.5 C11,16.5 17,11.5 26,11.5 C33.5,11.5 37.5,15 37.5,19.8 C37.5,24.5 33,29.5 24.5,31 C17,32 11,29 11,23.5 Z" />
+    <!-- White marbling streaks -->
+    <path
+        android:strokeColor="#FCE4EC"
+        android:strokeWidth="1.4"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M15,19 C19,17 22,19 25,16" />
+    <path
+        android:strokeColor="#FCE4EC"
+        android:strokeWidth="1.3"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M17,25 C22,23 26,25 32,22" />
+    <!-- Bone eye -->
+    <path
+        android:fillColor="#FFF8E7"
+        android:strokeColor="#8D6E63"
+        android:strokeWidth="1"
+        android:pathData="M28.5,15.5 a2.5,2.2 0 1,0 5,0 a2.5,2.2 0 1,0 -5,0" />
+</vector>

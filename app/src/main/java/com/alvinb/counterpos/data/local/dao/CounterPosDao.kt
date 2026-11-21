@@ -13,6 +13,9 @@ import com.alvinb.counterpos.data.local.entity.ServiceCounterEntity
 import com.alvinb.counterpos.data.local.entity.TableOrderEntity
 import com.alvinb.counterpos.data.local.entity.parseSaleUnits
 import kotlinx.coroutines.flow.Flow
+import com.alvinb.counterpos.data.local.entity.ButcheryConfigEntity
+import com.alvinb.counterpos.data.local.entity.ButcheryCutEntity
+import com.alvinb.counterpos.data.local.entity.ButcherySaleEntity
 import com.alvinb.counterpos.data.local.entity.OfflineSessionEntity
 import com.alvinb.counterpos.data.local.entity.OfflineTransactionLogEntity
 import com.alvinb.counterpos.data.local.entity.OfflineTransactionStatus
@@ -33,6 +36,8 @@ interface CounterPosDao {
     suspend fun getServiceCounters(shopId: String): List<ServiceCounterEntity>
     @Query("DELETE FROM service_counters WHERE shopId = :shopId")
     suspend fun clearServiceCounters(shopId: String)
+    @Query("DELETE FROM service_counters WHERE shopId = :shopId AND id = :counterId")
+    suspend fun deleteServiceCounter(shopId: String, counterId: String): Int
     @Query("DELETE FROM service_counters")
     suspend fun clearAllServiceCounters()
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -77,14 +82,20 @@ interface CounterPosDao {
     fun observeTableSettlementOutbox(shopId: String): Flow<List<OutboxEntity>>
     @Query("SELECT * FROM sync_outbox WHERE shopId = :shopId AND blocked = 0 ORDER BY createdAt ASC, operationId ASC LIMIT 1")
     suspend fun nextPendingOutbox(shopId: String): OutboxEntity?
+    @Query("SELECT * FROM sync_outbox WHERE operationId = :operationId LIMIT 1")
+    suspend fun getOutboxItem(operationId: String): OutboxEntity?
     @Query("SELECT COUNT(*) FROM sync_outbox")
     fun observePendingOutboxCount(): Flow<Int>
+    @Query("SELECT COUNT(*) FROM sync_outbox WHERE shopId = :shopId")
+    fun observePendingOutboxCountForShop(shopId: String): Flow<Int>
     @Query("SELECT COUNT(*) FROM sync_outbox WHERE shopId = :shopId")
     suspend fun outboxCount(shopId: String): Int
     @Query("SELECT COUNT(*) FROM sync_outbox WHERE operationId = :operationId")
     suspend fun outboxOperationCount(operationId: String): Int
     @Query("SELECT * FROM sync_outbox WHERE shopId = :shopId AND blocked = 1 ORDER BY createdAt ASC")
     suspend fun blockedOutbox(shopId: String): List<OutboxEntity>
+    @Query("SELECT * FROM sync_outbox WHERE shopId = :shopId AND blocked = 1 ORDER BY createdAt ASC")
+    fun observeBlockedOutbox(shopId: String): Flow<List<OutboxEntity>>
     @Query("UPDATE sync_outbox SET blocked = 0, lastError = NULL WHERE shopId = :shopId")
     suspend fun unblockOutboxForShop(shopId: String): Int
     @Query("UPDATE sync_outbox SET blocked = 0, lastError = NULL WHERE operationId = :operationId")
@@ -185,6 +196,19 @@ interface CounterPosDao {
     suspend fun enqueueOutboxAndLog(item: OutboxEntity, log: OfflineTransactionLogEntity) {
         enqueueOutbox(item)
         insertTransactionLog(log)
+    }
+
+    @Transaction
+    suspend fun claimPendingOutboxForSync(
+        operationId: String,
+        updatedAt: Long = System.currentTimeMillis()
+    ): OutboxEntity? {
+        val current = getOutboxItem(operationId) ?: return null
+        if (current.blocked) return null
+        val log = getTransactionLog(operationId)
+        if (log?.status == OfflineTransactionStatus.CANCELLED) return null
+        markTransactionLogSyncing(operationId, updatedAt)
+        return current
     }
 
     @Transaction
@@ -324,8 +348,20 @@ interface CounterPosDao {
     @Query("DELETE FROM dining_tables WHERE id NOT IN (:ids)")
     suspend fun deleteDiningTablesNotIn(ids: List<String>)
 
+    @Query("DELETE FROM dining_tables WHERE remoteId IS NOT NULL AND id NOT IN (:ids)")
+    suspend fun deleteSyncedDiningTablesNotIn(ids: List<String>)
+
+    @Query("DELETE FROM dining_tables WHERE remoteId IS NOT NULL")
+    suspend fun clearSyncedDiningTables()
+
     @Query("DELETE FROM table_orders WHERE saleId NOT IN (:saleIds)")
     suspend fun deleteTableOrdersNotIn(saleIds: List<Long>)
+
+    @Query("DELETE FROM table_orders WHERE saleId NOT IN (:saleIds) AND saleId NOT IN (SELECT id FROM sales WHERE remoteId IS NULL AND undone = 0)")
+    suspend fun deleteSyncedTableOrdersNotIn(saleIds: List<Long>)
+
+    @Query("DELETE FROM table_orders WHERE saleId NOT IN (SELECT id FROM sales WHERE remoteId IS NULL AND undone = 0)")
+    suspend fun clearSyncedTableOrders()
 
     @Query("DELETE FROM products WHERE catalogCode NOT IN (:codes)")
     suspend fun deleteProductsNotIn(codes: List<String>)
@@ -346,14 +382,26 @@ interface CounterPosDao {
     ) {
         if (tables.isNotEmpty()) {
             insertDiningTables(tables)
-            deleteDiningTablesNotIn(tables.map { it.id })
+            if (preservePendingSales) {
+                deleteSyncedDiningTablesNotIn(tables.map { it.id })
+            } else {
+                deleteDiningTablesNotIn(tables.map { it.id })
+            }
+        } else if (preservePendingSales) {
+            clearSyncedDiningTables()
         } else {
             clearDiningTables()
         }
 
         if (orders.isNotEmpty()) {
             insertTableOrders(orders)
-            deleteTableOrdersNotIn(orders.map { it.saleId })
+            if (preservePendingSales) {
+                deleteSyncedTableOrdersNotIn(orders.map { it.saleId })
+            } else {
+                deleteTableOrdersNotIn(orders.map { it.saleId })
+            }
+        } else if (preservePendingSales) {
+            clearSyncedTableOrders()
         } else {
             clearTableOrders()
         }
@@ -565,7 +613,10 @@ interface CounterPosDao {
 
     @Transaction
     suspend fun cancelUnsentSale(sale: SaleEntity, perCounter: Boolean): Boolean {
-        if (sale.undone || outboxForSale(sale.id) == null) return false
+        if (sale.undone) return false
+        val outbox = outboxForSale(sale.id) ?: return false
+        val log = getTransactionLog(outbox.operationId)
+        if (log?.status == OfflineTransactionStatus.SYNCING) return false
         val product = getProductByCode(sale.catalogCode)
         val unitsPerSale = product?.let { current ->
             parseSaleUnits(current.salesUnitsJson, current.sellingPriceKsh)
@@ -763,5 +814,125 @@ interface CounterPosDao {
         if (restoreStock(sale.catalogCode, stockToRestore) != 1) return false
         deleteTableOrderBySaleId(sale.id)
         return markSaleUndone(sale.id) == 1
+    }
+
+    // ---- Butchery Package Queries & Transactions ----
+    @Query("SELECT * FROM butchery_config WHERE shopId = :shopId LIMIT 1")
+    fun observeButcheryConfig(shopId: String): Flow<ButcheryConfigEntity?>
+
+    @Query("SELECT * FROM butchery_config WHERE shopId = :shopId LIMIT 1")
+    suspend fun getButcheryConfig(shopId: String): ButcheryConfigEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertButcheryConfig(config: ButcheryConfigEntity)
+
+    @Query("SELECT * FROM butchery_cuts WHERE shopId = :shopId ORDER BY sortOrder ASC, name COLLATE NOCASE ASC")
+    fun observeButcheryCuts(shopId: String): Flow<List<ButcheryCutEntity>>
+
+    @Query("SELECT * FROM butchery_cuts WHERE shopId = :shopId ORDER BY sortOrder ASC, name COLLATE NOCASE ASC")
+    suspend fun getButcheryCuts(shopId: String): List<ButcheryCutEntity>
+
+    @Query("SELECT * FROM butchery_cuts WHERE id = :cutId LIMIT 1")
+    suspend fun getButcheryCutById(cutId: String): ButcheryCutEntity?
+
+    @Query("SELECT COUNT(*) FROM butchery_cuts WHERE shopId = :shopId")
+    suspend fun getButcheryCutCount(shopId: String): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertButcheryCut(cut: ButcheryCutEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertButcheryCuts(cuts: List<ButcheryCutEntity>)
+
+    @Query("UPDATE butchery_cuts SET pricePerKgKsh = :pricePerKgKsh WHERE id = :cutId")
+    suspend fun updateButcheryCutPrice(cutId: String, pricePerKgKsh: Int): Int
+
+    @Query("UPDATE butchery_cuts SET pricePerKgKsh = :pricePerKgKsh WHERE shopId = :shopId AND category = 'Beef'")
+    suspend fun updateAllBeefCutPrices(shopId: String, pricePerKgKsh: Int): Int
+
+    @Query("UPDATE butchery_cuts SET pricePerKgKsh = :pricePerKgKsh WHERE shopId = :shopId AND lower(category) = lower(:category)")
+    suspend fun updateCutPricesForCategory(shopId: String, category: String, pricePerKgKsh: Int): Int
+
+    @Query("UPDATE butchery_cuts SET stockGrams = :stockGrams WHERE id = :cutId")
+    suspend fun setButcheryCutStockGrams(cutId: String, stockGrams: Int): Int
+
+    @Query("UPDATE butchery_cuts SET stockGrams = stockGrams + :grams WHERE id = :cutId")
+    suspend fun addButcheryCutStockGrams(cutId: String, grams: Int): Int
+
+    @Query("UPDATE butchery_cuts SET active = :active WHERE id = :cutId")
+    suspend fun setButcheryCutActive(cutId: String, active: Boolean): Int
+
+    @Query("SELECT * FROM butchery_sales WHERE shopId = :shopId ORDER BY createdAt DESC, id DESC")
+    fun observeButcherySales(shopId: String): Flow<List<ButcherySaleEntity>>
+
+    @Query("SELECT * FROM butchery_sales WHERE shopId = :shopId AND undone = 0 ORDER BY createdAt DESC, id DESC LIMIT 1")
+    suspend fun getLatestActiveButcherySale(shopId: String): ButcherySaleEntity?
+
+    @Query("UPDATE butchery_sales SET undone = 1 WHERE id = :saleId AND undone = 0")
+    suspend fun markButcherySaleUndone(saleId: Long): Int
+
+    @Insert
+    suspend fun insertButcherySale(sale: ButcherySaleEntity): Long
+
+    @Transaction
+    suspend fun enrollButchery(config: ButcheryConfigEntity, starterCuts: List<ButcheryCutEntity>) {
+        upsertButcheryConfig(config)
+        if (getButcheryCutCount(config.shopId) == 0 && starterCuts.isNotEmpty()) {
+            insertButcheryCuts(starterCuts)
+        }
+    }
+
+    @Transaction
+    suspend fun recordButcherySale(
+        shopId: String,
+        cutId: String,
+        weightGrams: Int,
+        totalKsh: Int,
+        paymentMethod: String,
+        entryMode: String,
+        attendantName: String?,
+        createdAt: Long
+    ): Long? {
+        if (weightGrams <= 0 || totalKsh <= 0) return null
+        val cut = getButcheryCutById(cutId) ?: return null
+        if (cut.shopId != shopId) return null
+        val deducted = minOf(cut.stockGrams.coerceAtLeast(0), weightGrams)
+        if (deducted > 0) {
+            setButcheryCutStockGrams(cut.id, cut.stockGrams - deducted)
+        }
+        val trimmedPayment = paymentMethod.trim()
+        val normalizedPayment = when {
+            trimmedPayment.isEmpty() -> "Cash Payment"
+            trimmedPayment.equals("mpesa", ignoreCase = true) -> "mpesa"
+            trimmedPayment.equals("cash", ignoreCase = true) -> "cash"
+            else -> trimmedPayment.take(32)
+        }
+        return insertButcherySale(
+            ButcherySaleEntity(
+                shopId = shopId,
+                cutId = cut.id,
+                cutName = cut.name,
+                category = cut.category,
+                pricePerKgKsh = cut.pricePerKgKsh,
+                weightGrams = weightGrams,
+                totalKsh = totalKsh,
+                paymentMethod = normalizedPayment,
+                entryMode = entryMode,
+                stockDeductedGrams = deducted,
+                attendantName = attendantName,
+                createdAt = createdAt,
+                undone = false
+            )
+        )
+    }
+
+    @Transaction
+    suspend fun undoLatestButcherySale(shopId: String): Boolean {
+        val latest = getLatestActiveButcherySale(shopId) ?: return false
+        if (markButcherySaleUndone(latest.id) != 1) return false
+        if (latest.stockDeductedGrams > 0) {
+            addButcheryCutStockGrams(latest.cutId, latest.stockDeductedGrams)
+        }
+        return true
     }
 }
