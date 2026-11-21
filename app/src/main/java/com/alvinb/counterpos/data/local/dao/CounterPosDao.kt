@@ -874,6 +874,30 @@ interface CounterPosDao {
     @Insert
     suspend fun insertButcherySale(sale: ButcherySaleEntity): Long
 
+    @Query("DELETE FROM butchery_config WHERE shopId = :shopId")
+    suspend fun deleteButcheryConfig(shopId: String)
+
+    @Query("DELETE FROM butchery_cuts WHERE shopId = :shopId")
+    suspend fun deleteButcheryCuts(shopId: String)
+
+    @Query("DELETE FROM butchery_sales WHERE shopId = :shopId")
+    suspend fun deleteButcherySales(shopId: String)
+
+    @Transaction
+    suspend fun replaceButcherySnapshot(
+        shopId: String,
+        config: ButcheryConfigEntity?,
+        cuts: List<ButcheryCutEntity>,
+        sales: List<ButcherySaleEntity>
+    ) {
+        deleteButcheryConfig(shopId)
+        deleteButcheryCuts(shopId)
+        deleteButcherySales(shopId)
+        if (config != null) upsertButcheryConfig(config)
+        if (cuts.isNotEmpty()) insertButcheryCuts(cuts)
+        sales.forEach { insertButcherySale(it) }
+    }
+
     @Query("UPDATE butchery_cuts SET name = 'Beef', iconKey = 'beef' WHERE shopId = :shopId AND name = 'Beef Steak'")
     suspend fun normalizeStarterBeefCut(shopId: String): Int
 

@@ -1803,8 +1803,72 @@ class CounterPosRepository(
             counterStock = counterStockRows,
             preservePendingSales = hasPendingSales
         )
+        // Butchery is a separate shared workspace. A failed Butchery pull must not
+        // prevent the core POS snapshot from becoming usable offline.
+        runCatching { syncButcherySnapshot(membership.shopId) }
         _serviceCounters.value = counters
         lastSyncCompletedAt.set(System.currentTimeMillis())
+    }
+
+    private suspend fun syncButcherySnapshot(shopId: String) {
+        val (configRow, cutRows, saleRows) = coroutineScope {
+            val config = async { remote.butcheryConfig(shopId) }
+            val cuts = async { remote.butcheryCuts(shopId) }
+            val sales = async { remote.butcherySales(shopId) }
+            Triple(config.await(), cuts.await(), sales.await())
+        }
+        val config = configRow?.let { row ->
+            ButcheryConfigEntity(
+                shopId = shopId,
+                enabled = row.optBoolean("enabled"),
+                butcheryName = row.optString("butchery_name"),
+                beefOnlyMode = row.optBoolean("beef_only_mode"),
+                defaultBeefPricePerKgKsh = row.optInt("default_beef_price_per_kg_ksh", 680),
+                paymentMethodsJson = row.optJSONArray("payment_methods")?.toString() ?: "[]",
+                enabledCategoriesJson = row.optJSONArray("enabled_categories")?.toString() ?: "[]",
+                updatedAt = parseTimestamp(row.optString("updated_at"))
+            )
+        }
+        val cuts = buildList {
+            for (index in 0 until cutRows.length()) {
+                val row = cutRows.optJSONObject(index) ?: continue
+                add(ButcheryCutEntity(
+                    id = row.optString("id"),
+                    shopId = shopId,
+                    name = row.optString("name"),
+                    category = row.optString("category"),
+                    pricePerKgKsh = row.optInt("price_per_kg_ksh"),
+                    stockGrams = row.optInt("stock_grams"),
+                    iconKey = row.optString("icon_key", "beef_steak"),
+                    active = row.optBoolean("active", true),
+                    sortOrder = row.optInt("sort_order")
+                ))
+            }
+        }.filter { it.id.isNotBlank() }
+        val sales = buildList {
+            for (index in 0 until saleRows.length()) {
+                val row = saleRows.optJSONObject(index) ?: continue
+                val remoteId = row.optLong("id", 0L)
+                if (remoteId <= 0L) continue
+                add(ButcherySaleEntity(
+                    id = remoteId,
+                    shopId = shopId,
+                    cutId = row.optString("cut_id"),
+                    cutName = row.optString("cut_name"),
+                    category = row.optString("category"),
+                    pricePerKgKsh = row.optInt("price_per_kg_ksh"),
+                    weightGrams = row.optInt("weight_grams"),
+                    totalKsh = row.optInt("total_ksh"),
+                    paymentMethod = row.optString("payment_method", "cash"),
+                    entryMode = row.optString("entry_mode", "weight"),
+                    stockDeductedGrams = row.optInt("stock_deducted_grams"),
+                    attendantName = row.optNullableString("attendant_name"),
+                    createdAt = parseTimestamp(row.optString("created_at")),
+                    undone = row.optBoolean("undone")
+                ))
+            }
+        }
+        dao.replaceButcherySnapshot(shopId, config, cuts, sales)
     }
 
     private suspend fun uploadPendingLocalSales() {
@@ -2988,6 +3052,20 @@ class CounterPosRepository(
             updatedAt = System.currentTimeMillis()
         )
         dao.enrollButchery(config, ButcheryPricing.defaultCuts(shopId, safePrice))
+        try {
+            remote.upsertButcheryConfig(
+                shopId = shopId,
+                enabled = enabled,
+                butcheryName = resolvedName,
+                beefOnlyMode = effectiveBeefOnly,
+                defaultBeefPricePerKgKsh = safePrice,
+                paymentMethods = JSONArray(resolvedPaymentJson),
+                enabledCategories = JSONArray(config.enabledCategoriesJson)
+            )
+            dao.getButcheryCuts(shopId).forEach { cut -> pushButcheryCut(cut) }
+        } catch (error: Exception) {
+            if (!isRetryable(error)) throw error
+        }
     }
 
     suspend fun applyDefaultBeefPricePerKg(shopId: String, pricePerKgKsh: Int) =
@@ -3010,16 +3088,39 @@ class CounterPosRepository(
             ButcheryPricing.defaultCuts(shopId, safePrice)
         )
         dao.updateCutPricesForCategory(shopId, category, safePrice)
+        try {
+            remote.updateButcheryCategoryPrice(shopId, category, safePrice)
+        } catch (error: Exception) {
+            if (!isRetryable(error)) throw error
+        }
     }
 
     suspend fun updateButcheryCutPrice(cutId: String, pricePerKgKsh: Int): Boolean = withContext(Dispatchers.IO) {
         if (pricePerKgKsh <= 0) return@withContext false
-        dao.updateButcheryCutPrice(cutId, pricePerKgKsh) == 1
+        val cut = dao.getButcheryCutById(cutId) ?: return@withContext false
+        val updated = dao.updateButcheryCutPrice(cutId, pricePerKgKsh) == 1
+        if (updated) {
+            try {
+                pushButcheryCut(cut.copy(pricePerKgKsh = pricePerKgKsh))
+            } catch (error: Exception) {
+                if (!isRetryable(error)) throw error
+            }
+        }
+        updated
     }
 
     suspend fun setButcheryCutStockKg(cutId: String, stockKg: Double): Boolean = withContext(Dispatchers.IO) {
         val grams = (stockKg.coerceAtLeast(0.0) * 1000.0).toInt()
-        dao.setButcheryCutStockGrams(cutId, grams) == 1
+        val cut = dao.getButcheryCutById(cutId) ?: return@withContext false
+        val updated = dao.setButcheryCutStockGrams(cutId, grams) == 1
+        if (updated) {
+            try {
+                pushButcheryCut(cut.copy(stockGrams = grams))
+            } catch (error: Exception) {
+                if (!isRetryable(error)) throw error
+            }
+        }
+        updated
     }
 
     suspend fun addButcheryCut(
@@ -3035,8 +3136,7 @@ class CounterPosRepository(
         require(pricePerKgKsh > 0) { "Enter a valid price per kg." }
         val currentCount = dao.getButcheryCutCount(shopId)
         val grams = (stockKg.coerceAtLeast(0.0) * 1000.0).toInt()
-        dao.upsertButcheryCut(
-            ButcheryCutEntity(
+        val cut = ButcheryCutEntity(
                 id = "${shopId}_cut_${UUID.randomUUID().toString().take(8)}",
                 shopId = shopId,
                 name = cleanName,
@@ -3047,11 +3147,22 @@ class CounterPosRepository(
                 active = true,
                 sortOrder = currentCount + 1
             )
-        )
+        dao.upsertButcheryCut(cut)
+        try {
+            pushButcheryCut(cut)
+        } catch (error: Exception) {
+            if (!isRetryable(error)) throw error
+        }
     }
 
     suspend fun setButcheryCutActive(cutId: String, active: Boolean) = withContext(Dispatchers.IO) {
+        val cut = dao.getButcheryCutById(cutId) ?: return@withContext
         dao.setButcheryCutActive(cutId, active)
+        try {
+            pushButcheryCut(cut.copy(active = active))
+        } catch (error: Exception) {
+            if (!isRetryable(error)) throw error
+        }
     }
 
     suspend fun recordButcherySale(
@@ -3062,20 +3173,40 @@ class CounterPosRepository(
         paymentMethod: String,
         entryMode: String
     ): Long? = withContext(Dispatchers.IO) {
-        dao.recordButcherySale(
-            shopId = shopId,
-            cutId = cutId,
-            weightGrams = weightGrams,
-            totalKsh = totalKsh,
-            paymentMethod = paymentMethod,
-            entryMode = entryMode,
-            attendantName = account?.email,
-            createdAt = System.currentTimeMillis()
-        )
+        val operationId = UUID.randomUUID().toString()
+        try {
+            remote.recordButcherySale(
+                shopId = shopId,
+                cutId = cutId,
+                weightGrams = weightGrams,
+                totalKsh = totalKsh,
+                paymentMethod = paymentMethod,
+                entryMode = entryMode,
+                operationId = operationId,
+                attendantName = account?.email
+            )
+        } catch (error: Exception) {
+            if (!isRetryable(error)) throw error
+        }
+        dao.recordButcherySale(shopId, cutId, weightGrams, totalKsh, paymentMethod, entryMode, account?.email, System.currentTimeMillis())
     }
 
     suspend fun undoLatestButcherySale(shopId: String): Boolean = withContext(Dispatchers.IO) {
+        val latest = dao.getLatestActiveButcherySale(shopId)
+        try {
+            remote.undoLatestButcherySale(shopId, latest?.id)
+        } catch (error: Exception) {
+            if (!isRetryable(error)) throw error
+        }
         dao.undoLatestButcherySale(shopId)
+    }
+
+    private suspend fun pushButcheryCut(cut: ButcheryCutEntity) {
+        remote.upsertButcheryCut(JSONObject()
+            .put("shop_id", cut.shopId).put("id", cut.id).put("name", cut.name)
+            .put("category", cut.category).put("price_per_kg_ksh", cut.pricePerKgKsh)
+            .put("stock_grams", cut.stockGrams).put("icon_key", cut.iconKey)
+            .put("active", cut.active).put("sort_order", cut.sortOrder))
     }
 }
 
