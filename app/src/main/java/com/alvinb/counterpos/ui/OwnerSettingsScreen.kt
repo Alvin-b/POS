@@ -112,6 +112,7 @@ fun OwnerSettingsScreen(
         enabledCategories: List<String>
     ) -> Unit = { _, _, _, _, _, _ -> },
     onOpenButcheryWorkspace: (ButcheryTab) -> Unit = {},
+    onOpenButcheryEnrollment: () -> Unit = {},
     onOpenStaffManagement: () -> Unit = {},
     onOpenSubscription: () -> Unit = {}
 ) {
@@ -293,7 +294,15 @@ fun OwnerSettingsScreen(
                         ButcheryMeatTypesEditor(
                             selectedCategories = butcheryCategoriesDraft,
                             enabled = ownerCanEdit,
-                            onCategoriesChange = { butcheryCategoriesDraft = it }
+                            onCategoriesChange = { nextCategories ->
+                                butcheryCategoriesDraft = nextCategories
+                                if (ownerCanEdit && butcheryNameDraft.trim().isNotEmpty()) {
+                                    val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                    val nextBeefOnly = nextCategories.size == 1 &&
+                                        nextCategories.first().equals(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label, ignoreCase = true)
+                                    onSaveButcheryConfig(true, butcheryNameDraft.trim(), nextBeefOnly, price, butcheryPaymentMethodsDraft, nextCategories)
+                                }
+                            }
                         )
 
                         val chosenButcheryProducts = remember(butcheryCuts, butcheryCategoriesDraft, butcheryBeefPriceDraft, butcheryConfig?.shopId) {
@@ -434,6 +443,22 @@ fun OwnerSettingsScreen(
                             Icon(Icons.Default.Storefront, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
                             Text("Open Butchery POS", fontWeight = FontWeight.Bold)
+                        }
+
+                        if (ownerCanEdit) {
+                            OutlinedButton(
+                                onClick = {
+                                    val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                    onSaveButcheryConfig(true, butcheryNameDraft.trim(), butcheryIsBeefOnly, price, butcheryPaymentMethodsDraft, butcheryCategoriesDraft)
+                                    onOpenButcheryEnrollment()
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth().testTag("owner_settings_enroll_butchery_button")
+                            ) {
+                                Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Enroll Butchery Phone (Passkey / QR)", fontWeight = FontWeight.SemiBold)
+                            }
                         }
                     }
                     if (!ownerCanEdit) ReadOnlyHint()

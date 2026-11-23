@@ -134,7 +134,7 @@ private fun employeeScheduleSummary(member: JSONObject): String {
 }
 
 private enum class StaffManagementTab(val title: String) {
-    ENROLL("Enroll Waiter"),
+    ENROLL("Enroll"),
     STAFF_LIST("Staff Roster"),
     HOURS("Business Hours")
 }
@@ -146,6 +146,7 @@ fun StaffManagementScreen(
     role: String,
     businessType: String,
     startOnBusinessHours: Boolean = false,
+    startOnButchery: Boolean = false,
     onClose: () -> Unit,
     onLoadMembers: () -> Unit,
     onIssueWaiterPass: (String) -> Unit,
@@ -157,7 +158,10 @@ fun StaffManagementScreen(
     onClearEmployeeRecoveryPass: () -> Unit,
     onSaveEmployeeSchedule: (String, Int, String, String, Boolean) -> Unit,
     onSaveBusinessHours: (BusinessHours) -> Unit,
-    onScanWaiterCode: (String) -> Unit
+    onScanWaiterCode: (String) -> Unit,
+    onSelectEnrollStation: (String) -> Unit = {},
+    onIssueButcheryPass: (String) -> Unit = {},
+    onScanButcheryCode: (String) -> Unit = {}
 ) {
     BackHandler(onBack = onClose)
 
@@ -169,9 +173,19 @@ fun StaffManagementScreen(
     val ownerCanEnroll = role.equals("owner", ignoreCase = true)
     val ownerCanEditHours = role.equals("owner", ignoreCase = true)
 
-    var selectedTab by remember(startOnBusinessHours) {
+    var selectedTab by remember(startOnBusinessHours, startOnButchery) {
         mutableStateOf(if (startOnBusinessHours) StaffManagementTab.HOURS else StaffManagementTab.ENROLL)
     }
+    var selectedEnrollStation by remember(startOnButchery, state.staffEnrollmentStation) {
+        mutableStateOf(
+            if (startOnButchery || state.staffEnrollmentStation.equals("butchery", ignoreCase = true)) {
+                "butchery"
+            } else {
+                "waiter"
+            }
+        )
+    }
+    var butcheryStationName by remember { mutableStateOf("") }
     // Roster state
     var staffSearchQuery by remember { mutableStateOf("") }
     var staffStatusFilter by remember { mutableStateOf("all") } // "all", "active", "suspended"
@@ -264,7 +278,7 @@ fun StaffManagementScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "$businessName · Waiters & Duty Hours",
+                                text = "$businessName · Waiters, Butchery & Hours",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -316,20 +330,47 @@ fun StaffManagementScreen(
                 StaffManagementTab.ENROLL -> {
                     EnrollWaitersTabContent(
                         state = state,
+                        businessName = businessName,
                         ownerCanEdit = ownerCanEnroll,
-                        onIssuePasskey = { onIssueWaiterPass("cashier") },
+                        selectedStation = selectedEnrollStation,
+                        butcheryStationName = butcheryStationName,
+                        onSelectStation = { station ->
+                            selectedEnrollStation = station
+                            onSelectEnrollStation(station)
+                        },
+                        onButcheryStationNameChange = { butcheryStationName = it.take(80) },
+                        onIssuePasskey = {
+                            if (selectedEnrollStation == "butchery") {
+                                onIssueButcheryPass(butcheryStationName.trim())
+                            } else {
+                                onIssueWaiterPass("cashier")
+                            }
+                        },
                         onCopy = { text ->
                             clipboardManager.setText(AnnotatedString(text))
                             scope.launch { snackbarHostState.showSnackbar("Copied to clipboard!") }
                         },
-                        onShare = { text ->
+                        onShare = { text, isButchery ->
+                            val shareText = if (isButchery) {
+                                "Your Butchery POS enrollment code for $businessName: $text\nOpen the app and scan or enter this code to launch Butchery Quick Sale."
+                            } else {
+                                "Your Counter POS waiter enrollment code for $businessName: $text\nOpen the app and scan or enter this code to join."
+                            }
                             val intent = Intent(Intent.ACTION_SEND).apply {
                                 type = "text/plain"
-                                putExtra(Intent.EXTRA_TEXT, "Your Counter POS waiter enrollment code for $businessName: $text\nOpen the app and scan or enter this code to join.")
+                                putExtra(Intent.EXTRA_TEXT, shareText)
                             }
-                            context.startActivity(Intent.createChooser(intent, "Share Waiter Passkey"))
+                            context.startActivity(
+                                Intent.createChooser(intent, if (isButchery) "Share Butchery Passkey" else "Share Waiter Passkey")
+                            )
                         },
-                        onScanWaiterCode = { onScanWaiterCode("cashier") }
+                        onScanCode = {
+                            if (selectedEnrollStation == "butchery") {
+                                onScanButcheryCode(butcheryStationName.trim())
+                            } else {
+                                onScanWaiterCode("cashier")
+                            }
+                        }
                     )
                 }
 
@@ -488,12 +529,20 @@ fun StaffManagementScreen(
 @Composable
 private fun EnrollWaitersTabContent(
     state: CounterPosUiState,
+    businessName: String,
     ownerCanEdit: Boolean,
+    selectedStation: String,
+    butcheryStationName: String,
+    onSelectStation: (String) -> Unit,
+    onButcheryStationNameChange: (String) -> Unit,
     onIssuePasskey: () -> Unit,
     onCopy: (String) -> Unit,
-    onShare: (String) -> Unit,
-    onScanWaiterCode: () -> Unit
+    onShare: (String, Boolean) -> Unit,
+    onScanCode: () -> Unit
 ) {
+    val isButchery = selectedStation == "butchery"
+    val displayedPasskey = if (isButchery) state.butcheryPasskey else state.employeePasskey
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
@@ -509,27 +558,105 @@ private fun EnrollWaitersTabContent(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
-                    Text("Enroll New Staff", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("Issue a one-time passkey or scan an employee phone", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (isButchery) "Enroll Butchery Station" else "Enroll New Staff",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = if (isButchery) {
+                            "Issue a one-time Butchery passkey or scan a butchery phone"
+                        } else {
+                            "Issue a one-time passkey or scan an employee phone"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 Surface(
                     shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primaryContainer,
+                    color = if (isButchery) ButcheryPalette.EmeraldHeader.copy(alpha = 0.14f) else MaterialTheme.colorScheme.primaryContainer,
                     modifier = Modifier.size(38.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Icon(Icons.Default.Badge, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                        Icon(
+                            imageVector = if (isButchery) Icons.Default.Storefront else Icons.Default.Badge,
+                            contentDescription = null,
+                            tint = if (isButchery) ButcheryPalette.EmeraldHeader else MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
             }
 
-            Text("Assigned role: Waiter", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "Enrollment Type",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = !isButchery,
+                        onClick = { onSelectStation("waiter") },
+                        label = { Text("Waiter", fontWeight = FontWeight.SemiBold) },
+                        leadingIcon = if (!isButchery) ({
+                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                        }) else null,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("enroll_station_waiter")
+                    )
+                    FilterChip(
+                        selected = isButchery,
+                        onClick = { onSelectStation("butchery") },
+                        label = { Text("Butchery", fontWeight = FontWeight.SemiBold) },
+                        leadingIcon = if (isButchery) ({
+                            Icon(Icons.Default.Storefront, contentDescription = null, modifier = Modifier.size(16.dp))
+                        }) else null,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("enroll_station_butchery")
+                    )
+                }
+            }
+
+            if (isButchery) {
+                OutlinedTextField(
+                    value = butcheryStationName,
+                    onValueChange = onButcheryStationNameChange,
+                    label = { Text("Butchery Name (optional)") },
+                    placeholder = {
+                        Text(if (businessName.isNotBlank()) "$businessName Butchery" else "e.g. Prime Cuts Butchery")
+                    },
+                    singleLine = true,
+                    enabled = ownerCanEdit,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("butchery_enroll_name_input")
+                )
+            } else {
+                Text(
+                    text = "Assigned role: Waiter",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
             Text(
-                text = "A one-time passkey creates the staff account automatically when redeemed on the staff phone. Share it privately via messaging or text.",
+                text = if (isButchery) {
+                    "A one-time Butchery passkey enables the Butchery package and links the butchery attendant's phone directly to Quick Sale."
+                } else {
+                    "A one-time passkey creates the staff account automatically when redeemed on the staff phone. Share it privately via messaging or text."
+                },
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -537,9 +664,14 @@ private fun EnrollWaitersTabContent(
             Button(
                 onClick = onIssuePasskey,
                 enabled = ownerCanEdit && !state.isIssuingEmployeePass,
+                colors = if (isButchery) {
+                    ButtonDefaults.buttonColors(containerColor = ButcheryPalette.EmeraldHeader)
+                } else {
+                    ButtonDefaults.buttonColors()
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .testTag("generate_waiter_passkey_button")
+                    .testTag(if (isButchery) "generate_butchery_passkey_button" else "generate_waiter_passkey_button")
             ) {
                 if (state.isIssuingEmployeePass) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
@@ -548,12 +680,14 @@ private fun EnrollWaitersTabContent(
                     Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                 }
-                Text("Generate Waiter Passkey")
+                Text(if (isButchery) "Generate Butchery Passkey" else "Generate Waiter Passkey")
             }
 
-            state.employeePasskey?.takeIf { it.isNotBlank() }?.let { passkey ->
+            displayedPasskey?.takeIf { it.isNotBlank() }?.let { passkey ->
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isButchery) Color(0xFFE8F5EE) else MaterialTheme.colorScheme.primaryContainer
+                    ),
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -566,20 +700,25 @@ private fun EnrollWaitersTabContent(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("New Waiter Passkey", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text(
+                                text = if (isButchery) "New Butchery Passkey" else "New Waiter Passkey",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
                             Surface(
                                 shape = RoundedCornerShape(6.dp),
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                color = if (isButchery) ButcheryPalette.EmeraldHeader.copy(alpha = 0.15f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
                             ) {
                                 Text("One-time use", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                             }
                         }
                         Text(
                             text = passkey,
-                            style = MaterialTheme.typography.headlineMedium,
+                            style = if (isButchery) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
                             fontWeight = FontWeight.Black,
-                            letterSpacing = 2.sp,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                            letterSpacing = 1.5.sp,
+                            color = if (isButchery) ButcheryPalette.EmeraldHeader else MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.testTag(if (isButchery) "butchery_passkey_value" else "waiter_passkey_value")
                         )
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -587,15 +726,24 @@ private fun EnrollWaitersTabContent(
                         ) {
                             OutlinedButton(
                                 onClick = { onCopy(passkey) },
-                                modifier = Modifier.weight(1f).testTag("copy_passkey_button")
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag(if (isButchery) "copy_butchery_passkey_button" else "copy_passkey_button")
                             ) {
                                 Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(6.dp))
                                 Text("Copy")
                             }
                             Button(
-                                onClick = { onShare(passkey) },
-                                modifier = Modifier.weight(1f).testTag("share_passkey_button")
+                                onClick = { onShare(passkey, isButchery) },
+                                colors = if (isButchery) {
+                                    ButtonDefaults.buttonColors(containerColor = ButcheryPalette.EmeraldHeader)
+                                } else {
+                                    ButtonDefaults.buttonColors()
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag(if (isButchery) "share_butchery_passkey_button" else "share_passkey_button")
                             ) {
                                 Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(6.dp))
@@ -605,7 +753,7 @@ private fun EnrollWaitersTabContent(
                     }
                 }
             }
-            // Scan an employee's pending sign-in challenge
+            // Scan a pending sign-in challenge on the second phone
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -613,14 +761,26 @@ private fun EnrollWaitersTabContent(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Employee ready to sign in?", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                    Text("Scan the QR on their sign-in screen to authorize this phone.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        text = if (isButchery) "Butchery phone ready to sign in?" else "Employee ready to sign in?",
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp
+                    )
+                    Text(
+                        text = if (isButchery) {
+                            "Scan the QR on the butchery phone's sign-in screen to authorize it."
+                        } else {
+                            "Scan the QR on their sign-in screen to authorize this phone."
+                        },
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 Spacer(Modifier.width(8.dp))
                 OutlinedButton(
-                    onClick = onScanWaiterCode,
+                    onClick = onScanCode,
                     enabled = ownerCanEdit,
-                    modifier = Modifier.testTag("scan_waiter_challenge_button")
+                    modifier = Modifier.testTag(if (isButchery) "scan_butchery_challenge_button" else "scan_waiter_challenge_button")
                 ) {
                     Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))

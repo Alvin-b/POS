@@ -724,11 +724,13 @@ private fun handleBarcodeResult(
     // Detect QR enrollment challenges or passkeys immediately in ANY scanner mode
     val cprIdx = clean.indexOf("CPR1|", ignoreCase = true)
     val cpxIdx = clean.indexOf("CPX1.", ignoreCase = true)
+    val cpbIdx = clean.indexOf("CPB1.", ignoreCase = true)
     val cptIdx = clean.indexOf("CPT1|", ignoreCase = true)
-    if (cprIdx >= 0 || cpxIdx >= 0 || cptIdx >= 0) {
+    if (cprIdx >= 0 || cpxIdx >= 0 || cpbIdx >= 0 || cptIdx >= 0) {
         val token = when {
             cprIdx >= 0 -> clean.substring(cprIdx)
             cpxIdx >= 0 -> clean.substring(cpxIdx)
+            cpbIdx >= 0 -> clean.substring(cpbIdx)
             else -> clean.substring(cptIdx)
         }
         onAdminQrCodeScanned(token)

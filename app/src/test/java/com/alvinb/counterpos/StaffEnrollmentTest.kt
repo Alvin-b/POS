@@ -1,18 +1,37 @@
 package com.alvinb.counterpos
  
+import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
+import androidx.test.core.app.ApplicationProvider
+import com.alvinb.counterpos.data.remote.SupabaseRestClient
+import com.alvinb.counterpos.ui.CounterPosUiState
+import com.alvinb.counterpos.ui.StaffManagementScreen
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [36], qualifiers = "w412dp-h915dp")
 class StaffEnrollmentTest {
+    @get:Rule
+    val composeRule = createComposeRule()
 
     @Test
     fun passkeyPrefixIsProperlyStrippedOnRedemption() {
@@ -226,5 +245,98 @@ class StaffEnrollmentTest {
 
         assertEquals("More than one function was found in the schema cache matching this name and arguments", extractedMessage)
     }
-}
 
+    @Test
+    fun butcheryPasskeyPrefixCpb1IsStrippedDetectedAndPersistedForDevice() {
+        val rawPasskey = "BCH-7788-MZA"
+        val qrPayload = "CPB1.$rawPasskey"
+        val lowerPayload = "cpb1.$rawPasskey"
+
+        fun cleanPasskey(input: String): String {
+            val trimmed = input.trim()
+            return when {
+                trimmed.startsWith("CPB1.", ignoreCase = true) -> trimmed.substring(5).trim()
+                trimmed.startsWith("CPX1.", ignoreCase = true) -> trimmed.substring(5).trim()
+                else -> trimmed
+            }
+        }
+
+        assertTrue(qrPayload.startsWith("CPB1.", ignoreCase = true))
+        assertEquals(rawPasskey, cleanPasskey(qrPayload))
+        assertEquals(rawPasskey, cleanPasskey(lowerPayload))
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val remote = SupabaseRestClient(context)
+        remote.clearSession()
+        assertFalse(remote.isButcheryDeviceShop("shop-123"))
+
+        remote.saveButcheryDeviceShopId("shop-123")
+        assertTrue(remote.isButcheryDeviceShop("shop-123"))
+        assertFalse(remote.isButcheryDeviceShop("shop-other"))
+
+        remote.clearSession()
+        assertFalse(remote.isButcheryDeviceShop("shop-123"))
+    }
+
+    @Test
+    fun staffManagementScreenSupportsEnrollingButcheryJustLikeWaiters() {
+        var selectedStationCaptured = ""
+        var issuedButcheryName = ""
+        var scannedButcheryName = ""
+
+        composeRule.setContent {
+            var uiState by remember { mutableStateOf(CounterPosUiState()) }
+            StaffManagementScreen(
+                state = uiState,
+                businessName = "Kenyatta Club",
+                role = "owner",
+                businessType = "BAR_NIGHTCLUB",
+                onClose = {},
+                onLoadMembers = {},
+                onIssueWaiterPass = {},
+                onSetEmployeeStatus = { _, _ -> },
+                onSetEmployeeRole = { _, _ -> },
+                onRenameEmployee = { _, _ -> },
+                onRemoveEmployee = { _ -> },
+                onIssueEmployeeRecoveryPass = { _, _ -> },
+                onClearEmployeeRecoveryPass = {},
+                onSaveEmployeeSchedule = { _, _, _, _, _ -> },
+                onSaveBusinessHours = {},
+                onScanWaiterCode = {},
+                onSelectEnrollStation = { station ->
+                    selectedStationCaptured = station
+                    uiState = uiState.copy(staffEnrollmentStation = station)
+                },
+                onIssueButcheryPass = { name ->
+                    issuedButcheryName = name
+                    uiState = uiState.copy(butcheryPasskey = "CPB1.BCH-9944")
+                },
+                onScanButcheryCode = { name ->
+                    scannedButcheryName = name
+                }
+            )
+        }
+        composeRule.waitForIdle()
+
+        // Waiter and Butchery station options are both present on Enroll tab
+        composeRule.onNodeWithTag("enroll_station_waiter").assertIsDisplayed()
+        composeRule.onNodeWithTag("enroll_station_butchery").assertIsDisplayed()
+
+        // Switch to Butchery station and enter station name
+        composeRule.onNodeWithTag("enroll_station_butchery").performClick()
+        composeRule.waitForIdle()
+        assertEquals("butchery", selectedStationCaptured)
+
+        composeRule.onNodeWithTag("butchery_enroll_name_input").performTextInput("Prime Nyama Grill")
+        composeRule.onNodeWithTag("generate_butchery_passkey_button").performClick()
+        composeRule.waitForIdle()
+
+        assertEquals("Prime Nyama Grill", issuedButcheryName)
+        composeRule.onNodeWithTag("butchery_passkey_value").assertIsDisplayed()
+        composeRule.onNodeWithTag("butchery_passkey_value").assertTextEquals("CPB1.BCH-9944")
+
+        composeRule.onNodeWithTag("scan_butchery_challenge_button").performClick()
+        composeRule.waitForIdle()
+        assertEquals("Prime Nyama Grill", scannedButcheryName)
+    }
+}

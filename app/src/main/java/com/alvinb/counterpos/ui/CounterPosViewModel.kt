@@ -162,9 +162,12 @@ data class CounterPosUiState(
     val isAccessLocked: Boolean = false,
     val accessLockMessage: String? = null,
     val employeePasskey: String? = null,
+    val butcheryPasskey: String? = null,
     val adminEnrollmentCredential: AdminEnrollmentCredential? = null,
     val isStaffManagementOpen: Boolean = false,
     val staffManagementStartsOnHours: Boolean = false,
+    val staffManagementStartsOnButchery: Boolean = false,
+    val staffEnrollmentStation: String = "waiter",
 
     // Sale sheet
     val selectedSaleCode: String? = null,
@@ -283,6 +286,7 @@ class CounterPosViewModel(
     private var loginQrJob: Job? = null
     private var lastSessionKeepAliveAt = 0L
     private var previousPendingSyncCount = 0
+    private var pendingButcheryStationName: String = ""
 
     private fun handleStableConnectivityDetected(wasStable: Boolean) {
         refreshSubscriptionEntitlement()
@@ -346,6 +350,7 @@ class CounterPosViewModel(
 
     private var businessHoursJob: Job? = null
     private var lastLoadedHoursShopId: String? = null
+    private var lastCheckedButcheryDeviceShopId: String? = null
 
     init {
         runCatching {
@@ -375,6 +380,7 @@ class CounterPosViewModel(
                     counterStockJob?.cancel()
                     businessHoursJob?.cancel()
                     lastLoadedHoursShopId = null
+                    lastCheckedButcheryDeviceShopId = null
                     _uiState.update {
                         it.copy(
                             businessHours = BusinessHours.Unrestricted,
@@ -387,6 +393,14 @@ class CounterPosViewModel(
                     }
                 } else {
                     val shopId = sess.activeBusiness.shopId
+                    if (lastCheckedButcheryDeviceShopId != shopId) {
+                        lastCheckedButcheryDeviceShopId = shopId
+                        if (repository.isButcheryDeviceShop(shopId)) {
+                            _uiState.update {
+                                it.copy(isButcheryWorkspaceOpen = true, butcheryTab = ButcheryTab.SELL)
+                            }
+                        }
+                    }
                     observeSelectedCounterStock(shopId, _uiState.value.selectedCounterId)
                     blockedOutboxJob = viewModelScope.launch {
                         repository.observeBlockedOutbox(shopId).collect { items ->
@@ -596,7 +610,16 @@ class CounterPosViewModel(
     fun signInWithPasskey(passkey: String) = runAuthentication(
         progressMessage = "Verifying access passkey…",
         fallbackMessage = "Passkey sign-in failed",
-        action = { repository.signInWithPasskey(passkey) }
+        action = {
+            val snapshot = repository.signInWithPasskey(passkey)
+            val shopId = snapshot.activeBusiness?.shopId
+            if (shopId != null && repository.isButcheryDeviceShop(shopId)) {
+                _uiState.update {
+                    it.copy(isButcheryWorkspaceOpen = true, butcheryTab = ButcheryTab.SELL)
+                }
+            }
+            snapshot
+        }
     )
 
     fun signInWithSuperadminToken(token: String) = runAuthentication(
@@ -609,10 +632,9 @@ class CounterPosViewModel(
         val value = credential.trim()
         if (value.startsWith("CPSA1|", ignoreCase = true)) {
             signInWithSuperadminToken(value)
-        } else if (value.startsWith("CPX1.", ignoreCase = true)) {
-            // Access-pass QR payloads are intentionally prefixed so the scanner can
-            // distinguish them from ordinary text. Redemption uses the passkey body.
-            signInWithPasskey(value.substringAfter('.').trim())
+        } else if (value.startsWith("CPX1.", ignoreCase = true) || value.startsWith("CPB1.", ignoreCase = true)) {
+            // Preserve CPB1. prefix so signInWithPasskey opens the Butchery POS workspace on login.
+            signInWithPasskey(value)
         } else {
             signInWithPasskey(value)
         }
@@ -723,7 +745,8 @@ class CounterPosViewModel(
         enrollButchery: Boolean = false,
         butcheryName: String = "",
         butcheryBeefOnly: Boolean = false,
-        butcheryBeefPricePerKgKsh: Int = 680
+        butcheryBeefPricePerKgKsh: Int = 680,
+        butcheryEnabledCategories: List<String>? = null
     ) = viewModelScope.launch {
         if (_uiState.value.isAuthenticating || _uiState.value.isCreatingBusiness) return@launch
         val cleanEmail = email.trim()
@@ -824,7 +847,8 @@ class CounterPosViewModel(
                 enrollButchery = enrollButchery,
                 butcheryName = butcheryName,
                 butcheryBeefOnly = butcheryBeefOnly,
-                butcheryBeefPricePerKgKsh = butcheryBeefPricePerKgKsh
+                butcheryBeefPricePerKgKsh = butcheryBeefPricePerKgKsh,
+                butcheryEnabledCategories = butcheryEnabledCategories
             )
             _uiState.update {
                 it.copy(
@@ -941,15 +965,25 @@ class CounterPosViewModel(
         _uiState.update { it.copy(isSavingBusinessHours = false) }
     }
 
-    fun openStaffManagement(openHours: Boolean = false) = _uiState.update {
+    fun openStaffManagement(
+        openHours: Boolean = false,
+        openButchery: Boolean = false
+    ) = _uiState.update {
         it.copy(
             isStaffManagementOpen = true,
             isAccessLocked = false,
             staffManagementStartsOnHours = openHours,
+            staffManagementStartsOnButchery = openButchery,
+            staffEnrollmentStation = if (openButchery) "butchery" else "waiter",
             actionError = null
         )
     }.also {
         loadBusinessHours()
+    }
+
+    fun selectStaffEnrollmentStation(station: String) {
+        val normalized = if (station.equals("butchery", ignoreCase = true)) "butchery" else "waiter"
+        _uiState.update { it.copy(staffEnrollmentStation = normalized, actionError = null) }
     }
 
     fun closeStaffManagement() {
@@ -957,6 +991,7 @@ class CounterPosViewModel(
             it.copy(
                 isStaffManagementOpen = false,
                 staffManagementStartsOnHours = false,
+                staffManagementStartsOnButchery = false,
                 actionError = null,
                 employeeRecoveryCredential = null
             )
@@ -1015,28 +1050,41 @@ class CounterPosViewModel(
             }
     }
 
-    fun issueEmployeePass(role: String = "cashier") = viewModelScope.launch {
+    fun issueEmployeePass(role: String = "cashier", stationName: String = "") = viewModelScope.launch {
         if (_uiState.value.isIssuingEmployeePass) return@launch
-        val normalizedRole = if (role.equals("waiter", ignoreCase = true)) "cashier" else role
-        if (normalizedRole != "cashier") {
-            _uiState.update { it.copy(actionError = "Only the Waiter role is currently supported for employee enrollment.") }
+        val normalizedRole = when {
+            role.equals("butchery", ignoreCase = true) -> "butchery"
+            role.equals("waiter", ignoreCase = true) || role.equals("cashier", ignoreCase = true) -> "cashier"
+            else -> role
+        }
+        if (normalizedRole !in setOf("cashier", "butchery")) {
+            _uiState.update { it.copy(actionError = "Only Waiter and Butchery enrollment are supported in this screen.") }
             return@launch
         }
-        _uiState.update { it.copy(isIssuingEmployeePass = true, employeePasskey = null, actionError = null) }
+        val isButchery = normalizedRole == "butchery"
+        _uiState.update {
+            it.copy(
+                isIssuingEmployeePass = true,
+                staffEnrollmentStation = if (isButchery) "butchery" else "waiter",
+                employeePasskey = if (isButchery) it.employeePasskey else null,
+                butcheryPasskey = if (isButchery) null else it.butcheryPasskey,
+                actionError = null
+            )
+        }
         try {
-            val pass = repository.createEmployeeAccessPass(normalizedRole)
+            val pass = repository.createEmployeeAccessPass(normalizedRole, stationName)
             val passkey = pass.optString("passkey").trim()
             require(passkey.isNotBlank()) { "The server did not return a staff passkey." }
-            val roleLabel = when (normalizedRole) {
-                "manager" -> "manager"
-                "inventory_clerk" -> "inventory clerk"
-                else -> "waiter"
-            }
             _uiState.update {
                 it.copy(
-                    employeePasskey = passkey,
+                    employeePasskey = if (!isButchery) passkey else it.employeePasskey,
+                    butcheryPasskey = if (isButchery) passkey else it.butcheryPasskey,
                     actionError = null,
-                    notice = "One-time $roleLabel passkey created. Share it privately; the account is activated when redeemed."
+                    notice = if (isButchery) {
+                        "One-time Butchery passkey created. Redeem it on the butchery phone to open Quick Sale."
+                    } else {
+                        "One-time waiter passkey created. Share it privately; the account is activated when redeemed."
+                    }
                 )
             }
         } catch (error: Exception) {
@@ -1046,7 +1094,7 @@ class CounterPosViewModel(
         }
     }
 
-    fun clearEmployeePass() = _uiState.update { it.copy(employeePasskey = null) }
+    fun clearEmployeePass() = _uiState.update { it.copy(employeePasskey = null, butcheryPasskey = null) }
 
     fun renameEmployee(userId: String, displayName: String) = viewModelScope.launch {
         if (userId.isBlank()) {
@@ -1954,21 +2002,26 @@ class CounterPosViewModel(
             } else {
                 val businessName = business?.shopName ?: currentSession.activeBusiness?.shopName ?: "the business"
                 viewModelScope.launch {
+                    val staffStation = if (!isPlatformAdmin && currentState.staffEnrollmentStation == "butchery") "butchery" else "cashier"
                     runCatching {
                         if (isPlatformAdmin) repository.adminApproveAccessChallenge(qr, shopId, role)
-                        else repository.approveAccessChallenge(qr)
+                        else repository.approveAccessChallenge(qr, staffStation, pendingButcheryStationName)
                     }
                         .onSuccess {
+                            pendingButcheryStationName = ""
                             _uiState.update {
                                 it.copy(
                                     isScannerOpen = false,
                                     isStaffManagementOpen = if (!isPlatformAdmin) true else it.isStaffManagementOpen,
                                     startupError = null,
                                     actionError = null,
-                                    notice = if (isPlatformAdmin) {
-                                        "Approved and enrolled the other phone for $businessName as ${role.replace('_', ' ')}. You remain in Superadmin."
-                                    } else {
-                                        "Approved and enrolled for $businessName as ${role.replace('_', ' ')}."
+                                    notice = when {
+                                        isPlatformAdmin ->
+                                            "Approved and enrolled the other phone for $businessName as ${role.replace('_', ' ')}. You remain in Superadmin."
+                                        staffStation == "butchery" ->
+                                            "Approved Butchery station phone for $businessName."
+                                        else ->
+                                            "Approved and enrolled for $businessName as waiter."
                                     }
                                 )
                             }
@@ -1980,6 +2033,7 @@ class CounterPosViewModel(
                             }
                         }
                         .onFailure { error ->
+                            pendingButcheryStationName = ""
                             val message = error.message.orEmpty()
                             val friendly = if (message.contains("expired", ignoreCase = true) || message.contains("session", ignoreCase = true) && message.contains("used", ignoreCase = true)) {
                                 "This QR session has expired. Ask the other phone to tap Refresh QR, then scan the new code."
@@ -1998,7 +2052,7 @@ class CounterPosViewModel(
         }
 
         // Passkey or access pass QR code scan
-        if (qr.startsWith("CPX1.", ignoreCase = true) || (qr.length in 8..64 && !qr.contains('|'))) {
+        if (qr.startsWith("CPX1.", ignoreCase = true) || qr.startsWith("CPB1.", ignoreCase = true) || (qr.length in 8..64 && !qr.contains('|'))) {
             if (isPlatformAdmin && !shopId.isNullOrBlank()) {
                 _uiState.update { it.copy(isScannerOpen = false, startupError = null, notice = "Passkey verified for business. The owner can sign in on their phone.") }
                 loadAdminBusinesses()
@@ -2214,28 +2268,38 @@ class CounterPosViewModel(
             }
     }
 
-    fun openStaffEnrollmentScanner(role: String) {
+    fun openStaffEnrollmentScanner(role: String, stationName: String = "") {
         val business = session.value.activeBusiness
         if (business == null) {
             _uiState.update { it.copy(actionError = "Select an active business before scanning an employee phone.") }
             return
         }
         if (!business.role.equals("owner", ignoreCase = true)) {
-            _uiState.update { it.copy(actionError = "Only the business owner can approve employee phone enrollment.") }
+            _uiState.update { it.copy(actionError = "Only the business owner can approve employee or butchery phone enrollment.") }
             return
         }
-        if (!role.equals("cashier", ignoreCase = true) && !role.equals("waiter", ignoreCase = true)) {
-            _uiState.update { it.copy(actionError = "Only Waiter enrollment is supported in this screen.") }
-            return
+        val normalizedStation = when {
+            role.equals("butchery", ignoreCase = true) -> "butchery"
+            role.equals("cashier", ignoreCase = true) || role.equals("waiter", ignoreCase = true) -> "waiter"
+            else -> {
+                _uiState.update { it.copy(actionError = "Only Waiter and Butchery enrollment are supported in this screen.") }
+                return
+            }
         }
+        pendingButcheryStationName = if (normalizedStation == "butchery") stationName.trim() else ""
         _uiState.update {
             it.copy(
+                staffEnrollmentStation = normalizedStation,
                 isScannerOpen = true,
                 scannerMode = ScannerMode.ADMIN_QR,
                 isAccessLocked = false,
                 isStaffManagementOpen = false,
                 actionError = null,
-                notice = "Scan the employee's sign-in QR on their phone to enroll them in ${business.shopName}."
+                notice = if (normalizedStation == "butchery") {
+                    "Scan the sign-in QR on the butchery phone to link it to ${business.shopName}."
+                } else {
+                    "Scan the employee's sign-in QR on their phone to enroll them in ${business.shopName}."
+                }
             )
         }
     }
@@ -2530,11 +2594,13 @@ class CounterPosViewModel(
         val clean = barcode.trim()
         val cprIdx = clean.indexOf("CPR1|", ignoreCase = true)
         val cpxIdx = clean.indexOf("CPX1.", ignoreCase = true)
+        val cpbIdx = clean.indexOf("CPB1.", ignoreCase = true)
         val cptIdx = clean.indexOf("CPT1|", ignoreCase = true)
-        if (cprIdx >= 0 || cpxIdx >= 0 || cptIdx >= 0) {
+        if (cprIdx >= 0 || cpxIdx >= 0 || cpbIdx >= 0 || cptIdx >= 0) {
             val token = when {
                 cprIdx >= 0 -> clean.substring(cprIdx)
                 cpxIdx >= 0 -> clean.substring(cpxIdx)
+                cpbIdx >= 0 -> clean.substring(cpbIdx)
                 else -> clean.substring(cptIdx)
             }
             handleAdminQrCode(token)

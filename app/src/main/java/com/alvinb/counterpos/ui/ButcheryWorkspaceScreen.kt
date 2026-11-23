@@ -81,7 +81,8 @@ fun ButcheryWorkspaceScreen(
     onToggleCutActive: (cutId: String, active: Boolean) -> Unit,
     onAddCut: (name: String, category: String, pricePerKgKsh: Int, stockKg: Double, iconKey: String) -> Unit,
     onRecordSale: (cut: ButcheryCutEntity, weightGrams: Int, totalKsh: Int, paymentMethod: String, entryMode: String) -> Unit,
-    onUndoLastSale: () -> Unit
+    onUndoLastSale: () -> Unit,
+    onOpenButcheryEnrollment: (() -> Unit)? = null
 ) {
     BackHandler {
         if (activeTab != ButcheryTab.SELL) {
@@ -267,7 +268,8 @@ fun ButcheryWorkspaceScreen(
                     onUpdateCutPrice = onUpdateCutPrice,
                     onUpdateCutStockKg = onUpdateCutStockKg,
                     onToggleCutActive = onToggleCutActive,
-                    onAddCut = onAddCut
+                    onAddCut = onAddCut,
+                    onOpenButcheryEnrollment = onOpenButcheryEnrollment
                 )
             }
         }

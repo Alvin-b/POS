@@ -303,20 +303,26 @@ class ButcheryPosTest {
         composeRule.onNodeWithText("Whole Chicken").assertDoesNotExist()
         composeRule.onNodeWithText("Pork Chops").assertDoesNotExist()
 
-        // Switch to KES price mode (digital scale: customer buys meat worth KES 150 / 200)
-        composeRule.onNodeWithTag("butchery_toggle_entry_mode").performClick()
-        composeRule.waitForIdle()
+        // Opens directly in money-first mode (KES 0)
         composeRule.onNodeWithTag("butchery_keypad_display").assertIsDisplayed()
+        composeRule.onNodeWithTag("butchery_keypad_display").assertTextEquals("KES 0")
+
+        // Key in 150 KES directly on the keypad (digital scale: customer buys meat worth KES 150)
+        composeRule.onNodeWithTag("butchery_key_1").performClick()
+        composeRule.onNodeWithTag("butchery_key_5").performClick()
+        composeRule.onNodeWithTag("butchery_key_0").performClick()
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("butchery_keypad_display").assertTextEquals("KES 150")
         composeRule.onNodeWithText("KES 150 = 0.22 kg (221 g) @ KES 680/kg").assertIsDisplayed()
 
-        // Record direct M-Pesa (no STK push) for KES 150
+        // Record direct M-Pesa (no STK push) for KES 150 -> resets keypad to KES 0
         composeRule.onNodeWithTag("butchery_pay_mpesa_button").performClick()
         composeRule.waitForIdle()
         assertEquals(1, recordedPayments.size)
         assertEquals(Triple(221, 150, "mpesa"), recordedPayments[0])
+        composeRule.onNodeWithTag("butchery_keypad_display").assertTextEquals("KES 0")
 
-        // Select KES 200 preset and record Cash Payment directly
+        // Select KES 200 preset and record Cash Payment directly -> resets keypad to KES 0
         composeRule.onNodeWithTag("butchery_preset_kes_200").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("KES 200 = 0.29 kg (294 g) @ KES 680/kg").assertIsDisplayed()
@@ -324,6 +330,13 @@ class ButcheryPosTest {
         composeRule.waitForIdle()
         assertEquals(2, recordedPayments.size)
         assertEquals(Triple(294, 200, "cash"), recordedPayments[1])
+        composeRule.onNodeWithTag("butchery_keypad_display").assertTextEquals("KES 0")
+
+        // Toggling to weight mode still computes kg -> KES accurately
+        composeRule.onNodeWithTag("butchery_toggle_entry_mode").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("butchery_keypad_display").assertTextEquals("1.0 kg")
+        composeRule.onNodeWithText("1.00 kg = KES 680").assertIsDisplayed()
     }
 
     @Test
@@ -501,7 +514,8 @@ class ButcheryPosTest {
         }
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithTag("butchery_toggle_entry_mode").performClick()
+        // Key in KES 150 directly in default money-first mode
+        composeRule.onNodeWithTag("butchery_preset_kes_150").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("KES 150 = 0.22 kg (221 g) @ KES 680/kg").assertIsDisplayed()
 
@@ -930,5 +944,88 @@ class ButcheryPosTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("butchery_daily_sales_total_revenue").assertTextEquals("KES 2,720")
         composeRule.onNodeWithTag("butchery_daily_sales_total_kg").assertTextEquals("4.0 kg")
+    }
+
+    @Test
+    fun butcheryPosShowsOnlySelectedSetupSubsetAndSavesKeyedSalesIntoReport() {
+        val shopId = "shop-subset-quick-sale"
+        val config = ButcheryConfigEntity(
+            shopId = shopId,
+            enabled = true,
+            butcheryName = "Savannah Grill & Chops",
+            beefOnlyMode = false,
+            defaultBeefPricePerKgKsh = 700,
+            enabledCategoriesJson = ButcheryPricing.serializeEnabledCategories(
+                listOf(ButcheryCategory.GOAT.label, ButcheryCategory.PORK.label)
+            )
+        )
+        runBlocking {
+            repository.enrollOrUpdateButchery(
+                shopId = shopId,
+                enabled = true,
+                butcheryName = config.butcheryName,
+                beefOnlyMode = false,
+                defaultBeefPricePerKgKsh = 700,
+                enabledCategories = listOf(ButcheryCategory.GOAT.label, ButcheryCategory.PORK.label)
+            )
+        }
+        val cuts = runBlocking { repository.observeButcheryCuts(shopId).first() }
+
+        composeRule.setContent {
+            ButcheryPosScreen(
+                config = config,
+                cuts = cuts,
+                canUndoLastSale = false,
+                onBack = {},
+                onOpenSettings = {},
+                onUndoLastSale = {},
+                onRecordSale = { cut, weightGrams, totalKsh, paymentMethod, entryMode ->
+                    runBlocking {
+                        repository.recordButcherySale(
+                            shopId = shopId,
+                            cutId = cut.id,
+                            weightGrams = weightGrams,
+                            totalKsh = totalKsh,
+                            paymentMethod = paymentMethod,
+                            entryMode = entryMode
+                        )
+                    }
+                }
+            )
+        }
+        composeRule.waitForIdle()
+
+        // Only setup-selected products (Goat/Mbuzi + Pork) appear on the sale screen
+        composeRule.onNodeWithText("Goat Meat").assertIsDisplayed()
+        composeRule.onNodeWithText("Pork Chops").assertIsDisplayed()
+        composeRule.onNodeWithText("Beef").assertDoesNotExist()
+        composeRule.onNodeWithText("Whole Chicken").assertDoesNotExist()
+        composeRule.onNodeWithText("Matumbo").assertDoesNotExist()
+
+        // Key in KES 300 -> M-Pesa -> saved into sales report
+        composeRule.onNodeWithTag("butchery_key_3").performClick()
+        composeRule.onNodeWithTag("butchery_key_0").performClick()
+        composeRule.onNodeWithTag("butchery_key_0").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("butchery_pay_mpesa_button").performClick()
+        composeRule.waitForIdle()
+
+        // Select Pork Chops, key in KES 350 -> Cash Payment -> saved into sales report
+        composeRule.onNodeWithText("Pork Chops").performClick()
+        composeRule.onNodeWithTag("butchery_key_3").performClick()
+        composeRule.onNodeWithTag("butchery_key_5").performClick()
+        composeRule.onNodeWithTag("butchery_key_0").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("butchery_pay_cash_button").performClick()
+        composeRule.waitForIdle()
+
+        val savedSales = runBlocking { repository.observeButcherySales(shopId).first() }
+        assertEquals(2, savedSales.size)
+        val window = ButcheryPricing.dayWindowMillis(0)
+        val report = ButcheryPricing.buildDailyReport(savedSales, window.first, window.second)
+        assertEquals(650L, report.totalSalesKsh)
+        assertEquals(300L, report.mpesaTotalKsh)
+        assertEquals(350L, report.cashTotalKsh)
+        assertEquals(900L, report.totalWeightGrams) // 300/750 = 400g goat + 350/700 = 500g pork
     }
 }
