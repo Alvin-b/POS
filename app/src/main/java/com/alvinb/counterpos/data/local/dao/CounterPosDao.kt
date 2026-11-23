@@ -847,8 +847,18 @@ interface CounterPosDao {
     @Query("UPDATE butchery_cuts SET pricePerKgKsh = :pricePerKgKsh WHERE id = :cutId")
     suspend fun updateButcheryCutPrice(cutId: String, pricePerKgKsh: Int): Int
 
-    @Query("UPDATE butchery_cuts SET pricePerKgKsh = :pricePerKgKsh WHERE shopId = :shopId AND category = 'Beef'")
-    suspend fun updateAllBeefCutPrices(shopId: String, pricePerKgKsh: Int): Int
+    @Query("UPDATE butchery_cuts SET pricePerKgKsh = :pricePerKgKsh, buyingPricePerKgKsh = :buyingPricePerKgKsh, stockGrams = :stockGrams, name = :name, iconKey = :iconKey WHERE id = :cutId")
+    suspend fun updateButcheryCutDetails(
+        cutId: String,
+        name: String,
+        pricePerKgKsh: Int,
+        buyingPricePerKgKsh: Int,
+        stockGrams: Int,
+        iconKey: String
+    ): Int
+
+    @Query("UPDATE butchery_cuts SET pricePerKgKsh = :pricePerKgKsh WHERE shopId = :shopId AND lower(name) = lower(:meatName)")
+    suspend fun updateCutPricesForMeatName(shopId: String, meatName: String, pricePerKgKsh: Int): Int
 
     @Query("UPDATE butchery_cuts SET pricePerKgKsh = :pricePerKgKsh WHERE shopId = :shopId AND lower(category) = lower(:category)")
     suspend fun updateCutPricesForCategory(shopId: String, category: String, pricePerKgKsh: Int): Int

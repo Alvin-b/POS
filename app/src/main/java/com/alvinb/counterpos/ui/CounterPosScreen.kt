@@ -330,9 +330,8 @@ fun CounterPosWorkspace(
             onSaveConfig = { enabled, name, beefOnly, price, methods, categories ->
                 viewModel.enrollOrUpdateButchery(enabled, name, beefOnly, price, methods, categories)
             },
-            onApplyCategoryPrice = viewModel::applyCategoryPricePerKg,
-            onUpdateCutPrice = viewModel::updateButcheryCutPrice,
-            onUpdateCutStockKg = viewModel::setButcheryCutStockKg,
+            onApplyMeatPrice = viewModel::applyMeatPricePerKg,
+            onUpdateCutDetails = viewModel::updateButcheryCutDetails,
             onToggleCutActive = viewModel::setButcheryCutActive,
             onAddCut = viewModel::addButcheryCut,
             onRecordSale = viewModel::recordButcherySale,

@@ -27,11 +27,11 @@ data class ButcheryCutEntity(
     @PrimaryKey val id: String,
     val shopId: String,
     val name: String,
-    val category: String,
+    val category: String = "",
     val pricePerKgKsh: Int,
     val buyingPricePerKgKsh: Int = 0,
     val stockGrams: Int = 0,
-    val iconKey: String = "beef_steak",
+    val iconKey: String = "beef",
     val active: Boolean = true,
     val sortOrder: Int = 0
 )
@@ -48,7 +48,7 @@ data class ButcherySaleEntity(
     val shopId: String,
     val cutId: String,
     val cutName: String,
-    val category: String,
+    val category: String = "",
     val pricePerKgKsh: Int,
     val buyingPricePerKgKsh: Int = 0,
     val weightGrams: Int,

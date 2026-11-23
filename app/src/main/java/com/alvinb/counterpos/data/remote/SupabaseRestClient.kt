@@ -711,18 +711,18 @@ class SupabaseRestClient(context: Context) {
             .put("_shop", cut.optString("shop_id"))
             .put("_id", cut.optString("id"))
             .put("_name", cut.optString("name"))
-            .put("_category", cut.optString("category"))
+            .put("_category", cut.optString("category", ""))
             .put("_price_per_kg_ksh", cut.optInt("price_per_kg_ksh"))
-            .put("_stock_grams", cut.optInt("stock_grams"))
             .put("_buying_price_per_kg_ksh", cut.optInt("buying_price_per_kg_ksh", 0))
-            .put("_icon_key", cut.optString("icon_key", "beef_steak"))
+            .put("_stock_grams", cut.optInt("stock_grams"))
+            .put("_icon_key", cut.optString("icon_key", "beef"))
             .put("_active", cut.optBoolean("active", true))
             .put("_sort_order", cut.optInt("sort_order"))
     )
 
-    suspend fun updateButcheryCategoryPrice(shopId: String, category: String, pricePerKgKsh: Int): Int =
-        rpcInt("update_butchery_category_price", JSONObject()
-            .put("_shop", shopId).put("_category", category).put("_price_per_kg_ksh", pricePerKgKsh))
+    suspend fun updateButcheryMeatPrice(shopId: String, meatName: String, pricePerKgKsh: Int): Int =
+        rpcInt("update_butchery_meat_price", JSONObject()
+            .put("_shop", shopId).put("_meat_name", meatName).put("_price_per_kg_ksh", pricePerKgKsh))
 
     suspend fun recordButcherySale(
         shopId: String,
@@ -1786,80 +1786,6 @@ class SupabaseRestClient(context: Context) {
                 RefreshOutcome.RETRYABLE_FAILURE
             }
         }
-
-    suspend fun upsertButcheryConfigRemote(
-        shopId: String,
-        enabled: Boolean,
-        butcheryName: String,
-        beefOnlyMode: Boolean,
-        defaultBeefPricePerKgKsh: Int,
-        paymentMethodsJson: String,
-        enabledCategoriesJson: String
-    ): JSONObject = rpcObject(
-        "upsert_butchery_config",
-        JSONObject()
-            .put("_shop", shopId)
-            .put("_enabled", enabled)
-            .put("_butchery_name", butcheryName)
-            .put("_beef_only_mode", beefOnlyMode)
-            .put("_default_beef_price_per_kg_ksh", defaultBeefPricePerKgKsh)
-            .put("_payment_methods", JSONArray(paymentMethodsJson))
-            .put("_enabled_categories", JSONArray(enabledCategoriesJson))
-    )
-
-    suspend fun upsertButcheryCutRemote(
-        shopId: String,
-        cutId: String?,
-        name: String,
-        category: String,
-        sellingPricePerKgKsh: Int,
-        buyingPricePerKgKsh: Int,
-        stockGrams: Int,
-        iconKey: String,
-        active: Boolean,
-        sortOrder: Int
-    ): JSONObject = rpcObject(
-        "upsert_butchery_cut",
-        JSONObject()
-            .put("_shop", shopId)
-            .putNullable("_cut_id", cutId)
-            .put("_name", name)
-            .put("_category", category)
-            .put("_price_per_kg_ksh", sellingPricePerKgKsh)
-            .put("_buying_price_per_kg_ksh", buyingPricePerKgKsh)
-            .put("_stock_grams", stockGrams)
-            .put("_icon_key", iconKey)
-            .put("_active", active)
-            .put("_sort_order", sortOrder)
-    )
-
-    suspend fun updateButcheryMeatPriceRemote(shopId: String, meatName: String, pricePerKgKsh: Int): JSONArray =
-        rpcArray(
-            "update_butchery_meat_price",
-            JSONObject().put("_shop", shopId).put("_meat_name", meatName).put("_price_per_kg_ksh", pricePerKgKsh)
-        )
-
-    suspend fun recordButcherySaleRemote(
-        shopId: String,
-        cutId: String,
-        weightGrams: Int,
-        totalKsh: Int,
-        paymentMethod: String,
-        entryMode: String,
-        operationId: String,
-        attendantName: String?
-    ): JSONObject = rpcObject(
-        "record_butchery_sale",
-        JSONObject()
-            .put("_shop", shopId)
-            .put("_cut_id", cutId)
-            .put("_weight_grams", weightGrams)
-            .put("_total_ksh", totalKsh)
-            .put("_payment_method", paymentMethod)
-            .put("_entry_mode", entryMode)
-            .put("_operation_id", operationId)
-            .putNullable("_attendant_name", attendantName)
-    )
 
     private fun saveSession(value: AuthSession) {
         session = value

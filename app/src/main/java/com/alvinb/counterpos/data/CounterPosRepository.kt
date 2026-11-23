@@ -423,7 +423,7 @@ class CounterPosRepository(
                 beefOnlyMode = existing?.beefOnlyMode ?: false,
                 defaultBeefPricePerKgKsh = existing?.defaultBeefPricePerKgKsh ?: 680,
                 paymentMethods = existing?.paymentMethodsJson?.let { ButcheryPricing.parsePaymentMethods(it) },
-                enabledCategories = existing?.let { ButcheryPricing.resolveEnabledCategories(it) }
+                enabledMeats = existing?.let { ButcheryPricing.resolveEnabledMeats(it) }
             )
         }
     }
@@ -695,14 +695,15 @@ class CounterPosRepository(
         if (enrollButchery) {
             val resolvedButcheryName = butcheryName.trim().ifBlank { "${name.trim()} Butchery" }
             val safePrice = butcheryBeefPricePerKgKsh.coerceIn(100, 10_000)
-            val resolvedCategories = when {
-                !butcheryEnabledCategories.isNullOrEmpty() -> butcheryEnabledCategories
-                butcheryBeefOnly -> listOf(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label)
-                else -> ButcheryPricing.ALL_MEAT_CATEGORIES
+            val resolvedMeats = when {
+                !butcheryEnabledCategories.isNullOrEmpty() ->
+                    butcheryEnabledCategories.map(ButcheryPricing::normalizeLegacyMeatSelection)
+                butcheryBeefOnly -> listOf("Beef")
+                else -> ButcheryPricing.DEFAULT_MEAT_NAMES
             }
-            val effectiveBeefOnly = resolvedCategories.size == 1 &&
-                resolvedCategories.first().equals(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label, ignoreCase = true)
-            val enabledCategoriesJson = ButcheryPricing.serializeEnabledCategories(resolvedCategories)
+            val effectiveBeefOnly = resolvedMeats.size == 1 &&
+                resolvedMeats.first().equals("Beef", ignoreCase = true)
+            val enabledCategoriesJson = ButcheryPricing.serializeEnabledMeats(resolvedMeats)
             dao.enrollButchery(
                 config = ButcheryConfigEntity(
                     shopId = shopId,
@@ -1914,10 +1915,12 @@ class CounterPosRepository(
             val remotePayments = row.optJSONArray("payment_methods")?.takeIf { it.length() > 0 }?.toString()
             val remoteCategories = row.optJSONArray("enabled_categories")?.takeIf { it.length() > 0 }?.toString()
             val beefOnly = row.optBoolean("beef_only_mode")
-            val resolvedCategoriesJson = remoteCategories ?: if (beefOnly) {
-                ButcheryPricing.serializeEnabledCategories(listOf(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label))
+            val resolvedCategoriesJson = if (remoteCategories != null) {
+                ButcheryPricing.serializeEnabledMeats(ButcheryPricing.parseEnabledMeats(remoteCategories))
+            } else if (beefOnly) {
+                ButcheryPricing.serializeEnabledMeats(listOf("Beef"))
             } else {
-                localConfig?.enabledCategoriesJson ?: ButcheryPricing.ALL_MEAT_CATEGORIES_JSON
+                localConfig?.enabledCategoriesJson ?: ButcheryPricing.ALL_MEAT_NAMES_JSON
             }
             ButcheryConfigEntity(
                 shopId = shopId,
@@ -1937,7 +1940,7 @@ class CounterPosRepository(
                     id = row.optString("id"),
                     shopId = shopId,
                     name = row.optString("name"),
-                    category = row.optString("category"),
+                    category = row.optString("category", ""),
                     pricePerKgKsh = row.optInt("price_per_kg_ksh"),
                     buyingPricePerKgKsh = row.optInt("buying_price_per_kg_ksh", 0).coerceAtLeast(0),
                     stockGrams = row.optInt("stock_grams"),
@@ -1957,7 +1960,7 @@ class CounterPosRepository(
                     shopId = shopId,
                     cutId = row.optString("cut_id"),
                     cutName = row.optString("cut_name"),
-                    category = row.optString("category"),
+                    category = row.optString("category", ""),
                     pricePerKgKsh = row.optInt("price_per_kg_ksh"),
                     buyingPricePerKgKsh = row.optInt("buying_price_per_kg_ksh", 0).coerceAtLeast(0),
                     weightGrams = row.optInt("weight_grams"),
@@ -3158,7 +3161,7 @@ class CounterPosRepository(
         beefOnlyMode: Boolean,
         defaultBeefPricePerKgKsh: Int,
         paymentMethods: List<String>? = null,
-        enabledCategories: List<String>? = null
+        enabledMeats: List<String>? = null
     ) = withContext(Dispatchers.IO) {
         val safePrice = defaultBeefPricePerKgKsh.coerceIn(100, 10_000)
         val existing = dao.getButcheryConfig(shopId)
@@ -3170,15 +3173,16 @@ class CounterPosRepository(
         val resolvedPaymentJson = paymentMethods?.let { ButcheryPricing.serializePaymentMethods(it) }
             ?: existing?.paymentMethodsJson
             ?: ButcheryPricing.DEFAULT_PAYMENT_METHODS_JSON
-        val resolvedCategories = when {
-            enabledCategories != null -> enabledCategories.ifEmpty { ButcheryPricing.ALL_MEAT_CATEGORIES }
-            beefOnlyMode -> listOf(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label)
-            existing != null && existing.beefOnlyMode && !beefOnlyMode -> ButcheryPricing.ALL_MEAT_CATEGORIES
-            existing != null -> ButcheryPricing.parseEnabledCategories(existing.enabledCategoriesJson)
-            else -> ButcheryPricing.ALL_MEAT_CATEGORIES
+        val resolvedMeats = when {
+            enabledMeats != null -> enabledMeats.map(ButcheryPricing::normalizeLegacyMeatSelection)
+                .ifEmpty { ButcheryPricing.DEFAULT_MEAT_NAMES }
+            beefOnlyMode -> listOf("Beef")
+            existing != null && existing.beefOnlyMode && !beefOnlyMode -> ButcheryPricing.DEFAULT_MEAT_NAMES
+            existing != null -> ButcheryPricing.parseEnabledMeats(existing.enabledCategoriesJson)
+            else -> ButcheryPricing.DEFAULT_MEAT_NAMES
         }
-        val effectiveBeefOnly = resolvedCategories.size == 1 &&
-            resolvedCategories.first().equals(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label, ignoreCase = true)
+        val effectiveBeefOnly = resolvedMeats.size == 1 &&
+            resolvedMeats.first().equals("Beef", ignoreCase = true)
         val config = ButcheryConfigEntity(
             shopId = shopId,
             enabled = enabled,
@@ -3186,7 +3190,7 @@ class CounterPosRepository(
             beefOnlyMode = effectiveBeefOnly,
             defaultBeefPricePerKgKsh = safePrice,
             paymentMethodsJson = resolvedPaymentJson,
-            enabledCategoriesJson = ButcheryPricing.serializeEnabledCategories(resolvedCategories),
+            enabledCategoriesJson = ButcheryPricing.serializeEnabledMeats(resolvedMeats),
             updatedAt = System.currentTimeMillis()
         )
         dao.enrollButchery(config, ButcheryPricing.defaultCuts(shopId, safePrice))
@@ -3205,16 +3209,16 @@ class CounterPosRepository(
     }
 
     suspend fun applyDefaultBeefPricePerKg(shopId: String, pricePerKgKsh: Int) =
-        applyCategoryPricePerKg(shopId, com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label, pricePerKgKsh)
+        applyMeatPricePerKg(shopId, "Beef", pricePerKgKsh)
 
-    suspend fun applyCategoryPricePerKg(shopId: String, category: String, pricePerKgKsh: Int) = withContext(Dispatchers.IO) {
+    suspend fun applyMeatPricePerKg(shopId: String, meatName: String, pricePerKgKsh: Int) = withContext(Dispatchers.IO) {
         val safePrice = pricePerKgKsh.coerceIn(100, 10_000)
         val existing = dao.getButcheryConfig(shopId) ?: ButcheryConfigEntity(
             shopId = shopId,
             enabled = true,
             butcheryName = activeBusiness?.shopName?.let { "$it Butchery" } ?: "Butchery Counter"
         )
-        val nextConfig = if (category.equals(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label, ignoreCase = true)) {
+        val nextConfig = if (meatName.equals("Beef", ignoreCase = true)) {
             existing.copy(defaultBeefPricePerKgKsh = safePrice, updatedAt = System.currentTimeMillis())
         } else {
             existing.copy(updatedAt = System.currentTimeMillis())
@@ -3223,9 +3227,11 @@ class CounterPosRepository(
             nextConfig,
             ButcheryPricing.defaultCuts(shopId, safePrice)
         )
-        dao.updateCutPricesForCategory(shopId, category, safePrice)
+        dao.updateCutPricesForMeatName(shopId, meatName, safePrice)
         runCatching {
-            remote.updateButcheryCategoryPrice(shopId, category, safePrice)
+            dao.getButcheryCuts(shopId)
+                .filter { it.name.equals(meatName, ignoreCase = true) }
+                .forEach { pushButcheryCut(it) }
         }
     }
 
@@ -3235,6 +3241,71 @@ class CounterPosRepository(
         val updated = dao.updateButcheryCutPrice(cutId, pricePerKgKsh) == 1
         if (updated) {
             runCatching { pushButcheryCut(cut.copy(pricePerKgKsh = pricePerKgKsh)) }
+        }
+        updated
+    }
+
+    suspend fun updateButcheryCutDetails(
+        cutId: String,
+        name: String,
+        pricePerKgKsh: Int,
+        buyingPricePerKgKsh: Int,
+        stockKg: Double
+    ): Boolean = withContext(Dispatchers.IO) {
+        val cleanName = name.trim()
+        if (cleanName.isEmpty() || pricePerKgKsh <= 0) return@withContext false
+        val cut = dao.getButcheryCutById(cutId) ?: return@withContext false
+        val safeBuyingPrice = buyingPricePerKgKsh.coerceAtLeast(0)
+        val grams = (stockKg.coerceAtLeast(0.0) * 1000.0).toInt()
+        val iconKey = ButcheryPricing.inferIconKey(cleanName)
+        val updated = dao.updateButcheryCutDetails(
+            cutId = cutId,
+            name = cleanName,
+            pricePerKgKsh = pricePerKgKsh,
+            buyingPricePerKgKsh = safeBuyingPrice,
+            stockGrams = grams,
+            iconKey = iconKey
+        ) == 1
+        if (updated) {
+            if (!cut.name.equals(cleanName, ignoreCase = true)) {
+                val cfg = dao.getButcheryConfig(cut.shopId)
+                if (cfg != null) {
+                    val existingMeats = ButcheryPricing.resolveEnabledMeats(cfg)
+                    val replacedMeats = existingMeats.map {
+                        if (it.equals(cut.name, ignoreCase = true)) cleanName else it
+                    }.let { list ->
+                        if (list.any { it.equals(cleanName, ignoreCase = true) }) list else list + cleanName
+                    }
+                    val updatedCfg = cfg.copy(
+                        enabledCategoriesJson = ButcheryPricing.serializeEnabledMeats(replacedMeats),
+                        beefOnlyMode = replacedMeats.size == 1 && replacedMeats.first().equals("Beef", ignoreCase = true),
+                        updatedAt = System.currentTimeMillis()
+                    )
+                    dao.upsertButcheryConfig(updatedCfg)
+                    runCatching {
+                        remote.upsertButcheryConfig(
+                            shopId = updatedCfg.shopId,
+                            enabled = updatedCfg.enabled,
+                            butcheryName = updatedCfg.butcheryName,
+                            beefOnlyMode = updatedCfg.beefOnlyMode,
+                            defaultBeefPricePerKgKsh = updatedCfg.defaultBeefPricePerKgKsh,
+                            paymentMethods = JSONArray(updatedCfg.paymentMethodsJson),
+                            enabledCategories = JSONArray(updatedCfg.enabledCategoriesJson)
+                        )
+                    }
+                }
+            }
+            runCatching {
+                pushButcheryCut(
+                    cut.copy(
+                        name = cleanName,
+                        pricePerKgKsh = pricePerKgKsh,
+                        buyingPricePerKgKsh = safeBuyingPrice,
+                        stockGrams = grams,
+                        iconKey = iconKey
+                    )
+                )
+            }
         }
         updated
     }
@@ -3252,28 +3323,55 @@ class CounterPosRepository(
     suspend fun addButcheryCut(
         shopId: String,
         name: String,
-        category: String,
         pricePerKgKsh: Int,
-        stockKg: Double,
-        iconKey: String
+        buyingPricePerKgKsh: Int = 0,
+        stockKg: Double = 0.0,
+        iconKey: String = ButcheryPricing.inferIconKey(name)
     ) = withContext(Dispatchers.IO) {
         val cleanName = name.trim()
-        require(cleanName.isNotEmpty()) { "Enter a cut name." }
-        require(pricePerKgKsh > 0) { "Enter a valid price per kg." }
+        require(cleanName.isNotEmpty()) { "Enter a meat name." }
+        require(pricePerKgKsh > 0) { "Enter a valid selling price per kg." }
         val currentCount = dao.getButcheryCutCount(shopId)
         val grams = (stockKg.coerceAtLeast(0.0) * 1000.0).toInt()
+        val safeBuyingPrice = buyingPricePerKgKsh.coerceAtLeast(0)
         val cut = ButcheryCutEntity(
             id = "${shopId}_cut_${UUID.randomUUID().toString().take(8)}",
             shopId = shopId,
             name = cleanName,
-            category = category,
+            category = "",
             pricePerKgKsh = pricePerKgKsh,
+            buyingPricePerKgKsh = safeBuyingPrice,
             stockGrams = grams,
-            iconKey = iconKey,
+            iconKey = iconKey.ifBlank { ButcheryPricing.inferIconKey(cleanName) },
             active = true,
             sortOrder = currentCount + 1
         )
         dao.upsertButcheryCut(cut)
+        // Automatically enable the newly added meat name in shop selection so it displays on Quick Sale
+        val cfg = dao.getButcheryConfig(shopId)
+        if (cfg != null) {
+            val currentMeats = ButcheryPricing.resolveEnabledMeats(cfg)
+            if (currentMeats.none { it.equals(cleanName, ignoreCase = true) }) {
+                val updatedMeats = currentMeats + cleanName
+                val updatedCfg = cfg.copy(
+                    enabledCategoriesJson = ButcheryPricing.serializeEnabledMeats(updatedMeats),
+                    beefOnlyMode = false,
+                    updatedAt = System.currentTimeMillis()
+                )
+                dao.upsertButcheryConfig(updatedCfg)
+                runCatching {
+                    remote.upsertButcheryConfig(
+                        shopId = updatedCfg.shopId,
+                        enabled = updatedCfg.enabled,
+                        butcheryName = updatedCfg.butcheryName,
+                        beefOnlyMode = updatedCfg.beefOnlyMode,
+                        defaultBeefPricePerKgKsh = updatedCfg.defaultBeefPricePerKgKsh,
+                        paymentMethods = JSONArray(updatedCfg.paymentMethodsJson),
+                        enabledCategories = JSONArray(updatedCfg.enabledCategoriesJson)
+                    )
+                }
+            }
+        }
         runCatching { pushButcheryCut(cut) }
     }
 

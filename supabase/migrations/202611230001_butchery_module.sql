@@ -284,11 +284,11 @@ CREATE OR REPLACE FUNCTION public.upsert_butchery_cut(
   _name text,
   _category text,
   _price_per_kg_ksh integer,
-  _stock_grams integer,
-  _icon_key text,
-  _active boolean,
-  _sort_order integer,
-  _buying_price_per_kg_ksh integer DEFAULT 0
+  _buying_price_per_kg_ksh integer DEFAULT 0,
+  _stock_grams integer DEFAULT 0,
+  _icon_key text DEFAULT 'beef',
+  _active boolean DEFAULT true,
+  _sort_order integer DEFAULT 0
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -340,8 +340,8 @@ BEGIN
   RETURN jsonb_build_object('success', true, 'id', _id);
 END $$;
 
-REVOKE ALL ON FUNCTION public.upsert_butchery_cut(uuid, text, text, text, integer, integer, text, boolean, integer, integer) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.upsert_butchery_cut(uuid, text, text, text, integer, integer, text, boolean, integer, integer) TO authenticated;
+REVOKE ALL ON FUNCTION public.upsert_butchery_cut(uuid, text, text, text, integer, integer, integer, text, boolean, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.upsert_butchery_cut(uuid, text, text, text, integer, integer, integer, text, boolean, integer) TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.update_butchery_category_price(
   _shop uuid,

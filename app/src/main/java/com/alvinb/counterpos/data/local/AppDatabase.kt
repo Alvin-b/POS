@@ -300,9 +300,6 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 ensureColumn(db, "butchery_cuts", "buyingPricePerKgKsh", "INTEGER NOT NULL DEFAULT 0")
                 ensureColumn(db, "butchery_sales", "buyingPricePerKgKsh", "INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("UPDATE butchery_config SET enabledCategoriesJson = REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(enabledCategoriesJson, 'Goat/Mbuzi', 'Goat Meat'), 'Chicken', 'Whole Chicken'), 'Liver/Matumbo', 'Matumbo'), 'Pork', 'Pork Chops'), 'Goat', 'Goat Meat')")
-                db.execSQL("UPDATE butchery_cuts SET category = CASE lower(category) WHEN 'goat/mbuzi' THEN 'Goat Meat' WHEN 'goat' THEN 'Goat Meat' WHEN 'chicken' THEN 'Whole Chicken' WHEN 'liver/matumbo' THEN 'Matumbo' WHEN 'matumbo' THEN 'Matumbo' WHEN 'pork' THEN 'Pork Chops' ELSE category END")
-                db.execSQL("UPDATE butchery_sales SET category = CASE lower(category) WHEN 'goat/mbuzi' THEN 'Goat Meat' WHEN 'goat' THEN 'Goat Meat' WHEN 'chicken' THEN 'Whole Chicken' WHEN 'liver/matumbo' THEN 'Matumbo' WHEN 'matumbo' THEN 'Matumbo' WHEN 'pork' THEN 'Pork Chops' ELSE category END")
             }
         }
 

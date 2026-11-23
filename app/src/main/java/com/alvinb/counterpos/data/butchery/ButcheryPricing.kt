@@ -10,17 +10,9 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 enum class ButcheryEntryMode { WEIGHT_KG, AMOUNT_KES }
-
-enum class ButcheryCategory(val label: String) {
-    ALL("All"),
-    BEEF("Beef"),
-    GOAT("Goat Meat"),
-    CHICKEN("Whole Chicken"),
-    OFFAL("Matumbo"),
-    PORK("Pork Chops")
-}
 
 data class ButcheryCalculationResult(
     val weightKg: Double,
@@ -29,18 +21,13 @@ data class ButcheryCalculationResult(
     val isValid: Boolean
 )
 
-data class ButcheryBarBucket(
-    val label: String,
-    val mpesaKsh: Long,
-    val cashKsh: Long
-)
-
 data class ButcheryCutSummary(
     val cutName: String,
-    val category: String,
     val totalGrams: Long,
     val totalKsh: Long,
-    val salesCount: Int
+    val salesCount: Int,
+    val totalCostKsh: Long? = null,
+    val totalProfitKsh: Long? = null
 )
 
 data class ButcheryPaymentSummary(
@@ -55,16 +42,17 @@ data class ButcheryDailyReportSnapshot(
     val endMs: Long,
     val totalSalesKsh: Long,
     val totalWeightGrams: Long,
-    val totalCostKsh: Long,
-    val netProfitKsh: Long,
     val mpesaTotalKsh: Long,
     val cashTotalKsh: Long,
     val mpesaPercent: Int,
     val cashPercent: Int,
     val sales: List<ButcherySaleEntity>,
-    val chartBuckets: List<ButcheryBarBucket>,
     val topCuts: List<ButcheryCutSummary>,
-    val paymentBreakdown: List<ButcheryPaymentSummary> = emptyList()
+    val paymentBreakdown: List<ButcheryPaymentSummary> = emptyList(),
+    val totalCostKsh: Long? = null,
+    val totalProfitKsh: Long? = null,
+    val costTrackedSalesCount: Int = 0,
+    val costTrackedRevenueKsh: Long = 0L
 ) {
     val totalWeightKg: Double get() = totalWeightGrams / 1000.0
 }
@@ -82,16 +70,15 @@ data class ButcheryDailyTrendPoint(
     val revenueKsh: Long,
     val weightGrams: Long,
     val salesCount: Int,
-    val rollingAvgRevenueKsh: Long,
-    val rollingAvgWeightGrams: Long
+    val costKsh: Long? = null,
+    val profitKsh: Long? = null
 ) {
     val weightKg: Double get() = weightGrams / 1000.0
-    val rollingAvgWeightKg: Double get() = rollingAvgWeightGrams / 1000.0
 }
 
 data class ButcheryDailySalesTrendSnapshot(
     val range: ButcheryTrendRange,
-    val selectedCategory: String,
+    val selectedMeatName: String,
     val days: List<ButcheryDailyTrendPoint>,
     val totalRevenueKsh: Long,
     val totalWeightGrams: Long,
@@ -102,23 +89,27 @@ data class ButcheryDailySalesTrendSnapshot(
     val bestRevenueDay: ButcheryDailyTrendPoint?,
     val bestVolumeDay: ButcheryDailyTrendPoint?,
     val revenueChangePercent: Double?,
-    val quantityChangePercent: Double?
+    val quantityChangePercent: Double?,
+    val totalCostKsh: Long? = null,
+    val totalProfitKsh: Long? = null,
+    val costTrackedTransactions: Int = 0
 ) {
     val totalWeightKg: Double get() = totalWeightGrams / 1000.0
     val avgDailyWeightKg: Double get() = avgDailyWeightGrams / 1000.0
 }
 
 object ButcheryPricing {
+    const val ALL_MEATS_LABEL = "All Meats"
     val DEFAULT_PAYMENT_METHODS = listOf("M-Pesa", "Cash Payment")
     const val DEFAULT_PAYMENT_METHODS_JSON = "[\"M-Pesa\",\"Cash Payment\"]"
-    val ALL_MEAT_CATEGORIES = listOf(
-        ButcheryCategory.BEEF.label,
-        ButcheryCategory.GOAT.label,
-        ButcheryCategory.CHICKEN.label,
-        ButcheryCategory.OFFAL.label,
-        ButcheryCategory.PORK.label
+    val DEFAULT_MEAT_NAMES = listOf(
+        "Beef",
+        "Goat Meat",
+        "Whole Chicken",
+        "Matumbo",
+        "Pork Chops"
     )
-    const val ALL_MEAT_CATEGORIES_JSON = "[\"Beef\",\"Goat Meat\",\"Whole Chicken\",\"Matumbo\",\"Pork Chops\"]"
+    const val ALL_MEAT_NAMES_JSON = "[\"Beef\",\"Goat Meat\",\"Whole Chicken\",\"Matumbo\",\"Pork Chops\"]"
     val SUGGESTED_PAYMENT_METHODS = listOf(
         "M-Pesa",
         "Cash Payment",
@@ -131,39 +122,87 @@ object ButcheryPricing {
     val quickAmountPresetsKsh = listOf(100, 150, 200, 300, 500, 1000)
     val quickWeightPresetsKg = listOf("0.25", "0.5", "1", "1.5", "2")
 
-    fun parseEnabledCategories(json: String?): List<String> {
-        if (json.isNullOrBlank()) return ALL_MEAT_CATEGORIES
+    fun normalizeLegacyMeatSelection(raw: String): String {
+        val trimmed = raw.trim()
+        return when (trimmed.lowercase(Locale.ROOT)) {
+            "goat/mbuzi", "goat" -> "Goat Meat"
+            "chicken" -> "Whole Chicken"
+            "liver/matumbo" -> "Matumbo"
+            "pork" -> "Pork Chops"
+            else -> trimmed
+        }
+    }
+
+    fun inferIconKey(meatName: String): String {
+        val lower = meatName.trim().lowercase(Locale.ROOT)
+        return when {
+            lower.contains("goat") || lower.contains("mbuzi") ||
+                lower.contains("mutton") || lower.contains("lamb") -> "goat"
+            lower.contains("chicken") || lower.contains("kuku") ||
+                lower.contains("hen") || lower.contains("poultry") -> "chicken"
+            lower.contains("matumbo") || lower.contains("liver") ||
+                lower.contains("tripe") || lower.contains("offal") ||
+                lower.contains("kidney") -> "matumbo"
+            lower.contains("pork") || lower.contains("bacon") ||
+                lower.contains("ham") -> "pork"
+            else -> "beef"
+        }
+    }
+
+    fun parseEnabledMeats(json: String?): List<String> {
+        if (json.isNullOrBlank()) return DEFAULT_MEAT_NAMES
         val parsed = runCatching {
             val array = JSONArray(json)
             val seen = mutableSetOf<String>()
             buildList {
                 for (i in 0 until array.length()) {
-                    val item = array.optString(i).trim()
+                    val item = normalizeLegacyMeatSelection(array.optString(i))
                     if (item.isNotEmpty() && seen.add(item.lowercase(Locale.ROOT))) {
                         add(item)
                     }
                 }
             }
         }.getOrDefault(emptyList())
-        return parsed.ifEmpty { ALL_MEAT_CATEGORIES }
+        return parsed.ifEmpty { DEFAULT_MEAT_NAMES }
     }
 
-    fun serializeEnabledCategories(categories: List<String>): String {
+    fun serializeEnabledMeats(meats: List<String>): String {
         val seen = mutableSetOf<String>()
-        val normalized = categories.mapNotNull { raw ->
-            val trimmed = raw.trim()
-            if (trimmed.isEmpty() || !seen.add(trimmed.lowercase(Locale.ROOT))) null else trimmed
-        }.ifEmpty { ALL_MEAT_CATEGORIES }
+        val normalized = meats.mapNotNull { raw ->
+            val cleaned = normalizeLegacyMeatSelection(raw)
+            if (cleaned.isEmpty() || !seen.add(cleaned.lowercase(Locale.ROOT))) null else cleaned
+        }.ifEmpty { DEFAULT_MEAT_NAMES }
         return JSONArray(normalized).toString()
     }
 
-    fun resolveEnabledCategories(config: ButcheryConfigEntity?): List<String> {
-        if (config == null) return ALL_MEAT_CATEGORIES
-        val parsed = parseEnabledCategories(config.enabledCategoriesJson)
-        return if (config.beefOnlyMode && parsed.size == ALL_MEAT_CATEGORIES.size) {
-            listOf(ButcheryCategory.BEEF.label)
+    fun resolveEnabledMeats(config: ButcheryConfigEntity?): List<String> {
+        if (config == null) return DEFAULT_MEAT_NAMES
+        val parsed = parseEnabledMeats(config.enabledCategoriesJson)
+        return if (config.beefOnlyMode && parsed.size == DEFAULT_MEAT_NAMES.size) {
+            listOf("Beef")
         } else {
             parsed
+        }
+    }
+
+    fun availableMeatChoices(cuts: List<ButcheryCutEntity>, currentSelected: List<String> = emptyList()): List<String> {
+        val seen = mutableSetOf<String>()
+        return buildList {
+            DEFAULT_MEAT_NAMES.forEach { name ->
+                if (seen.add(name.lowercase(Locale.ROOT))) add(name)
+            }
+            cuts.forEach { cut ->
+                val cleaned = cut.name.trim()
+                if (cleaned.isNotEmpty() && seen.add(cleaned.lowercase(Locale.ROOT))) {
+                    add(cleaned)
+                }
+            }
+            currentSelected.forEach { raw ->
+                val cleaned = normalizeLegacyMeatSelection(raw)
+                if (cleaned.isNotEmpty() && seen.add(cleaned.lowercase(Locale.ROOT))) {
+                    add(cleaned)
+                }
+            }
         }
     }
 
@@ -246,6 +285,16 @@ object ButcheryPricing {
         )
     }
 
+    fun computeSaleCostKsh(weightGrams: Int, buyingPricePerKgKsh: Int): Long? {
+        if (buyingPricePerKgKsh <= 0 || weightGrams <= 0) return null
+        return ((weightGrams / 1000.0) * buyingPricePerKgKsh.toDouble()).roundToLong()
+    }
+
+    fun computeSaleProfitKsh(sale: ButcherySaleEntity): Long? {
+        val cost = computeSaleCostKsh(sale.weightGrams, sale.buyingPricePerKgKsh) ?: return null
+        return sale.totalKsh.toLong() - cost
+    }
+
     fun formatWeightKg(grams: Long, decimals: Int = 2): String {
         val kg = grams / 1000.0
         return String.format(Locale.US, "%.${decimals}f kg", kg)
@@ -261,59 +310,32 @@ object ButcheryPricing {
 
     fun formatKsh(amount: Int): String = formatKsh(amount.toLong())
 
-    fun visibleCategories(beefOnlyMode: Boolean, cuts: List<ButcheryCutEntity>): List<String> {
-        val enabled = if (beefOnlyMode) listOf(ButcheryCategory.BEEF.label) else ALL_MEAT_CATEGORIES
-        return visibleCategories(enabled, cuts)
-    }
-
-    fun visibleCategories(enabledCategories: List<String>, cuts: List<ButcheryCutEntity>): List<String> {
-        val normalizedEnabled = enabledCategories.ifEmpty { ALL_MEAT_CATEGORIES }
-        if (normalizedEnabled.size == 1) return listOf(normalizedEnabled.first())
-        val activeCategories = cuts
-            .filter { cut -> cut.active && normalizedEnabled.any { it.equals(cut.category, ignoreCase = true) } }
-            .map { it.category }
-            .distinct()
-        val ordered = ALL_MEAT_CATEGORIES.filter { cat ->
-            normalizedEnabled.any { it.equals(cat, ignoreCase = true) } &&
-                activeCategories.any { it.equals(cat, ignoreCase = true) }
-        }
-        val extras = activeCategories.filterNot { cat ->
-            ordered.any { it.equals(cat, ignoreCase = true) }
-        }.sorted()
-        return listOf(ButcheryCategory.ALL.label) + ordered + extras
-    }
+    fun formatSignedKsh(amount: Long): String =
+        if (amount < 0L) "-${formatKsh(-amount)}" else formatKsh(amount)
 
     fun filterCuts(
         cuts: List<ButcheryCutEntity>,
         beefOnlyMode: Boolean,
-        selectedCategory: String,
         searchQuery: String
     ): List<ButcheryCutEntity> {
-        val enabled = if (beefOnlyMode) listOf(ButcheryCategory.BEEF.label) else ALL_MEAT_CATEGORIES
-        return filterCuts(cuts, enabled, selectedCategory, searchQuery)
+        val enabled = if (beefOnlyMode) listOf("Beef") else DEFAULT_MEAT_NAMES
+        return filterCuts(cuts, enabled, searchQuery)
     }
 
     fun filterCuts(
         cuts: List<ButcheryCutEntity>,
-        enabledCategories: List<String>,
-        selectedCategory: String,
-        searchQuery: String
+        enabledMeats: List<String>,
+        searchQuery: String = ""
     ): List<ButcheryCutEntity> {
-        val normalizedEnabled = enabledCategories.ifEmpty { ALL_MEAT_CATEGORIES }
-        val singleMeatMode = normalizedEnabled.size == 1
+        val normalizedEnabled = enabledMeats
+            .map(::normalizeLegacyMeatSelection)
+            .ifEmpty { DEFAULT_MEAT_NAMES }
         val query = searchQuery.trim().lowercase(Locale.ROOT)
         return cuts.filter { cut ->
             if (!cut.active) return@filter false
-            if (normalizedEnabled.none { it.equals(cut.category, ignoreCase = true) }) {
-                return@filter false
-            }
-            val matchesCategory = singleMeatMode ||
-                selectedCategory == ButcheryCategory.ALL.label ||
-                cut.category.equals(selectedCategory, ignoreCase = true)
-            val matchesSearch = query.isBlank() ||
-                cut.name.lowercase(Locale.ROOT).contains(query) ||
-                cut.category.lowercase(Locale.ROOT).contains(query)
-            matchesCategory && matchesSearch
+            val matchesSelectedMeat = normalizedEnabled.any { it.equals(cut.name, ignoreCase = true) }
+            val matchesSearch = query.isBlank() || cut.name.lowercase(Locale.ROOT).contains(query)
+            matchesSelectedMeat && matchesSearch
         }.sortedWith(compareBy<ButcheryCutEntity> { it.sortOrder }.thenBy { it.name })
     }
 
@@ -324,8 +346,9 @@ object ButcheryPricing {
                 id = "${shopId}_beef",
                 shopId = shopId,
                 name = "Beef",
-                category = ButcheryCategory.BEEF.label,
+                category = "",
                 pricePerKgKsh = safeBeef,
+                buyingPricePerKgKsh = 0,
                 stockGrams = 0,
                 iconKey = "beef",
                 active = true,
@@ -335,8 +358,9 @@ object ButcheryPricing {
                 id = "${shopId}_goat_meat",
                 shopId = shopId,
                 name = "Goat Meat",
-                category = ButcheryCategory.GOAT.label,
+                category = "",
                 pricePerKgKsh = 750,
+                buyingPricePerKgKsh = 0,
                 stockGrams = 0,
                 iconKey = "goat",
                 active = true,
@@ -346,8 +370,9 @@ object ButcheryPricing {
                 id = "${shopId}_whole_chicken",
                 shopId = shopId,
                 name = "Whole Chicken",
-                category = ButcheryCategory.CHICKEN.label,
+                category = "",
                 pricePerKgKsh = 480,
+                buyingPricePerKgKsh = 0,
                 stockGrams = 0,
                 iconKey = "chicken",
                 active = true,
@@ -357,8 +382,9 @@ object ButcheryPricing {
                 id = "${shopId}_matumbo",
                 shopId = shopId,
                 name = "Matumbo",
-                category = ButcheryCategory.OFFAL.label,
+                category = "",
                 pricePerKgKsh = 280,
+                buyingPricePerKgKsh = 0,
                 stockGrams = 0,
                 iconKey = "matumbo",
                 active = true,
@@ -368,8 +394,9 @@ object ButcheryPricing {
                 id = "${shopId}_pork_chops",
                 shopId = shopId,
                 name = "Pork Chops",
-                category = ButcheryCategory.PORK.label,
+                category = "",
                 pricePerKgKsh = 700,
+                buyingPricePerKgKsh = 0,
                 stockGrams = 0,
                 iconKey = "pork",
                 active = true,
@@ -405,10 +432,6 @@ object ButcheryPricing {
 
         val totalSales = filtered.sumOf { it.totalKsh.toLong() }
         val totalGrams = filtered.sumOf { it.weightGrams.toLong() }
-        val costedSales = filtered.filter { it.buyingPricePerKgKsh > 0 }
-        val totalCost = costedSales.sumOf {
-            ((it.weightGrams / 1000.0) * it.buyingPricePerKgKsh.toDouble()).roundToInt().toLong()
-        }
         val mpesaTotal = filtered
             .filter { isMpesaPayment(it.paymentMethod) }
             .sumOf { it.totalKsh.toLong() }
@@ -439,36 +462,36 @@ object ButcheryPricing {
             }
             .sortedByDescending { it.totalKsh }
 
-        // 5 time-of-day blocks so chart always gives a clear M-Pesa vs Cash/Other rhythm
-        val blockBounds = listOf(
-            "6–10" to (6..9),
-            "10–13" to (10..12),
-            "13–16" to (13..15),
-            "16–19" to (16..18),
-            "19+" to (19..23)
-        )
-        val cal = Calendar.getInstance()
-        val buckets = blockBounds.map { (label, hours) ->
-            val blockSales = filtered.filter { sale ->
-                cal.timeInMillis = sale.createdAt
-                val hour = cal.get(Calendar.HOUR_OF_DAY)
-                hour in hours || (label == "6–10" && hour < 6)
-            }
-            ButcheryBarBucket(
-                label = label,
-                mpesaKsh = blockSales.filter { isMpesaPayment(it.paymentMethod) }.sumOf { it.totalKsh.toLong() },
-                cashKsh = blockSales.filter { !isMpesaPayment(it.paymentMethod) }.sumOf { it.totalKsh.toLong() }
-            )
+        val costTrackedRows = filtered.filter { it.buyingPricePerKgKsh > 0 }
+        val totalCostKsh: Long?
+        val totalProfitKsh: Long?
+        val costTrackedRevenueKsh: Long
+        if (costTrackedRows.isEmpty()) {
+            totalCostKsh = null
+            totalProfitKsh = null
+            costTrackedRevenueKsh = 0L
+        } else {
+            val costSum = costTrackedRows.sumOf { computeSaleCostKsh(it.weightGrams, it.buyingPricePerKgKsh) ?: 0L }
+            val revSum = costTrackedRows.sumOf { it.totalKsh.toLong() }
+            totalCostKsh = costSum
+            totalProfitKsh = revSum - costSum
+            costTrackedRevenueKsh = revSum
         }
 
         val topCuts = filtered.groupBy { it.cutName }
             .map { (cutName, rows) ->
+                val tracked = rows.filter { it.buyingPricePerKgKsh > 0 }
+                val cutCost = if (tracked.isNotEmpty()) {
+                    tracked.sumOf { computeSaleCostKsh(it.weightGrams, it.buyingPricePerKgKsh) ?: 0L }
+                } else null
+                val cutProfit = cutCost?.let { tracked.sumOf { s -> s.totalKsh.toLong() } - it }
                 ButcheryCutSummary(
                     cutName = cutName,
-                    category = rows.first().category,
                     totalGrams = rows.sumOf { it.weightGrams.toLong() },
                     totalKsh = rows.sumOf { it.totalKsh.toLong() },
-                    salesCount = rows.size
+                    salesCount = rows.size,
+                    totalCostKsh = cutCost,
+                    totalProfitKsh = cutProfit
                 )
             }
             .sortedByDescending { it.totalKsh }
@@ -478,16 +501,17 @@ object ButcheryPricing {
             endMs = endMs,
             totalSalesKsh = totalSales,
             totalWeightGrams = totalGrams,
-            totalCostKsh = totalCost,
-            netProfitKsh = totalSales - totalCost,
             mpesaTotalKsh = mpesaTotal,
             cashTotalKsh = cashTotal,
             mpesaPercent = mpesaPct,
             cashPercent = cashPct,
             sales = filtered,
-            chartBuckets = buckets,
             topCuts = topCuts,
-            paymentBreakdown = paymentBreakdown
+            paymentBreakdown = paymentBreakdown,
+            totalCostKsh = totalCostKsh,
+            totalProfitKsh = totalProfitKsh,
+            costTrackedSalesCount = costTrackedRows.size,
+            costTrackedRevenueKsh = costTrackedRevenueKsh
         )
     }
 
@@ -498,14 +522,18 @@ object ButcheryPricing {
         val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
         val dayFormat = SimpleDateFormat("dd MMM yyyy", Locale.US)
         fun esc(value: String): String = "\"${value.replace("\"", "\"\"")}\""
+        val includeProfitColumns = snapshot.totalProfitKsh != null
 
         return buildString {
             appendLine("Butchery,${esc(butcheryName)}")
             appendLine("Report Date,${esc(dayFormat.format(Date(snapshot.startMs)))}")
             appendLine("Total Sales (KES),${snapshot.totalSalesKsh}")
             appendLine("Total Weight Sold (kg),${String.format(Locale.US, "%.2f", snapshot.totalWeightKg)}")
-            appendLine("Known Cost (KES),${snapshot.totalCostKsh}")
-            appendLine("Net Profit/Loss (KES),${snapshot.netProfitKsh}")
+            if (includeProfitColumns) {
+                appendLine("Total Cost (KES),${snapshot.totalCostKsh ?: 0L}")
+                val profitLabel = if ((snapshot.totalProfitKsh ?: 0L) >= 0L) "Net Profit (KES)" else "Net Loss (KES)"
+                appendLine("$profitLabel,${snapshot.totalProfitKsh ?: 0L}")
+            }
             appendLine("M-Pesa Total (KES),${snapshot.mpesaTotalKsh}")
             appendLine("Cash Total (KES),${snapshot.cashTotalKsh}")
             snapshot.paymentBreakdown
@@ -514,24 +542,34 @@ object ButcheryPricing {
                     appendLine("${esc("${extra.method} Total (KES)")},${extra.totalKsh}")
                 }
             appendLine()
-            appendLine("Time,Cut Name,Category,Weight (kg),Selling Price per kg (KES),Buying Price per kg (KES),Total (KES),Payment Method,Entry Mode")
+            if (includeProfitColumns) {
+                appendLine("Time,Meat Name,Weight (kg),Selling Price/kg (KES),Buying Price/kg (KES),Cost (KES),Total (KES),Profit/Loss (KES),Payment Method,Entry Mode")
+            } else {
+                appendLine("Time,Meat Name,Weight (kg),Selling Price/kg (KES),Total (KES),Payment Method,Entry Mode")
+            }
             snapshot.sales.forEach { sale ->
                 val weightKg = String.format(Locale.US, "%.3f", sale.weightGrams / 1000.0)
                 val methodLabel = paymentMethodDisplayLabel(sale.paymentMethod)
                 val entryLabel = if (sale.entryMode == "amount") "By Amount (KES)" else "By Weight (kg)"
-                appendLine(
-                    listOf(
-                        esc(dateFormat.format(Date(sale.createdAt))),
-                        esc(sale.cutName),
-                        esc(sale.category),
-                        weightKg,
-                        sale.pricePerKgKsh.toString(),
-                        if (sale.buyingPricePerKgKsh > 0) sale.buyingPricePerKgKsh.toString() else "",
-                        sale.totalKsh.toString(),
-                        esc(methodLabel),
-                        esc(entryLabel)
-                    ).joinToString(",")
+                val baseCols = mutableListOf(
+                    esc(dateFormat.format(Date(sale.createdAt))),
+                    esc(sale.cutName),
+                    weightKg,
+                    sale.pricePerKgKsh.toString()
                 )
+                if (includeProfitColumns) {
+                    val cost = computeSaleCostKsh(sale.weightGrams, sale.buyingPricePerKgKsh)
+                    val profit = cost?.let { sale.totalKsh.toLong() - it }
+                    baseCols += if (sale.buyingPricePerKgKsh > 0) sale.buyingPricePerKgKsh.toString() else ""
+                    baseCols += cost?.toString() ?: ""
+                    baseCols += sale.totalKsh.toString()
+                    baseCols += profit?.toString() ?: ""
+                } else {
+                    baseCols += sale.totalKsh.toString()
+                }
+                baseCols += esc(methodLabel)
+                baseCols += esc(entryLabel)
+                appendLine(baseCols.joinToString(","))
             }
         }
     }
@@ -539,7 +577,7 @@ object ButcheryPricing {
     fun buildDailySalesTrend(
         allSales: List<ButcherySaleEntity>,
         range: ButcheryTrendRange = ButcheryTrendRange.FOURTEEN_DAYS,
-        categoryFilter: String = ButcheryCategory.ALL.label,
+        meatNameFilter: String = ALL_MEATS_LABEL,
         referenceMs: Long = System.currentTimeMillis()
     ): ButcheryDailySalesTrendSnapshot {
         val axisFmt = SimpleDateFormat("dd/MM", Locale.US)
@@ -571,37 +609,26 @@ object ButcheryPricing {
         val eligibleSales = allSales.filter { sale ->
             !sale.undone &&
                 sale.createdAt in firstStartMs..lastEndMs &&
-                (categoryFilter == ButcheryCategory.ALL.label ||
-                    sale.category.equals(categoryFilter, ignoreCase = true))
+                (meatNameFilter == ALL_MEATS_LABEL ||
+                    sale.cutName.equals(meatNameFilter, ignoreCase = true))
         }
 
-        data class RawDay(val startMs: Long, val date: Date, val revenueKsh: Long, val weightGrams: Long, val count: Int)
-        val rawDays = dayBuckets.map { (start, end, date) ->
+        val points = dayBuckets.map { (start, end, date) ->
             val daySales = eligibleSales.filter { it.createdAt in start..end }
-            RawDay(
-                startMs = start,
-                date = date,
+            val tracked = daySales.filter { it.buyingPricePerKgKsh > 0 }
+            val dayCost = if (tracked.isNotEmpty()) {
+                tracked.sumOf { computeSaleCostKsh(it.weightGrams, it.buyingPricePerKgKsh) ?: 0L }
+            } else null
+            val dayProfit = dayCost?.let { tracked.sumOf { s -> s.totalKsh.toLong() } - it }
+            ButcheryDailyTrendPoint(
+                dayStartMs = start,
+                axisLabel = axisFmt.format(date),
+                shortDateLabel = shortDateFmt.format(date),
                 revenueKsh = daySales.sumOf { it.totalKsh.toLong() },
                 weightGrams = daySales.sumOf { it.weightGrams.toLong() },
-                count = daySales.size
-            )
-        }
-
-        val rollingWindow = if (range == ButcheryTrendRange.THIRTY_DAYS) 7 else 3
-        val points = rawDays.mapIndexed { idx, raw ->
-            val fromIdx = (idx - rollingWindow + 1).coerceAtLeast(0)
-            val slice = rawDays.subList(fromIdx, idx + 1)
-            val avgRev = (slice.sumOf { it.revenueKsh }.toDouble() / slice.size.toDouble()).roundToInt().toLong()
-            val avgGrams = (slice.sumOf { it.weightGrams }.toDouble() / slice.size.toDouble()).roundToInt().toLong()
-            ButcheryDailyTrendPoint(
-                dayStartMs = raw.startMs,
-                axisLabel = axisFmt.format(raw.date),
-                shortDateLabel = shortDateFmt.format(raw.date),
-                revenueKsh = raw.revenueKsh,
-                weightGrams = raw.weightGrams,
-                salesCount = raw.count,
-                rollingAvgRevenueKsh = avgRev,
-                rollingAvgWeightGrams = avgGrams
+                salesCount = daySales.size,
+                costKsh = dayCost,
+                profitKsh = dayProfit
             )
         }
 
@@ -611,6 +638,19 @@ object ButcheryPricing {
         val activeDays = points.count { it.salesCount > 0 || it.revenueKsh > 0L || it.weightGrams > 0L }
         val avgRev = if (activeDays > 0) (totalRev.toDouble() / activeDays.toDouble()).roundToInt().toLong() else 0L
         val avgGrams = if (activeDays > 0) (totalGrams.toDouble() / activeDays.toDouble()).roundToInt().toLong() else 0L
+
+        val trackedAll = eligibleSales.filter { it.buyingPricePerKgKsh > 0 }
+        val windowCostKsh: Long?
+        val windowProfitKsh: Long?
+        if (trackedAll.isEmpty()) {
+            windowCostKsh = null
+            windowProfitKsh = null
+        } else {
+            val cSum = trackedAll.sumOf { computeSaleCostKsh(it.weightGrams, it.buyingPricePerKgKsh) ?: 0L }
+            val rSum = trackedAll.sumOf { it.totalKsh.toLong() }
+            windowCostKsh = cSum
+            windowProfitKsh = rSum - cSum
+        }
 
         val split = points.size / 2
         val prior = if (split > 0) points.take(split) else emptyList()
@@ -625,7 +665,7 @@ object ButcheryPricing {
 
         return ButcheryDailySalesTrendSnapshot(
             range = range,
-            selectedCategory = categoryFilter,
+            selectedMeatName = meatNameFilter,
             days = points,
             totalRevenueKsh = totalRev,
             totalWeightGrams = totalGrams,
@@ -636,7 +676,10 @@ object ButcheryPricing {
             bestRevenueDay = points.filter { it.revenueKsh > 0L }.maxByOrNull { it.revenueKsh },
             bestVolumeDay = points.filter { it.weightGrams > 0L }.maxByOrNull { it.weightGrams },
             revenueChangePercent = revChangePct,
-            quantityChangePercent = qtyChangePct
+            quantityChangePercent = qtyChangePct,
+            totalCostKsh = windowCostKsh,
+            totalProfitKsh = windowProfitKsh,
+            costTrackedTransactions = trackedAll.size
         )
     }
 }
