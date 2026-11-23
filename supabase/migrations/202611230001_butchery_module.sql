@@ -6,9 +6,9 @@ CREATE TABLE IF NOT EXISTS public.butchery_config (
   enabled boolean NOT NULL DEFAULT false,
   butchery_name text NOT NULL DEFAULT '',
   beef_only_mode boolean NOT NULL DEFAULT false,
-  default_beef_price_per_kg_ksh integer NOT NULL DEFAULT 680 CHECK (default_beef_price_per_kg_ksh BETWEEN 50 AND 10000),
+  default_beef_price_per_kg_ksh integer NOT NULL DEFAULT 680 CHECK (default_beef_price_per_kg_ksh >= 0),
   payment_methods jsonb NOT NULL DEFAULT '["M-Pesa","Cash Payment"]'::jsonb,
-  enabled_categories jsonb NOT NULL DEFAULT '["Beef","Goat/Mbuzi","Chicken","Liver/Matumbo","Pork"]'::jsonb,
+  enabled_categories jsonb NOT NULL DEFAULT '["Beef","Goat Meat","Whole Chicken","Matumbo","Pork Chops"]'::jsonb,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -16,8 +16,9 @@ CREATE TABLE IF NOT EXISTS public.butchery_cuts (
   id text PRIMARY KEY,
   shop_id uuid NOT NULL REFERENCES public.shops(id) ON DELETE CASCADE,
   name text NOT NULL,
-  category text NOT NULL,
+  category text NOT NULL DEFAULT '',
   price_per_kg_ksh integer NOT NULL CHECK (price_per_kg_ksh > 0),
+  buying_price_per_kg_ksh integer NOT NULL DEFAULT 0 CHECK (buying_price_per_kg_ksh >= 0),
   stock_grams integer NOT NULL DEFAULT 0 CHECK (stock_grams >= 0),
   icon_key text NOT NULL DEFAULT 'beef',
   active boolean NOT NULL DEFAULT true,
@@ -36,8 +37,9 @@ CREATE TABLE IF NOT EXISTS public.butchery_sales (
   operation_id uuid,
   cut_id text NOT NULL,
   cut_name text NOT NULL,
-  category text NOT NULL,
+  category text NOT NULL DEFAULT '',
   price_per_kg_ksh integer NOT NULL CHECK (price_per_kg_ksh > 0),
+  buying_price_per_kg_ksh integer NOT NULL DEFAULT 0 CHECK (buying_price_per_kg_ksh >= 0),
   weight_grams integer NOT NULL CHECK (weight_grams > 0),
   total_ksh integer NOT NULL CHECK (total_ksh > 0),
   payment_method text NOT NULL DEFAULT 'cash',
@@ -55,6 +57,66 @@ CREATE INDEX IF NOT EXISTS butchery_sales_shop_created_idx
   ON public.butchery_sales (shop_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS butchery_sales_shop_undone_created_idx
   ON public.butchery_sales (shop_id, undone, created_at DESC);
+
+ALTER TABLE public.butchery_cuts
+  ADD COLUMN IF NOT EXISTS buying_price_per_kg_ksh integer NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT '';
+ALTER TABLE public.butchery_sales
+  ADD COLUMN IF NOT EXISTS buying_price_per_kg_ksh integer NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT '';
+
+DO $$
+BEGIN
+  ALTER TABLE public.butchery_config DROP CONSTRAINT IF EXISTS butchery_config_default_beef_price_per_kg_ksh_check;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'butchery_config_default_beef_price_nonnegative') THEN
+    ALTER TABLE public.butchery_config ADD CONSTRAINT butchery_config_default_beef_price_nonnegative CHECK (default_beef_price_per_kg_ksh >= 0);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'butchery_cuts_buying_price_nonnegative') THEN
+    ALTER TABLE public.butchery_cuts ADD CONSTRAINT butchery_cuts_buying_price_nonnegative CHECK (buying_price_per_kg_ksh >= 0);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'butchery_sales_buying_price_nonnegative') THEN
+    ALTER TABLE public.butchery_sales ADD CONSTRAINT butchery_sales_buying_price_nonnegative CHECK (buying_price_per_kg_ksh >= 0);
+  END IF;
+END $$;
+
+UPDATE public.butchery_config
+SET enabled_categories = (
+  SELECT coalesce(jsonb_agg(mapped ORDER BY ord), '[]'::jsonb)
+  FROM (
+    SELECT DISTINCT ON (lower(value))
+      CASE lower(trim(value))
+        WHEN 'goat' THEN 'Goat Meat'
+        WHEN 'mbuzi' THEN 'Goat Meat'
+        WHEN 'goat/mbuzi' THEN 'Goat Meat'
+        WHEN 'chicken' THEN 'Whole Chicken'
+        WHEN 'whole chicken' THEN 'Whole Chicken'
+        WHEN 'liver' THEN 'Matumbo'
+        WHEN 'matumbo' THEN 'Matumbo'
+        WHEN 'liver/matumbo' THEN 'Matumbo'
+        WHEN 'pork' THEN 'Pork Chops'
+        WHEN 'pork chops' THEN 'Pork Chops'
+        WHEN 'beef' THEN 'Beef'
+        ELSE trim(value)
+      END AS mapped,
+      ord
+    FROM jsonb_array_elements_text(coalesce(enabled_categories, '[]'::jsonb)) WITH ORDINALITY AS x(value, ord)
+  ) normalized
+  WHERE mapped IN ('Beef', 'Goat Meat', 'Whole Chicken', 'Matumbo', 'Pork Chops')
+)
+WHERE enabled_categories IS NOT NULL;
+
+UPDATE public.butchery_cuts
+SET category = CASE lower(trim(category))
+  WHEN 'goat' THEN 'Goat Meat' WHEN 'mbuzi' THEN 'Goat Meat' WHEN 'goat/mbuzi' THEN 'Goat Meat'
+  WHEN 'chicken' THEN 'Whole Chicken' WHEN 'whole chicken' THEN 'Whole Chicken'
+  WHEN 'liver' THEN 'Matumbo' WHEN 'matumbo' THEN 'Matumbo' WHEN 'liver/matumbo' THEN 'Matumbo'
+  WHEN 'pork' THEN 'Pork Chops' WHEN 'pork chops' THEN 'Pork Chops' ELSE category END;
+UPDATE public.butchery_sales
+SET category = CASE lower(trim(category))
+  WHEN 'goat' THEN 'Goat Meat' WHEN 'mbuzi' THEN 'Goat Meat' WHEN 'goat/mbuzi' THEN 'Goat Meat'
+  WHEN 'chicken' THEN 'Whole Chicken' WHEN 'whole chicken' THEN 'Whole Chicken'
+  WHEN 'liver' THEN 'Matumbo' WHEN 'matumbo' THEN 'Matumbo' WHEN 'liver/matumbo' THEN 'Matumbo'
+  WHEN 'pork' THEN 'Pork Chops' WHEN 'pork chops' THEN 'Pork Chops' ELSE category END;
 
 ALTER TABLE public.butchery_config ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.butchery_cuts ENABLE ROW LEVEL SECURITY;
@@ -144,7 +206,7 @@ DECLARE
   v_categories jsonb := CASE
     WHEN jsonb_typeof(_enabled_categories) = 'array' AND jsonb_array_length(_enabled_categories) > 0 THEN _enabled_categories
     WHEN coalesce(_beef_only_mode, false) THEN '["Beef"]'::jsonb
-    ELSE '["Beef","Goat/Mbuzi","Chicken","Liver/Matumbo","Pork"]'::jsonb
+    ELSE '["Beef","Goat Meat","Whole Chicken","Matumbo","Pork Chops"]'::jsonb
   END;
 BEGIN
   IF auth.uid() IS NULL THEN
@@ -186,13 +248,13 @@ BEGIN
 
   -- Seed starter cuts once if the shop has no butchery cuts yet
   IF NOT EXISTS (SELECT 1 FROM public.butchery_cuts WHERE shop_id = _shop) THEN
-    INSERT INTO public.butchery_cuts (id, shop_id, name, category, price_per_kg_ksh, stock_grams, icon_key, active, sort_order)
+    INSERT INTO public.butchery_cuts (id, shop_id, name, category, price_per_kg_ksh, buying_price_per_kg_ksh, stock_grams, icon_key, active, sort_order)
     VALUES
-      (_shop::text || '_beef', _shop, 'Beef', 'Beef', v_price, 0, 'beef', true, 1),
-      (_shop::text || '_goat_meat', _shop, 'Goat Meat', 'Goat/Mbuzi', 750, 0, 'goat', true, 2),
-      (_shop::text || '_whole_chicken', _shop, 'Whole Chicken', 'Chicken', 480, 0, 'chicken', true, 3),
-      (_shop::text || '_matumbo', _shop, 'Matumbo', 'Liver/Matumbo', 280, 0, 'matumbo', true, 4),
-      (_shop::text || '_pork_chops', _shop, 'Pork Chops', 'Pork', 700, 0, 'pork', true, 5)
+      (_shop::text || '_beef', _shop, 'Beef', 'Beef', v_price, 0, 0, 'beef', true, 1),
+      (_shop::text || '_goat_meat', _shop, 'Goat Meat', 'Goat Meat', 750, 0, 0, 'goat', true, 2),
+      (_shop::text || '_whole_chicken', _shop, 'Whole Chicken', 'Whole Chicken', 480, 0, 0, 'chicken', true, 3),
+      (_shop::text || '_matumbo', _shop, 'Matumbo', 'Matumbo', 280, 0, 0, 'matumbo', true, 4),
+      (_shop::text || '_pork_chops', _shop, 'Pork Chops', 'Pork Chops', 700, 0, 0, 'pork', true, 5)
     ON CONFLICT (id) DO NOTHING;
   END IF;
 
@@ -215,6 +277,7 @@ END $$;
 REVOKE ALL ON FUNCTION public.upsert_butchery_config(uuid, boolean, text, boolean, integer, jsonb, jsonb) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.upsert_butchery_config(uuid, boolean, text, boolean, integer, jsonb, jsonb) TO authenticated;
 
+DROP FUNCTION IF EXISTS public.upsert_butchery_cut(uuid, text, text, text, integer, integer, text, boolean, integer);
 CREATE OR REPLACE FUNCTION public.upsert_butchery_cut(
   _shop uuid,
   _id text,
@@ -224,7 +287,8 @@ CREATE OR REPLACE FUNCTION public.upsert_butchery_cut(
   _stock_grams integer,
   _icon_key text,
   _active boolean,
-  _sort_order integer
+  _sort_order integer,
+  _buying_price_per_kg_ksh integer DEFAULT 0
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -246,7 +310,7 @@ BEGIN
   END IF;
 
   INSERT INTO public.butchery_cuts (
-    id, shop_id, name, category, price_per_kg_ksh, stock_grams, icon_key, active, sort_order, updated_at
+    id, shop_id, name, category, price_per_kg_ksh, buying_price_per_kg_ksh, stock_grams, icon_key, active, sort_order, updated_at
   )
   VALUES (
     _id,
@@ -254,6 +318,7 @@ BEGIN
     btrim(_name),
     btrim(_category),
     greatest(1, _price_per_kg_ksh),
+    greatest(0, coalesce(_buying_price_per_kg_ksh, 0)),
     greatest(0, coalesce(_stock_grams, 0)),
     coalesce(nullif(btrim(_icon_key), ''), 'beef'),
     coalesce(_active, true),
@@ -264,6 +329,7 @@ BEGIN
     name = EXCLUDED.name,
     category = EXCLUDED.category,
     price_per_kg_ksh = EXCLUDED.price_per_kg_ksh,
+    buying_price_per_kg_ksh = EXCLUDED.buying_price_per_kg_ksh,
     stock_grams = EXCLUDED.stock_grams,
     icon_key = EXCLUDED.icon_key,
     active = EXCLUDED.active,
@@ -274,8 +340,8 @@ BEGIN
   RETURN jsonb_build_object('success', true, 'id', _id);
 END $$;
 
-REVOKE ALL ON FUNCTION public.upsert_butchery_cut(uuid, text, text, text, integer, integer, text, boolean, integer) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.upsert_butchery_cut(uuid, text, text, text, integer, integer, text, boolean, integer) TO authenticated;
+REVOKE ALL ON FUNCTION public.upsert_butchery_cut(uuid, text, text, text, integer, integer, text, boolean, integer, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.upsert_butchery_cut(uuid, text, text, text, integer, integer, text, boolean, integer, integer) TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.update_butchery_category_price(
   _shop uuid,
@@ -308,7 +374,7 @@ BEGIN
   SET price_per_kg_ksh = v_price,
       updated_at = now()
   WHERE shop_id = _shop
-    AND lower(category) = lower(btrim(_category));
+    AND (lower(name) = lower(btrim(_category)) OR lower(category) = lower(btrim(_category)));
 
   GET DIAGNOSTICS v_updated = ROW_COUNT;
 
@@ -322,8 +388,23 @@ BEGIN
   RETURN coalesce(v_updated, 0);
 END $$;
 
+CREATE OR REPLACE FUNCTION public.update_butchery_meat_price(
+  _shop uuid,
+  _meat_name text,
+  _price_per_kg_ksh integer
+)
+RETURNS integer
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+  SELECT public.update_butchery_category_price(_shop, _meat_name, _price_per_kg_ksh)
+$$;
+
 REVOKE ALL ON FUNCTION public.update_butchery_category_price(uuid, text, integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.update_butchery_category_price(uuid, text, integer) TO authenticated;
+REVOKE ALL ON FUNCTION public.update_butchery_meat_price(uuid, text, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.update_butchery_meat_price(uuid, text, integer) TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.record_butchery_sale(
   _shop uuid,
@@ -371,7 +452,7 @@ BEGIN
     END IF;
   END IF;
 
-  SELECT id, name, category, price_per_kg_ksh, stock_grams
+  SELECT id, name, category, price_per_kg_ksh, buying_price_per_kg_ksh, stock_grams
   INTO v_cut
   FROM public.butchery_cuts
   WHERE id = _cut_id AND shop_id = _shop
@@ -395,6 +476,7 @@ BEGIN
 
   INSERT INTO public.butchery_sales (
     shop_id, operation_id, cut_id, cut_name, category, price_per_kg_ksh,
+    buying_price_per_kg_ksh,
     weight_grams, total_ksh, payment_method, entry_mode,
     stock_deducted_grams, attendant_user_id, attendant_name
   )
@@ -405,6 +487,7 @@ BEGIN
     v_cut.name,
     v_cut.category,
     v_cut.price_per_kg_ksh,
+    greatest(0, coalesce(v_cut.buying_price_per_kg_ksh, 0)),
     _weight_grams,
     _total_ksh,
     coalesce(nullif(btrim(_payment_method), ''), 'cash'),
@@ -476,5 +559,38 @@ END $$;
 
 REVOKE ALL ON FUNCTION public.undo_latest_butchery_sale(uuid, bigint) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.undo_latest_butchery_sale(uuid, bigint) TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.butchery_profit_loss_report(
+  _shop uuid,
+  _from timestamptz DEFAULT NULL,
+  _to timestamptz DEFAULT NULL
+)
+RETURNS TABLE(total_sales_ksh bigint, known_cost_ksh bigint, net_profit_loss_ksh bigint, known_sale_count bigint)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN RAISE EXCEPTION 'not_authenticated'; END IF;
+  IF NOT public.is_platform_admin() AND NOT EXISTS (
+    SELECT 1 FROM public.shop_members m
+    WHERE m.shop_id = _shop AND m.user_id = auth.uid()
+      AND m.role IN ('owner', 'manager')
+      AND coalesce(m.employment_status, 'active') = 'active'
+  ) THEN RAISE EXCEPTION 'forbidden'; END IF;
+  RETURN QUERY
+  SELECT
+    coalesce(sum(s.total_ksh), 0)::bigint,
+    coalesce(sum(round((s.weight_grams / 1000.0) * s.buying_price_per_kg_ksh)), 0)::bigint,
+    coalesce(sum(s.total_ksh - round((s.weight_grams / 1000.0) * s.buying_price_per_kg_ksh)), 0)::bigint,
+    count(*)::bigint
+  FROM public.butchery_sales s
+  WHERE s.shop_id = _shop AND s.undone = false AND s.buying_price_per_kg_ksh > 0
+    AND (_from IS NULL OR s.created_at >= _from)
+    AND (_to IS NULL OR s.created_at < _to);
+END $$;
+
+REVOKE ALL ON FUNCTION public.butchery_profit_loss_report(uuid, timestamptz, timestamptz) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.butchery_profit_loss_report(uuid, timestamptz, timestamptz) TO authenticated;
 
 NOTIFY pgrst, 'reload schema';

@@ -1939,6 +1939,7 @@ class CounterPosRepository(
                     name = row.optString("name"),
                     category = row.optString("category"),
                     pricePerKgKsh = row.optInt("price_per_kg_ksh"),
+                    buyingPricePerKgKsh = row.optInt("buying_price_per_kg_ksh", 0).coerceAtLeast(0),
                     stockGrams = row.optInt("stock_grams"),
                     iconKey = row.optString("icon_key", "beef"),
                     active = row.optBoolean("active", true),
@@ -1958,6 +1959,7 @@ class CounterPosRepository(
                     cutName = row.optString("cut_name"),
                     category = row.optString("category"),
                     pricePerKgKsh = row.optInt("price_per_kg_ksh"),
+                    buyingPricePerKgKsh = row.optInt("buying_price_per_kg_ksh", 0).coerceAtLeast(0),
                     weightGrams = row.optInt("weight_grams"),
                     totalKsh = row.optInt("total_ksh"),
                     paymentMethod = row.optString("payment_method", "cash"),
@@ -3301,7 +3303,9 @@ class CounterPosRepository(
             createdAt = System.currentTimeMillis()
         )
         if (localId != null && localId > 0L) {
-            val operationId = UUID.randomUUID().toString()
+            val operationId = UUID.nameUUIDFromBytes(
+                "$shopId:butchery-sale:$localId".toByteArray(Charsets.UTF_8)
+            ).toString()
             runCatching {
                 remote.recordButcherySale(
                     shopId = shopId,
@@ -3331,6 +3335,7 @@ class CounterPosRepository(
         remote.upsertButcheryCut(JSONObject()
             .put("shop_id", cut.shopId).put("id", cut.id).put("name", cut.name)
             .put("category", cut.category).put("price_per_kg_ksh", cut.pricePerKgKsh)
+            .put("buying_price_per_kg_ksh", cut.buyingPricePerKgKsh)
             .put("stock_grams", cut.stockGrams).put("icon_key", cut.iconKey)
             .put("active", cut.active).put("sort_order", cut.sortOrder))
     }

@@ -714,6 +714,7 @@ class SupabaseRestClient(context: Context) {
             .put("_category", cut.optString("category"))
             .put("_price_per_kg_ksh", cut.optInt("price_per_kg_ksh"))
             .put("_stock_grams", cut.optInt("stock_grams"))
+            .put("_buying_price_per_kg_ksh", cut.optInt("buying_price_per_kg_ksh", 0))
             .put("_icon_key", cut.optString("icon_key", "beef_steak"))
             .put("_active", cut.optBoolean("active", true))
             .put("_sort_order", cut.optInt("sort_order"))
