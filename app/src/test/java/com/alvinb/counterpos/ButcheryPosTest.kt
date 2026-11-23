@@ -675,7 +675,7 @@ class ButcheryPosTest {
         }
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithText("Mbuzi Express · Goat/Mbuzi Only").assertIsDisplayed()
+        composeRule.onNodeWithText("Mbuzi Express · Goat Meat Only").assertIsDisplayed()
         composeRule.onNodeWithText("Goat Meat").assertIsDisplayed()
         composeRule.onNodeWithText("Beef").assertDoesNotExist()
         composeRule.onNodeWithText("Whole Chicken").assertDoesNotExist()

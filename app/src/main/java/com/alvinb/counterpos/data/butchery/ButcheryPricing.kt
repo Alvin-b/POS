@@ -16,10 +16,10 @@ enum class ButcheryEntryMode { WEIGHT_KG, AMOUNT_KES }
 enum class ButcheryCategory(val label: String) {
     ALL("All"),
     BEEF("Beef"),
-    GOAT("Goat/Mbuzi"),
-    CHICKEN("Chicken"),
-    OFFAL("Liver/Matumbo"),
-    PORK("Pork")
+    GOAT("Goat Meat"),
+    CHICKEN("Whole Chicken"),
+    OFFAL("Matumbo"),
+    PORK("Pork Chops")
 }
 
 data class ButcheryCalculationResult(
@@ -55,6 +55,8 @@ data class ButcheryDailyReportSnapshot(
     val endMs: Long,
     val totalSalesKsh: Long,
     val totalWeightGrams: Long,
+    val totalCostKsh: Long,
+    val netProfitKsh: Long,
     val mpesaTotalKsh: Long,
     val cashTotalKsh: Long,
     val mpesaPercent: Int,
@@ -77,7 +79,7 @@ object ButcheryPricing {
         ButcheryCategory.OFFAL.label,
         ButcheryCategory.PORK.label
     )
-    const val ALL_MEAT_CATEGORIES_JSON = "[\"Beef\",\"Goat/Mbuzi\",\"Chicken\",\"Liver/Matumbo\",\"Pork\"]"
+    const val ALL_MEAT_CATEGORIES_JSON = "[\"Beef\",\"Goat Meat\",\"Whole Chicken\",\"Matumbo\",\"Pork Chops\"]"
     val SUGGESTED_PAYMENT_METHODS = listOf(
         "M-Pesa",
         "Cash Payment",
@@ -364,6 +366,10 @@ object ButcheryPricing {
 
         val totalSales = filtered.sumOf { it.totalKsh.toLong() }
         val totalGrams = filtered.sumOf { it.weightGrams.toLong() }
+        val costedSales = filtered.filter { it.buyingPricePerKgKsh > 0 }
+        val totalCost = costedSales.sumOf {
+            ((it.weightGrams / 1000.0) * it.buyingPricePerKgKsh.toDouble()).roundToInt().toLong()
+        }
         val mpesaTotal = filtered
             .filter { isMpesaPayment(it.paymentMethod) }
             .sumOf { it.totalKsh.toLong() }
@@ -433,6 +439,8 @@ object ButcheryPricing {
             endMs = endMs,
             totalSalesKsh = totalSales,
             totalWeightGrams = totalGrams,
+            totalCostKsh = totalCost,
+            netProfitKsh = totalSales - totalCost,
             mpesaTotalKsh = mpesaTotal,
             cashTotalKsh = cashTotal,
             mpesaPercent = mpesaPct,
@@ -457,6 +465,8 @@ object ButcheryPricing {
             appendLine("Report Date,${esc(dayFormat.format(Date(snapshot.startMs)))}")
             appendLine("Total Sales (KES),${snapshot.totalSalesKsh}")
             appendLine("Total Weight Sold (kg),${String.format(Locale.US, "%.2f", snapshot.totalWeightKg)}")
+            appendLine("Known Cost (KES),${snapshot.totalCostKsh}")
+            appendLine("Net Profit/Loss (KES),${snapshot.netProfitKsh}")
             appendLine("M-Pesa Total (KES),${snapshot.mpesaTotalKsh}")
             appendLine("Cash Total (KES),${snapshot.cashTotalKsh}")
             snapshot.paymentBreakdown
@@ -465,7 +475,7 @@ object ButcheryPricing {
                     appendLine("${esc("${extra.method} Total (KES)")},${extra.totalKsh}")
                 }
             appendLine()
-            appendLine("Time,Cut Name,Category,Weight (kg),Price per kg (KES),Total (KES),Payment Method,Entry Mode")
+            appendLine("Time,Cut Name,Category,Weight (kg),Selling Price per kg (KES),Buying Price per kg (KES),Total (KES),Payment Method,Entry Mode")
             snapshot.sales.forEach { sale ->
                 val weightKg = String.format(Locale.US, "%.3f", sale.weightGrams / 1000.0)
                 val methodLabel = paymentMethodDisplayLabel(sale.paymentMethod)
@@ -477,6 +487,7 @@ object ButcheryPricing {
                         esc(sale.category),
                         weightKg,
                         sale.pricePerKgKsh.toString(),
+                        if (sale.buyingPricePerKgKsh > 0) sale.buyingPricePerKgKsh.toString() else "",
                         sale.totalKsh.toString(),
                         esc(methodLabel),
                         esc(entryLabel)

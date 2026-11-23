@@ -923,6 +923,7 @@ interface CounterPosDao {
                 cutName = cut.name,
                 category = cut.category,
                 pricePerKgKsh = cut.pricePerKgKsh,
+                buyingPricePerKgKsh = cut.buyingPricePerKgKsh,
                 weightGrams = weightGrams,
                 totalKsh = totalKsh,
                 paymentMethod = normalizedPayment,

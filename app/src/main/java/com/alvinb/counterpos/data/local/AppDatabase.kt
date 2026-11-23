@@ -36,7 +36,7 @@ import java.util.concurrent.Executors
         ButcheryCutEntity::class,
         ButcherySaleEntity::class
     ],
-    version = 16,
+    version = 17,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -296,6 +296,16 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                ensureColumn(db, "butchery_cuts", "buyingPricePerKgKsh", "INTEGER NOT NULL DEFAULT 0")
+                ensureColumn(db, "butchery_sales", "buyingPricePerKgKsh", "INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE butchery_config SET enabledCategoriesJson = REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(enabledCategoriesJson, 'Goat/Mbuzi', 'Goat Meat'), 'Chicken', 'Whole Chicken'), 'Liver/Matumbo', 'Matumbo'), 'Pork', 'Pork Chops'), 'Goat', 'Goat Meat')")
+                db.execSQL("UPDATE butchery_cuts SET category = CASE lower(category) WHEN 'goat/mbuzi' THEN 'Goat Meat' WHEN 'goat' THEN 'Goat Meat' WHEN 'chicken' THEN 'Whole Chicken' WHEN 'liver/matumbo' THEN 'Matumbo' WHEN 'matumbo' THEN 'Matumbo' WHEN 'pork' THEN 'Pork Chops' ELSE category END")
+                db.execSQL("UPDATE butchery_sales SET category = CASE lower(category) WHEN 'goat/mbuzi' THEN 'Goat Meat' WHEN 'goat' THEN 'Goat Meat' WHEN 'chicken' THEN 'Whole Chicken' WHEN 'liver/matumbo' THEN 'Matumbo' WHEN 'matumbo' THEN 'Matumbo' WHEN 'pork' THEN 'Pork Chops' ELSE category END")
+            }
+        }
+
         private fun ensureColumn(db: SupportSQLiteDatabase, table: String, column: String, declaration: String) {
             val cursor = db.query("PRAGMA table_info($table)")
             val exists = try {
@@ -348,7 +358,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_12_13,
                     MIGRATION_13_14,
                     MIGRATION_14_15,
-                    MIGRATION_15_16
+                    MIGRATION_15_16,
+                    MIGRATION_16_17
                 )
                 .build().also { instance = it }
         }

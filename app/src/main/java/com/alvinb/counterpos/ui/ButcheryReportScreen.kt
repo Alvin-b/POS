@@ -252,6 +252,48 @@ fun ButcheryReportScreen(
                 }
             }
 
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Card(
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        border = BorderStroke(1.dp, ButcheryPalette.KeypadBorder),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Known cost", fontSize = 12.sp, color = Color(0xFF475569))
+                            Text(
+                                text = ButcheryPricing.formatKsh(snapshot.totalCostKsh),
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFF0F172A),
+                                modifier = Modifier.testTag("butchery_report_total_cost")
+                            )
+                        }
+                    }
+                    Card(
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        border = BorderStroke(1.dp, ButcheryPalette.KeypadBorder),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Net profit/loss", fontSize = 12.sp, color = Color(0xFF475569))
+                            Text(
+                                text = ButcheryPricing.formatKsh(snapshot.netProfitKsh),
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (snapshot.netProfitKsh >= 0) Color(0xFF047857) else Color(0xFFB91C1C),
+                                modifier = Modifier.testTag("butchery_report_net_profit")
+                            )
+                        }
+                    }
+                }
+            }
+
             // Payment Breakdown Card + Dual-Color Bar Chart
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
