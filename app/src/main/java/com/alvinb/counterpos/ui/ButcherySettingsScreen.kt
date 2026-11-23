@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material3.AlertDialog
@@ -84,6 +85,7 @@ fun ButcherySettingsScreen(
     onUpdateCutStockKg: (cutId: String, stockKg: Double) -> Unit,
     onToggleCutActive: (cutId: String, active: Boolean) -> Unit,
     onAddCut: (name: String, category: String, pricePerKgKsh: Int, stockKg: Double, iconKey: String) -> Unit,
+    onOpenButcheryEnrollment: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var enabledDraft by remember(config?.enabled) { mutableStateOf(config?.enabled ?: true) }
@@ -208,7 +210,22 @@ fun ButcherySettingsScreen(
                         ButcheryMeatTypesEditor(
                             selectedCategories = enabledCategoriesDraft,
                             enabled = ownerCanEdit,
-                            onCategoriesChange = { enabledCategoriesDraft = it }
+                            onCategoriesChange = { nextCategories ->
+                                enabledCategoriesDraft = nextCategories
+                                if (ownerCanEdit && nameDraft.trim().isNotEmpty()) {
+                                    val price = defaultRateDraft.toIntOrNull() ?: 680
+                                    val nextBeefOnly = nextCategories.size == 1 &&
+                                        nextCategories.first().equals(ButcheryCategory.BEEF.label, ignoreCase = true)
+                                    onSaveConfig(
+                                        enabledDraft,
+                                        nameDraft.trim(),
+                                        nextBeefOnly,
+                                        price,
+                                        paymentMethodsDraft,
+                                        nextCategories
+                                    )
+                                }
+                            }
                         )
 
                         Row(
@@ -270,6 +287,21 @@ fun ButcherySettingsScreen(
                             Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
                             Text("Save Butchery Settings", fontWeight = FontWeight.Bold)
+                        }
+
+                        if (ownerCanEdit && onOpenButcheryEnrollment != null) {
+                            OutlinedButton(
+                                onClick = onOpenButcheryEnrollment,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("butchery_settings_enroll_device_button")
+                            ) {
+                                Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Enroll Butchery Phone (Passkey / QR)", fontWeight = FontWeight.SemiBold)
+                            }
                         }
                     }
                 }

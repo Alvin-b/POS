@@ -20,13 +20,17 @@ import androidx.test.core.app.ApplicationProvider
 import com.alvinb.counterpos.data.CounterPosRepository
 import com.alvinb.counterpos.data.butchery.ButcheryCategory
 import com.alvinb.counterpos.data.butchery.ButcheryPricing
+import com.alvinb.counterpos.data.butchery.ButcheryTrendRange
 import com.alvinb.counterpos.data.local.AppDatabase
 import com.alvinb.counterpos.data.local.entity.ButcheryConfigEntity
+import com.alvinb.counterpos.data.local.entity.ButcherySaleEntity
 import com.alvinb.counterpos.data.remote.SupabaseRestClient
+import com.alvinb.counterpos.ui.ButcheryDailySalesScreen
 import com.alvinb.counterpos.ui.ButcheryPosScreen
 import com.alvinb.counterpos.ui.ButcherySettingsScreen
 import com.alvinb.counterpos.ui.PdfDocumentSession
 import com.alvinb.counterpos.ui.buildButcheryReportPdf
+import java.util.Calendar
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -299,20 +303,26 @@ class ButcheryPosTest {
         composeRule.onNodeWithText("Whole Chicken").assertDoesNotExist()
         composeRule.onNodeWithText("Pork Chops").assertDoesNotExist()
 
-        // Switch to KES price mode (digital scale: customer buys meat worth KES 150 / 200)
-        composeRule.onNodeWithTag("butchery_toggle_entry_mode").performClick()
-        composeRule.waitForIdle()
+        // Opens directly in money-first mode (KES 0)
         composeRule.onNodeWithTag("butchery_keypad_display").assertIsDisplayed()
+        composeRule.onNodeWithTag("butchery_keypad_display").assertTextEquals("KES 0")
+
+        // Key in 150 KES directly on the keypad (digital scale: customer buys meat worth KES 150)
+        composeRule.onNodeWithTag("butchery_key_1").performClick()
+        composeRule.onNodeWithTag("butchery_key_5").performClick()
+        composeRule.onNodeWithTag("butchery_key_0").performClick()
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("butchery_keypad_display").assertTextEquals("KES 150")
         composeRule.onNodeWithText("KES 150 = 0.22 kg (221 g) @ KES 680/kg").assertIsDisplayed()
 
-        // Record direct M-Pesa (no STK push) for KES 150
+        // Record direct M-Pesa (no STK push) for KES 150 -> resets keypad to KES 0
         composeRule.onNodeWithTag("butchery_pay_mpesa_button").performClick()
         composeRule.waitForIdle()
         assertEquals(1, recordedPayments.size)
         assertEquals(Triple(221, 150, "mpesa"), recordedPayments[0])
+        composeRule.onNodeWithTag("butchery_keypad_display").assertTextEquals("KES 0")
 
-        // Select KES 200 preset and record Cash Payment directly
+        // Select KES 200 preset and record Cash Payment directly -> resets keypad to KES 0
         composeRule.onNodeWithTag("butchery_preset_kes_200").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("KES 200 = 0.29 kg (294 g) @ KES 680/kg").assertIsDisplayed()
@@ -320,6 +330,13 @@ class ButcheryPosTest {
         composeRule.waitForIdle()
         assertEquals(2, recordedPayments.size)
         assertEquals(Triple(294, 200, "cash"), recordedPayments[1])
+        composeRule.onNodeWithTag("butchery_keypad_display").assertTextEquals("KES 0")
+
+        // Toggling to weight mode still computes kg -> KES accurately
+        composeRule.onNodeWithTag("butchery_toggle_entry_mode").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("butchery_keypad_display").assertTextEquals("1.0 kg")
+        composeRule.onNodeWithText("1.00 kg = KES 680").assertIsDisplayed()
     }
 
     @Test
@@ -497,7 +514,8 @@ class ButcheryPosTest {
         }
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithTag("butchery_toggle_entry_mode").performClick()
+        // Key in KES 150 directly in default money-first mode
+        composeRule.onNodeWithTag("butchery_preset_kes_150").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("KES 150 = 0.22 kg (221 g) @ KES 680/kg").assertIsDisplayed()
 
@@ -777,5 +795,237 @@ class ButcheryPosTest {
         context.deleteDatabase(dbName)
 
         assertEquals(listOf(Triple("s1_beef_steak", "Beef", "beef")), rows)
+    }
+
+    @Test
+    fun dailySalesTrendCalculatesDailyRevenueAndMeatQuantityAccurately() {
+        val noonCal = Calendar.getInstance().apply {
+            set(2026, Calendar.NOVEMBER, 21, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val refMs = noonCal.timeInMillis
+        val dayMs = 86_400_000L
+
+        val sales = listOf(
+            // 5 days ago: Beef 2.0 kg = 1,360
+            ButcherySaleEntity(
+                id = 1L, shopId = "s1", cutId = "s1_beef", cutName = "Beef", category = "Beef",
+                pricePerKgKsh = 680, weightGrams = 2_000, totalKsh = 1_360,
+                paymentMethod = "mpesa", entryMode = "weight", stockDeductedGrams = 0,
+                attendantName = "Owner", createdAt = refMs - (5 * dayMs), undone = false
+            ),
+            // 2 days ago: Goat 1.5 kg = 1,125 + Beef 1.0 kg = 680
+            ButcherySaleEntity(
+                id = 2L, shopId = "s1", cutId = "s1_goat", cutName = "Goat Meat", category = "Goat/Mbuzi",
+                pricePerKgKsh = 750, weightGrams = 1_500, totalKsh = 1_125,
+                paymentMethod = "cash", entryMode = "weight", stockDeductedGrams = 0,
+                attendantName = "Owner", createdAt = refMs - (2 * dayMs), undone = false
+            ),
+            ButcherySaleEntity(
+                id = 3L, shopId = "s1", cutId = "s1_beef", cutName = "Beef", category = "Beef",
+                pricePerKgKsh = 680, weightGrams = 1_000, totalKsh = 680,
+                paymentMethod = "mpesa", entryMode = "weight", stockDeductedGrams = 0,
+                attendantName = "Owner", createdAt = refMs - (2 * dayMs), undone = false
+            ),
+            // Today: Beef 3.5 kg = 2,380 (peak day) + undone sale that must be ignored
+            ButcherySaleEntity(
+                id = 4L, shopId = "s1", cutId = "s1_beef", cutName = "Beef", category = "Beef",
+                pricePerKgKsh = 680, weightGrams = 3_500, totalKsh = 2_380,
+                paymentMethod = "mpesa", entryMode = "amount", stockDeductedGrams = 0,
+                attendantName = "Owner", createdAt = refMs, undone = false
+            ),
+            ButcherySaleEntity(
+                id = 5L, shopId = "s1", cutId = "s1_beef", cutName = "Beef", category = "Beef",
+                pricePerKgKsh = 680, weightGrams = 10_000, totalKsh = 6_800,
+                paymentMethod = "cash", entryMode = "weight", stockDeductedGrams = 0,
+                attendantName = "Owner", createdAt = refMs, undone = true
+            )
+        )
+
+        val allTrend = ButcheryPricing.buildDailySalesTrend(
+            allSales = sales,
+            range = ButcheryTrendRange.SEVEN_DAYS,
+            categoryFilter = ButcheryCategory.ALL.label,
+            referenceMs = refMs
+        )
+        assertEquals(7, allTrend.days.size)
+        assertEquals(5_545L, allTrend.totalRevenueKsh)
+        assertEquals(8_000L, allTrend.totalWeightGrams)
+        assertEquals(4, allTrend.totalTransactions)
+        assertEquals(3, allTrend.activeDaysCount)
+        assertEquals(2_380L, allTrend.bestRevenueDay?.revenueKsh)
+        assertEquals(3_500L, allTrend.bestVolumeDay?.weightGrams)
+        assertTrue((allTrend.revenueChangePercent ?: 0.0) > 0.0)
+        assertTrue((allTrend.quantityChangePercent ?: 0.0) > 0.0)
+
+        // Category filter isolates Beef only
+        val beefTrend = ButcheryPricing.buildDailySalesTrend(
+            allSales = sales,
+            range = ButcheryTrendRange.SEVEN_DAYS,
+            categoryFilter = ButcheryCategory.BEEF.label,
+            referenceMs = refMs
+        )
+        assertEquals(4_420L, beefTrend.totalRevenueKsh)
+        assertEquals(6_500L, beefTrend.totalWeightGrams)
+        assertEquals(3, beefTrend.totalTransactions)
+    }
+
+    @Test
+    fun dailySalesScreenRendersVicoRevenueAndMeatQuantityChartsAndRespondsToFilters() {
+        val noonCal = Calendar.getInstance().apply {
+            set(2026, Calendar.NOVEMBER, 21, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val refMs = noonCal.timeInMillis
+        val dayMs = 86_400_000L
+
+        val config = ButcheryConfigEntity(
+            shopId = "s-trend",
+            enabled = true,
+            butcheryName = "Savannah Prime Butchery",
+            beefOnlyMode = false,
+            defaultBeefPricePerKgKsh = 680
+        )
+        val sales = listOf(
+            ButcherySaleEntity(
+                id = 1L, shopId = "s-trend", cutId = "c1", cutName = "Beef", category = "Beef",
+                pricePerKgKsh = 680, weightGrams = 2_500, totalKsh = 1_700,
+                paymentMethod = "mpesa", entryMode = "weight", stockDeductedGrams = 0,
+                attendantName = "Owner", createdAt = refMs - (10 * dayMs), undone = false
+            ),
+            ButcherySaleEntity(
+                id = 2L, shopId = "s-trend", cutId = "c2", cutName = "Goat Meat", category = "Goat/Mbuzi",
+                pricePerKgKsh = 750, weightGrams = 2_000, totalKsh = 1_500,
+                paymentMethod = "cash", entryMode = "weight", stockDeductedGrams = 0,
+                attendantName = "Owner", createdAt = refMs - (1 * dayMs), undone = false
+            ),
+            ButcherySaleEntity(
+                id = 3L, shopId = "s-trend", cutId = "c1", cutName = "Beef", category = "Beef",
+                pricePerKgKsh = 680, weightGrams = 4_000, totalKsh = 2_720,
+                paymentMethod = "mpesa", entryMode = "amount", stockDeductedGrams = 0,
+                attendantName = "Owner", createdAt = refMs, undone = false
+            )
+        )
+
+        composeRule.setContent {
+            ButcheryDailySalesScreen(
+                config = config,
+                sales = sales,
+                onBack = {},
+                referenceMs = refMs
+            )
+        }
+        composeRule.waitForIdle()
+
+        // Default 14D range includes all 3 sales: KES 5,920 & 8.5 kg
+        composeRule.onNodeWithTag("butchery_daily_sales_total_revenue").assertTextEquals("KES 5,920")
+        composeRule.onNodeWithTag("butchery_daily_sales_total_kg").assertTextEquals("8.5 kg")
+        composeRule.onNodeWithTag("butchery_daily_revenue_vico_chart").assertIsDisplayed()
+
+        // Scroll to verify Vico quantity chart and daily performance breakdown card
+        composeRule.onNodeWithTag("butchery_daily_sales_list")
+            .performScrollToNode(hasTestTag("butchery_daily_quantity_vico_chart"))
+        composeRule.onNodeWithTag("butchery_daily_quantity_vico_chart").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("butchery_daily_sales_list")
+            .performScrollToNode(hasTestTag("butchery_daily_breakdown_card"))
+        composeRule.onNodeWithTag("butchery_daily_breakdown_card").assertIsDisplayed()
+
+        // Scroll back up to filter bar and switch to 7D range (excludes the 10-day-old sale)
+        composeRule.onNodeWithTag("butchery_daily_sales_list")
+            .performScrollToNode(hasTestTag("butchery_trend_range_7"))
+        composeRule.onNodeWithTag("butchery_trend_range_7").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("butchery_daily_sales_total_revenue").assertTextEquals("KES 4,220")
+        composeRule.onNodeWithTag("butchery_daily_sales_total_kg").assertTextEquals("6.0 kg")
+
+        // Filter to Beef only inside 7D
+        composeRule.onNodeWithTag("butchery_trend_category_beef").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("butchery_daily_sales_total_revenue").assertTextEquals("KES 2,720")
+        composeRule.onNodeWithTag("butchery_daily_sales_total_kg").assertTextEquals("4.0 kg")
+    }
+
+    @Test
+    fun butcheryPosShowsOnlySelectedSetupSubsetAndSavesKeyedSalesIntoReport() {
+        val shopId = "shop-subset-quick-sale"
+        val config = ButcheryConfigEntity(
+            shopId = shopId,
+            enabled = true,
+            butcheryName = "Savannah Grill & Chops",
+            beefOnlyMode = false,
+            defaultBeefPricePerKgKsh = 700,
+            enabledCategoriesJson = ButcheryPricing.serializeEnabledCategories(
+                listOf(ButcheryCategory.GOAT.label, ButcheryCategory.PORK.label)
+            )
+        )
+        runBlocking {
+            repository.enrollOrUpdateButchery(
+                shopId = shopId,
+                enabled = true,
+                butcheryName = config.butcheryName,
+                beefOnlyMode = false,
+                defaultBeefPricePerKgKsh = 700,
+                enabledCategories = listOf(ButcheryCategory.GOAT.label, ButcheryCategory.PORK.label)
+            )
+        }
+        val cuts = runBlocking { repository.observeButcheryCuts(shopId).first() }
+
+        composeRule.setContent {
+            ButcheryPosScreen(
+                config = config,
+                cuts = cuts,
+                canUndoLastSale = false,
+                onBack = {},
+                onOpenSettings = {},
+                onUndoLastSale = {},
+                onRecordSale = { cut, weightGrams, totalKsh, paymentMethod, entryMode ->
+                    runBlocking {
+                        repository.recordButcherySale(
+                            shopId = shopId,
+                            cutId = cut.id,
+                            weightGrams = weightGrams,
+                            totalKsh = totalKsh,
+                            paymentMethod = paymentMethod,
+                            entryMode = entryMode
+                        )
+                    }
+                }
+            )
+        }
+        composeRule.waitForIdle()
+
+        // Only setup-selected products (Goat/Mbuzi + Pork) appear on the sale screen
+        composeRule.onNodeWithText("Goat Meat").assertIsDisplayed()
+        composeRule.onNodeWithText("Pork Chops").assertIsDisplayed()
+        composeRule.onNodeWithText("Beef").assertDoesNotExist()
+        composeRule.onNodeWithText("Whole Chicken").assertDoesNotExist()
+        composeRule.onNodeWithText("Matumbo").assertDoesNotExist()
+
+        // Key in KES 300 -> M-Pesa -> saved into sales report
+        composeRule.onNodeWithTag("butchery_key_3").performClick()
+        composeRule.onNodeWithTag("butchery_key_0").performClick()
+        composeRule.onNodeWithTag("butchery_key_0").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("butchery_pay_mpesa_button").performClick()
+        composeRule.waitForIdle()
+
+        // Select Pork Chops, key in KES 350 -> Cash Payment -> saved into sales report
+        composeRule.onNodeWithText("Pork Chops").performClick()
+        composeRule.onNodeWithTag("butchery_key_3").performClick()
+        composeRule.onNodeWithTag("butchery_key_5").performClick()
+        composeRule.onNodeWithTag("butchery_key_0").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("butchery_pay_cash_button").performClick()
+        composeRule.waitForIdle()
+
+        val savedSales = runBlocking { repository.observeButcherySales(shopId).first() }
+        assertEquals(2, savedSales.size)
+        val window = ButcheryPricing.dayWindowMillis(0)
+        val report = ButcheryPricing.buildDailyReport(savedSales, window.first, window.second)
+        assertEquals(650L, report.totalSalesKsh)
+        assertEquals(300L, report.mpesaTotalKsh)
+        assertEquals(350L, report.cashTotalKsh)
+        assertEquals(900L, report.totalWeightGrams) // 300/750 = 400g goat + 350/700 = 500g pork
     }
 }
