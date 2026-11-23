@@ -3030,6 +3030,10 @@ class CounterPosViewModel(
 
     // ---- Butchery Workspace Actions ----
     fun openButcheryWorkspace(initialTab: ButcheryTab = ButcheryTab.SELL) {
+        if (butcheryConfig.value?.enabled != true) {
+            _uiState.update { it.copy(actionError = "Butchery is not enabled for this business.") }
+            return
+        }
         _uiState.update {
             it.copy(
                 isButcheryWorkspaceOpen = true,
