@@ -865,6 +865,9 @@ interface CounterPosDao {
     @Query("SELECT * FROM butchery_sales WHERE shopId = :shopId ORDER BY createdAt DESC, id DESC")
     fun observeButcherySales(shopId: String): Flow<List<ButcherySaleEntity>>
 
+    @Query("SELECT * FROM butchery_sales WHERE shopId = :shopId ORDER BY createdAt DESC, id DESC")
+    suspend fun getButcherySales(shopId: String): List<ButcherySaleEntity>
+
     @Query("SELECT * FROM butchery_sales WHERE shopId = :shopId AND undone = 0 ORDER BY createdAt DESC, id DESC LIMIT 1")
     suspend fun getLatestActiveButcherySale(shopId: String): ButcherySaleEntity?
 

@@ -91,7 +91,7 @@ fun RegisterBusinessScreen(
         error = state.startupError,
         notice = state.notice,
         isCreating = state.isAuthenticating || state.isCreatingBusiness,
-        onRegister = { email, password, name, type, size, mode, count, phone, enrollButchery, butcheryName, beefOnly, beefPrice ->
+        onRegister = { email, password, name, type, size, mode, count, phone, enrollButchery, butcheryName, beefOnly, beefPrice, enabledCategories ->
             viewModel.registerOwnerAndBusiness(
                 email = email,
                 password = password,
@@ -104,7 +104,8 @@ fun RegisterBusinessScreen(
                 enrollButchery = enrollButchery,
                 butcheryName = butcheryName,
                 butcheryBeefOnly = beefOnly,
-                butcheryBeefPricePerKgKsh = beefPrice
+                butcheryBeefPricePerKgKsh = beefPrice,
+                butcheryEnabledCategories = enabledCategories
             )
         },
         onNavigateToSignIn = onNavigateToSignIn,
@@ -130,7 +131,8 @@ fun RegisterBusinessScreen(
         enrollButchery: Boolean,
         butcheryName: String,
         butcheryBeefOnly: Boolean,
-        butcheryBeefPricePerKgKsh: Int
+        butcheryBeefPricePerKgKsh: Int,
+        butcheryEnabledCategories: List<String>
     ) -> Unit,
     onNavigateToSignIn: () -> Unit,
     onClearError: () -> Unit = {}
@@ -150,7 +152,9 @@ fun RegisterBusinessScreen(
     var counterCount by remember { mutableStateOf("1") }
     var enrollButchery by remember { mutableStateOf(false) }
     var butcheryName by remember { mutableStateOf("") }
-    var butcheryBeefOnly by remember { mutableStateOf(false) }
+    var butcheryCategories by remember {
+        mutableStateOf(com.alvinb.counterpos.data.butchery.ButcheryPricing.ALL_MEAT_CATEGORIES)
+    }
     var butcheryBeefPrice by remember { mutableStateOf("680") }
 
     val isClub = businessType == "big_club" || businessType == "club"
@@ -664,30 +668,16 @@ fun RegisterBusinessScreen(
                                 shape = RoundedCornerShape(14.dp),
                                 modifier = Modifier.fillMaxWidth().testTag("register_butchery_name_input")
                             )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text("Beef-Only Butchery", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                                    Text(
-                                        "Turn on if this butchery sells only beef cuts",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Switch(
-                                    checked = butcheryBeefOnly,
-                                    onCheckedChange = { butcheryBeefOnly = it },
-                                    enabled = !isCreating,
-                                    modifier = Modifier.testTag("register_butchery_beef_only_switch")
-                                )
-                            }
+                            ButcheryMeatTypesEditor(
+                                selectedCategories = butcheryCategories,
+                                enabled = !isCreating,
+                                onCategoriesChange = { butcheryCategories = it }
+                            )
+                            val rateLabel = if (butcheryCategories.size == 1) butcheryCategories.first() else "Beef"
                             OutlinedTextField(
                                 value = butcheryBeefPrice,
                                 onValueChange = { butcheryBeefPrice = it.filter(Char::isDigit).take(5) },
-                                label = { Text("Beef Selling Price per kg (KES)") },
+                                label = { Text("$rateLabel Selling Price per kg (KES)") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 singleLine = true,
                                 enabled = !isCreating,
@@ -826,6 +816,8 @@ fun RegisterBusinessScreen(
                         onClick = {
                             val parsedCount = if (isClub) counterCount.toIntOrNull() ?: 1 else 1
                             val parsedBeefPrice = butcheryBeefPrice.toIntOrNull() ?: 680
+                            val beefOnly = butcheryCategories.size == 1 &&
+                                butcheryCategories.first().equals(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label, ignoreCase = true)
                             onRegister(
                                 email.trim(),
                                 password,
@@ -837,8 +829,9 @@ fun RegisterBusinessScreen(
                                 ownerPhone,
                                 enrollButchery,
                                 butcheryName.trim(),
-                                butcheryBeefOnly,
-                                parsedBeefPrice
+                                beefOnly,
+                                parsedBeefPrice,
+                                butcheryCategories
                             )
                         },
                         enabled = canSubmit,

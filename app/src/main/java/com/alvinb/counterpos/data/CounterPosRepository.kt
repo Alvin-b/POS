@@ -364,11 +364,16 @@ class CounterPosRepository(
         loadAccount(autoSelectSingleBusiness = true)
     }
 
+    fun isButcheryDeviceShop(shopId: String): Boolean = remote.isButcheryDeviceShop(shopId)
+
     suspend fun signInWithPasskey(passkey: String): SessionSnapshot = withContext(Dispatchers.IO) {
         val supplied = passkey.trim()
-        val withoutQrPrefix = if (supplied.startsWith("CPX1.", ignoreCase = true)) {
-            supplied.substringAfter('.')
-        } else supplied
+        val isButcheryPass = supplied.startsWith("CPB1.", ignoreCase = true)
+        val withoutQrPrefix = when {
+            supplied.startsWith("CPX1.", ignoreCase = true) -> supplied.substringAfter('.')
+            isButcheryPass -> supplied.substringAfter('.')
+            else -> supplied
+        }
         val clean = withoutQrPrefix.trim().uppercase(Locale.ROOT)
         require(clean.isNotBlank()) { "Enter the passkey sent by the business owner." }
         val redemption = remote.redeemAccessPass(clean)
@@ -376,6 +381,22 @@ class CounterPosRepository(
         if (enrolledShopId == null) {
             remote.clearSession()
             throw IllegalStateException("The enrollment response did not identify a business. Update the backend enrollment function and ask the owner for a new passkey.")
+        }
+        remote.saveButcheryDeviceShopId(if (isButcheryPass) enrolledShopId else null)
+        if (isButcheryPass && dao.getButcheryConfig(enrolledShopId) == null) {
+            runCatching {
+                dao.enrollButchery(
+                    config = ButcheryConfigEntity(
+                        shopId = enrolledShopId,
+                        enabled = true,
+                        butcheryName = "Butchery Counter",
+                        beefOnlyMode = false,
+                        defaultBeefPricePerKgKsh = 680,
+                        updatedAt = System.currentTimeMillis()
+                    ),
+                    starterCuts = ButcheryPricing.defaultCuts(enrolledShopId, 680)
+                )
+            }
         }
         loadAccount(autoSelectSingleBusiness = true, preferredShopId = enrolledShopId)
     }
@@ -386,11 +407,50 @@ class CounterPosRepository(
         loadAccount(autoSelectSingleBusiness = false)
     }
 
-    suspend fun createAccessPass(role: String): JSONObject = withContext(Dispatchers.IO) {
+    private suspend fun ensureButcheryEnabledForShop(
+        shop: BusinessMembership,
+        butcheryName: String = ""
+    ) {
+        val existing = dao.getButcheryConfig(shop.shopId)
+        val resolvedName = butcheryName.trim().ifBlank {
+            existing?.butcheryName?.takeIf(String::isNotBlank) ?: "${shop.shopName} Butchery"
+        }
+        if (existing == null || !existing.enabled || (butcheryName.isNotBlank() && existing.butcheryName != resolvedName)) {
+            enrollOrUpdateButchery(
+                shopId = shop.shopId,
+                enabled = true,
+                butcheryName = resolvedName,
+                beefOnlyMode = existing?.beefOnlyMode ?: false,
+                defaultBeefPricePerKgKsh = existing?.defaultBeefPricePerKgKsh ?: 680,
+                paymentMethods = existing?.paymentMethodsJson?.let { ButcheryPricing.parsePaymentMethods(it) },
+                enabledCategories = existing?.let { ButcheryPricing.resolveEnabledCategories(it) }
+            )
+        }
+    }
+
+    suspend fun createAccessPass(role: String, stationName: String = ""): JSONObject = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: throw IllegalStateException("Open a business before creating an access pass.")
-        require(shop.role == "owner") { "Only the business owner can enroll Waiters." }
-        require(role == "cashier") { "Only the Waiter role is currently supported for employee enrollment." }
-        remote.createAccessPass(shop.shopId, role)
+        require(shop.role == "owner") { "Only the business owner can enroll Waiters or a Butchery station." }
+        val normalized = role.trim().lowercase(Locale.ROOT)
+        require(normalized in setOf("cashier", "waiter", "butchery")) {
+            "Only Waiter and Butchery station enrollment are currently supported."
+        }
+        val isButchery = normalized == "butchery"
+        if (isButchery) {
+            ensureButcheryEnabledForShop(shop, stationName)
+        }
+        val response = remote.createAccessPass(shop.shopId, "cashier")
+        if (isButchery) {
+            val rawCode = response.optString("passkey").trim()
+            if (rawCode.isNotBlank()) {
+                val prefixed = if (rawCode.startsWith("CPB1.", ignoreCase = true)) rawCode else "CPB1.$rawCode"
+                response.put("raw_passkey", rawCode)
+                response.put("passkey", prefixed)
+                response.put("qr_payload", prefixed)
+            }
+            response.put("station", "butchery")
+        }
+        response
     }
 
     suspend fun createAdminBusinessAccessPass(shopId: String, role: String): JSONObject = withContext(Dispatchers.IO) {
@@ -428,11 +488,21 @@ class CounterPosRepository(
         ApprovedAccess(session, shopId ?: session.activeBusiness?.shopId)
     }
 
-    suspend fun approveAccessChallenge(token: String, role: String = "cashier") = withContext(Dispatchers.IO) {
+    suspend fun approveAccessChallenge(
+        token: String,
+        role: String = "cashier",
+        stationName: String = ""
+    ) = withContext(Dispatchers.IO) {
         val shop = activeBusiness ?: throw IllegalStateException("Open a business first.")
-        require(shop.role == "owner") { "Only the business owner can approve Waiter QR enrollment." }
-        require(role == "cashier") { "Only the Waiter role is currently supported for employee enrollment." }
-        remote.approveAccessChallenge(token, shop.shopId, role)
+        require(shop.role == "owner") { "Only the business owner can approve Waiter or Butchery QR enrollment." }
+        val normalized = role.trim().lowercase(Locale.ROOT)
+        require(normalized in setOf("cashier", "waiter", "butchery")) {
+            "Only Waiter and Butchery station enrollment are currently supported."
+        }
+        if (normalized == "butchery") {
+            ensureButcheryEnabledForShop(shop, stationName)
+        }
+        remote.approveAccessChallenge(token, shop.shopId, "cashier")
     }
 
     suspend fun adminApproveAccessChallenge(token: String, shopId: String, role: String) = withContext(Dispatchers.IO) {
@@ -549,11 +619,8 @@ class CounterPosRepository(
         )
     }
 
-    suspend fun createEmployeeAccessPass(role: String): JSONObject = withContext(Dispatchers.IO) {
-        val shop = activeBusiness ?: throw IllegalStateException("Open a business first.")
-        require(shop.role == "owner") { "Only the business owner can enroll Waiters." }
-        require(role == "cashier") { "Only the Waiter role is currently supported for employee enrollment." }
-        remote.createAccessPass(shop.shopId, role)
+    suspend fun createEmployeeAccessPass(role: String, stationName: String = ""): JSONObject = withContext(Dispatchers.IO) {
+        createAccessPass(role, stationName)
     }
 
     suspend fun signUp(email: String, password: String): SessionSnapshot = withContext(Dispatchers.IO) {
@@ -578,7 +645,8 @@ class CounterPosRepository(
         enrollButchery: Boolean = false,
         butcheryName: String = "",
         butcheryBeefOnly: Boolean = false,
-        butcheryBeefPricePerKgKsh: Int = 680
+        butcheryBeefPricePerKgKsh: Int = 680,
+        butcheryEnabledCategories: List<String>? = null
     ): SessionSnapshot = withContext(Dispatchers.IO) {
         require(name.trim().length in 1..120) { "Enter a business name (up to 120 characters)." }
         val normalizedOwnerPhone = SubscriptionManager.normalizeKenyanPhone(ownerPhone)
@@ -627,17 +695,38 @@ class CounterPosRepository(
         if (enrollButchery) {
             val resolvedButcheryName = butcheryName.trim().ifBlank { "${name.trim()} Butchery" }
             val safePrice = butcheryBeefPricePerKgKsh.coerceIn(100, 10_000)
+            val resolvedCategories = when {
+                !butcheryEnabledCategories.isNullOrEmpty() -> butcheryEnabledCategories
+                butcheryBeefOnly -> listOf(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label)
+                else -> ButcheryPricing.ALL_MEAT_CATEGORIES
+            }
+            val effectiveBeefOnly = resolvedCategories.size == 1 &&
+                resolvedCategories.first().equals(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label, ignoreCase = true)
+            val enabledCategoriesJson = ButcheryPricing.serializeEnabledCategories(resolvedCategories)
             dao.enrollButchery(
                 config = ButcheryConfigEntity(
                     shopId = shopId,
                     enabled = true,
                     butcheryName = resolvedButcheryName,
-                    beefOnlyMode = butcheryBeefOnly,
+                    beefOnlyMode = effectiveBeefOnly,
                     defaultBeefPricePerKgKsh = safePrice,
+                    enabledCategoriesJson = enabledCategoriesJson,
                     updatedAt = System.currentTimeMillis()
                 ),
                 starterCuts = ButcheryPricing.defaultCuts(shopId, safePrice)
             )
+            runCatching {
+                remote.upsertButcheryConfig(
+                    shopId = shopId,
+                    enabled = true,
+                    butcheryName = resolvedButcheryName,
+                    beefOnlyMode = effectiveBeefOnly,
+                    defaultBeefPricePerKgKsh = safePrice,
+                    paymentMethods = JSONArray(ButcheryPricing.DEFAULT_PAYMENT_METHODS_JSON),
+                    enabledCategories = JSONArray(enabledCategoriesJson)
+                )
+                dao.getButcheryCuts(shopId).forEach { pushButcheryCut(it) }
+            }
         }
         loadAccount(autoSelectSingleBusiness = true)
     }
@@ -1811,25 +1900,37 @@ class CounterPosRepository(
     }
 
     private suspend fun syncButcherySnapshot(shopId: String) {
+        val localConfig = dao.getButcheryConfig(shopId)
+        val localCuts = dao.getButcheryCuts(shopId)
+        val localSales = dao.getButcherySales(shopId)
+
         val (configRow, cutRows, saleRows) = coroutineScope {
             val config = async { remote.butcheryConfig(shopId) }
             val cuts = async { remote.butcheryCuts(shopId) }
             val sales = async { remote.butcherySales(shopId) }
             Triple(config.await(), cuts.await(), sales.await())
         }
-        val config = configRow?.let { row ->
+        val remoteConfig = configRow?.let { row ->
+            val remotePayments = row.optJSONArray("payment_methods")?.takeIf { it.length() > 0 }?.toString()
+            val remoteCategories = row.optJSONArray("enabled_categories")?.takeIf { it.length() > 0 }?.toString()
+            val beefOnly = row.optBoolean("beef_only_mode")
+            val resolvedCategoriesJson = remoteCategories ?: if (beefOnly) {
+                ButcheryPricing.serializeEnabledCategories(listOf(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label))
+            } else {
+                localConfig?.enabledCategoriesJson ?: ButcheryPricing.ALL_MEAT_CATEGORIES_JSON
+            }
             ButcheryConfigEntity(
                 shopId = shopId,
                 enabled = row.optBoolean("enabled"),
                 butcheryName = row.optString("butchery_name"),
-                beefOnlyMode = row.optBoolean("beef_only_mode"),
+                beefOnlyMode = beefOnly,
                 defaultBeefPricePerKgKsh = row.optInt("default_beef_price_per_kg_ksh", 680),
-                paymentMethodsJson = row.optJSONArray("payment_methods")?.toString() ?: "[]",
-                enabledCategoriesJson = row.optJSONArray("enabled_categories")?.toString() ?: "[]",
+                paymentMethodsJson = remotePayments ?: localConfig?.paymentMethodsJson ?: ButcheryPricing.DEFAULT_PAYMENT_METHODS_JSON,
+                enabledCategoriesJson = resolvedCategoriesJson,
                 updatedAt = parseTimestamp(row.optString("updated_at"))
             )
         }
-        val cuts = buildList {
+        val remoteCuts = buildList {
             for (index in 0 until cutRows.length()) {
                 val row = cutRows.optJSONObject(index) ?: continue
                 add(ButcheryCutEntity(
@@ -1839,13 +1940,13 @@ class CounterPosRepository(
                     category = row.optString("category"),
                     pricePerKgKsh = row.optInt("price_per_kg_ksh"),
                     stockGrams = row.optInt("stock_grams"),
-                    iconKey = row.optString("icon_key", "beef_steak"),
+                    iconKey = row.optString("icon_key", "beef"),
                     active = row.optBoolean("active", true),
                     sortOrder = row.optInt("sort_order")
                 ))
             }
         }.filter { it.id.isNotBlank() }
-        val sales = buildList {
+        val remoteSales = buildList {
             for (index in 0 until saleRows.length()) {
                 val row = saleRows.optJSONObject(index) ?: continue
                 val remoteId = row.optLong("id", 0L)
@@ -1860,7 +1961,7 @@ class CounterPosRepository(
                     weightGrams = row.optInt("weight_grams"),
                     totalKsh = row.optInt("total_ksh"),
                     paymentMethod = row.optString("payment_method", "cash"),
-                    entryMode = row.optString("entry_mode", "weight"),
+                    entryMode = row.optString("entry_mode", "amount"),
                     stockDeductedGrams = row.optInt("stock_deducted_grams"),
                     attendantName = row.optNullableString("attendant_name"),
                     createdAt = parseTimestamp(row.optString("created_at")),
@@ -1868,7 +1969,42 @@ class CounterPosRepository(
                 ))
             }
         }
-        dao.replaceButcherySnapshot(shopId, config, cuts, sales)
+
+        // Never wipe locally configured or recorded offline Butchery data when remote tables are still empty.
+        if (remoteConfig == null && remoteCuts.isEmpty() && remoteSales.isEmpty()) {
+            if (localConfig != null) {
+                runCatching {
+                    remote.upsertButcheryConfig(
+                        shopId = shopId,
+                        enabled = localConfig.enabled,
+                        butcheryName = localConfig.butcheryName,
+                        beefOnlyMode = localConfig.beefOnlyMode,
+                        defaultBeefPricePerKgKsh = localConfig.defaultBeefPricePerKgKsh,
+                        paymentMethods = JSONArray(localConfig.paymentMethodsJson),
+                        enabledCategories = JSONArray(localConfig.enabledCategoriesJson)
+                    )
+                    localCuts.forEach { pushButcheryCut(it) }
+                }
+            }
+            return
+        }
+
+        val effectiveConfig = when {
+            remoteConfig != null && localConfig != null && localConfig.updatedAt > remoteConfig.updatedAt -> localConfig
+            remoteConfig != null -> remoteConfig
+            else -> localConfig
+        }
+        val effectiveCuts = if (remoteCuts.isNotEmpty()) remoteCuts else localCuts
+        val remoteSaleIds = remoteSales.map { it.id }.toSet()
+        val preservedLocalSales = localSales.filter { local ->
+            local.id !in remoteSaleIds && remoteSales.none { remote ->
+                remote.cutId == local.cutId &&
+                    remote.totalKsh == local.totalKsh &&
+                    abs(remote.createdAt - local.createdAt) < 120_000L
+            }
+        }
+        val mergedSales = (remoteSales + preservedLocalSales).sortedByDescending { it.createdAt }
+        dao.replaceButcherySnapshot(shopId, effectiveConfig, effectiveCuts, mergedSales)
     }
 
     private suspend fun uploadPendingLocalSales() {
@@ -3052,7 +3188,7 @@ class CounterPosRepository(
             updatedAt = System.currentTimeMillis()
         )
         dao.enrollButchery(config, ButcheryPricing.defaultCuts(shopId, safePrice))
-        try {
+        runCatching {
             remote.upsertButcheryConfig(
                 shopId = shopId,
                 enabled = enabled,
@@ -3063,8 +3199,6 @@ class CounterPosRepository(
                 enabledCategories = JSONArray(config.enabledCategoriesJson)
             )
             dao.getButcheryCuts(shopId).forEach { cut -> pushButcheryCut(cut) }
-        } catch (error: Exception) {
-            if (!isRetryable(error)) throw error
         }
     }
 
@@ -3088,10 +3222,8 @@ class CounterPosRepository(
             ButcheryPricing.defaultCuts(shopId, safePrice)
         )
         dao.updateCutPricesForCategory(shopId, category, safePrice)
-        try {
+        runCatching {
             remote.updateButcheryCategoryPrice(shopId, category, safePrice)
-        } catch (error: Exception) {
-            if (!isRetryable(error)) throw error
         }
     }
 
@@ -3100,11 +3232,7 @@ class CounterPosRepository(
         val cut = dao.getButcheryCutById(cutId) ?: return@withContext false
         val updated = dao.updateButcheryCutPrice(cutId, pricePerKgKsh) == 1
         if (updated) {
-            try {
-                pushButcheryCut(cut.copy(pricePerKgKsh = pricePerKgKsh))
-            } catch (error: Exception) {
-                if (!isRetryable(error)) throw error
-            }
+            runCatching { pushButcheryCut(cut.copy(pricePerKgKsh = pricePerKgKsh)) }
         }
         updated
     }
@@ -3114,11 +3242,7 @@ class CounterPosRepository(
         val cut = dao.getButcheryCutById(cutId) ?: return@withContext false
         val updated = dao.setButcheryCutStockGrams(cutId, grams) == 1
         if (updated) {
-            try {
-                pushButcheryCut(cut.copy(stockGrams = grams))
-            } catch (error: Exception) {
-                if (!isRetryable(error)) throw error
-            }
+            runCatching { pushButcheryCut(cut.copy(stockGrams = grams)) }
         }
         updated
     }
@@ -3137,32 +3261,24 @@ class CounterPosRepository(
         val currentCount = dao.getButcheryCutCount(shopId)
         val grams = (stockKg.coerceAtLeast(0.0) * 1000.0).toInt()
         val cut = ButcheryCutEntity(
-                id = "${shopId}_cut_${UUID.randomUUID().toString().take(8)}",
-                shopId = shopId,
-                name = cleanName,
-                category = category,
-                pricePerKgKsh = pricePerKgKsh,
-                stockGrams = grams,
-                iconKey = iconKey,
-                active = true,
-                sortOrder = currentCount + 1
-            )
+            id = "${shopId}_cut_${UUID.randomUUID().toString().take(8)}",
+            shopId = shopId,
+            name = cleanName,
+            category = category,
+            pricePerKgKsh = pricePerKgKsh,
+            stockGrams = grams,
+            iconKey = iconKey,
+            active = true,
+            sortOrder = currentCount + 1
+        )
         dao.upsertButcheryCut(cut)
-        try {
-            pushButcheryCut(cut)
-        } catch (error: Exception) {
-            if (!isRetryable(error)) throw error
-        }
+        runCatching { pushButcheryCut(cut) }
     }
 
     suspend fun setButcheryCutActive(cutId: String, active: Boolean) = withContext(Dispatchers.IO) {
         val cut = dao.getButcheryCutById(cutId) ?: return@withContext
         dao.setButcheryCutActive(cutId, active)
-        try {
-            pushButcheryCut(cut.copy(active = active))
-        } catch (error: Exception) {
-            if (!isRetryable(error)) throw error
-        }
+        runCatching { pushButcheryCut(cut.copy(active = active)) }
     }
 
     suspend fun recordButcherySale(
@@ -3173,32 +3289,42 @@ class CounterPosRepository(
         paymentMethod: String,
         entryMode: String
     ): Long? = withContext(Dispatchers.IO) {
-        val operationId = UUID.randomUUID().toString()
-        try {
-            remote.recordButcherySale(
-                shopId = shopId,
-                cutId = cutId,
-                weightGrams = weightGrams,
-                totalKsh = totalKsh,
-                paymentMethod = paymentMethod,
-                entryMode = entryMode,
-                operationId = operationId,
-                attendantName = account?.email
-            )
-        } catch (error: Exception) {
-            if (!isRetryable(error)) throw error
+        val attendant = account?.email
+        val localId = dao.recordButcherySale(
+            shopId = shopId,
+            cutId = cutId,
+            weightGrams = weightGrams,
+            totalKsh = totalKsh,
+            paymentMethod = paymentMethod,
+            entryMode = entryMode,
+            attendantName = attendant,
+            createdAt = System.currentTimeMillis()
+        )
+        if (localId != null && localId > 0L) {
+            val operationId = UUID.randomUUID().toString()
+            runCatching {
+                remote.recordButcherySale(
+                    shopId = shopId,
+                    cutId = cutId,
+                    weightGrams = weightGrams,
+                    totalKsh = totalKsh,
+                    paymentMethod = paymentMethod,
+                    entryMode = entryMode,
+                    operationId = operationId,
+                    attendantName = attendant
+                )
+            }
         }
-        dao.recordButcherySale(shopId, cutId, weightGrams, totalKsh, paymentMethod, entryMode, account?.email, System.currentTimeMillis())
+        localId
     }
 
     suspend fun undoLatestButcherySale(shopId: String): Boolean = withContext(Dispatchers.IO) {
         val latest = dao.getLatestActiveButcherySale(shopId)
-        try {
-            remote.undoLatestButcherySale(shopId, latest?.id)
-        } catch (error: Exception) {
-            if (!isRetryable(error)) throw error
+        val undone = dao.undoLatestButcherySale(shopId)
+        if (undone) {
+            runCatching { remote.undoLatestButcherySale(shopId, latest?.id) }
         }
-        dao.undoLatestButcherySale(shopId)
+        undone
     }
 
     private suspend fun pushButcheryCut(cut: ButcheryCutEntity) {

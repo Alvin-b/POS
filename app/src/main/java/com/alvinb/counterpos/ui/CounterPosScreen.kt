@@ -336,7 +336,13 @@ fun CounterPosWorkspace(
             onToggleCutActive = viewModel::setButcheryCutActive,
             onAddCut = viewModel::addButcheryCut,
             onRecordSale = viewModel::recordButcherySale,
-            onUndoLastSale = viewModel::undoLatestButcherySale
+            onUndoLastSale = viewModel::undoLatestButcherySale,
+            onOpenButcheryEnrollment = if (role.equals("owner", ignoreCase = true)) {
+                {
+                    viewModel.closeButcheryWorkspace()
+                    viewModel.openStaffManagement(openButchery = true)
+                }
+            } else null
         )
         return
     }
@@ -1120,6 +1126,10 @@ fun CounterPosWorkspace(
                     viewModel.enrollOrUpdateButchery(enabled, name, beefOnly, price, methods, categories)
                 },
                 onOpenButcheryWorkspace = { tab -> viewModel.openButcheryWorkspace(tab) },
+                onOpenButcheryEnrollment = {
+                    viewModel.closeTeamPanel()
+                    viewModel.openStaffManagement(openButchery = true)
+                },
                 onOpenStaffManagement = {
                     viewModel.closeTeamPanel()
                     viewModel.openStaffManagement()
@@ -1143,6 +1153,7 @@ fun CounterPosWorkspace(
                 role = role,
                 businessType = session.activeBusiness?.businessType ?: "big_club",
                 startOnBusinessHours = state.staffManagementStartsOnHours,
+                startOnButchery = state.staffManagementStartsOnButchery,
                 onClose = viewModel::closeStaffManagement,
                 onLoadMembers = { viewModel.loadEmployeeMembers() },
                 onIssueWaiterPass = { r -> viewModel.issueEmployeePass(r) },
@@ -1156,6 +1167,13 @@ fun CounterPosWorkspace(
                 onSaveBusinessHours = { bh -> viewModel.saveBusinessHours(bh) },
                 onScanWaiterCode = { selectedRole ->
                     viewModel.openStaffEnrollmentScanner(selectedRole)
+                },
+                onSelectEnrollStation = { station -> viewModel.selectStaffEnrollmentStation(station) },
+                onIssueButcheryPass = { stationName ->
+                    viewModel.issueEmployeePass("butchery", stationName)
+                },
+                onScanButcheryCode = { stationName ->
+                    viewModel.openStaffEnrollmentScanner("butchery", stationName)
                 }
             )
         }

@@ -236,6 +236,11 @@ class SupabaseRestClient(context: Context) {
     /** Token used only to authenticate the Realtime channel for the active tenant. */
     fun currentAccessToken(): String? = session?.accessToken
 
+    fun saveButcheryDeviceShopId(shopId: String?) = sessionStore.saveButcheryDeviceShopId(shopId)
+
+    fun isButcheryDeviceShop(shopId: String): Boolean =
+        shopId.isNotBlank() && sessionStore.getButcheryDeviceShopId().equals(shopId, ignoreCase = true)
+
     suspend fun signIn(email: String, password: String): AuthSession =
         authenticate("password", email, password)
 

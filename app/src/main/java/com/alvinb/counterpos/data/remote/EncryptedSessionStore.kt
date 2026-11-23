@@ -125,8 +125,30 @@ class EncryptedSessionStore(context: Context) {
         encryptedPrefs?.edit()
             ?.remove(KEY_AUTH_SESSION)
             ?.remove(KEY_SUPERADMIN_TOKEN)
+            ?.remove(KEY_BUTCHERY_STATION_SHOP_ID)
             ?.apply()
-        fallbackPrefs.edit().remove("payload").remove("superadmin_token").apply()
+        fallbackPrefs.edit()
+            .remove("payload")
+            .remove("superadmin_token")
+            .remove("butchery_station_shop_id")
+            .apply()
+    }
+
+    fun saveButcheryDeviceShopId(shopId: String?) {
+        val clean = shopId?.trim().orEmpty()
+        if (clean.isEmpty()) {
+            encryptedPrefs?.edit()?.remove(KEY_BUTCHERY_STATION_SHOP_ID)?.apply()
+            fallbackPrefs.edit().remove("butchery_station_shop_id").apply()
+        } else {
+            encryptedPrefs?.edit()?.putString(KEY_BUTCHERY_STATION_SHOP_ID, clean)?.apply()
+            fallbackPrefs.edit().putString("butchery_station_shop_id", clean).apply()
+        }
+    }
+
+    fun getButcheryDeviceShopId(): String? {
+        val fromEnc = encryptedPrefs?.getString(KEY_BUTCHERY_STATION_SHOP_ID, null)?.takeIf(String::isNotBlank)
+        if (!fromEnc.isNullOrBlank()) return fromEnc
+        return fallbackPrefs.getString("butchery_station_shop_id", null)?.takeIf(String::isNotBlank)
     }
 
     fun saveSuperadminToken(token: String) {
@@ -171,5 +193,6 @@ class EncryptedSessionStore(context: Context) {
         private const val KEY_AUTH_SESSION = "auth_session_payload"
         private const val KEY_SUPERADMIN_TOKEN = "superadmin_token"
         private const val KEY_INSTALLATION_ID = "installation_id"
+        private const val KEY_BUTCHERY_STATION_SHOP_ID = "butchery_station_shop_id"
     }
 }

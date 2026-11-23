@@ -124,8 +124,8 @@ fun ButcheryPosScreen(
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var selectedCategory by rememberSaveable { mutableStateOf(ButcheryCategory.ALL.label) }
     var selectedCutId by rememberSaveable { mutableStateOf<String?>(null) }
-    var entryMode by rememberSaveable { mutableStateOf(ButcheryEntryMode.WEIGHT_KG) }
-    var keypadInput by rememberSaveable { mutableStateOf("1.50") }
+    var entryMode by rememberSaveable { mutableStateOf(ButcheryEntryMode.AMOUNT_KES) }
+    var keypadInput by rememberSaveable { mutableStateOf("") }
 
     LaunchedEffect(enabledCategories) {
         selectedCategory = if (enabledCategories.size == 1) {
@@ -148,7 +148,7 @@ fun ButcheryPosScreen(
         )
     }
 
-    val selectedCut = remember(filteredCuts, cuts, enabledCategories, selectedCutId) {
+    val selectedCut = remember(filteredCuts, cuts, enabledCategories, searchQuery, selectedCutId) {
         filteredCuts.firstOrNull { it.id == selectedCutId }
             ?: filteredCuts.firstOrNull()
             ?: if (searchQuery.isBlank()) {
@@ -370,9 +370,9 @@ fun ButcheryPosScreen(
                         )
                         Text(
                             text = if (entryMode == ButcheryEntryMode.WEIGHT_KG) {
-                                "Entering weight in kg · Tap button to enter KES amount"
+                                "Entering weight in kg · Tap to enter KES amount"
                             } else {
-                                "Price mode (digital scale) · System calculates exact kg"
+                                "Key in money sold (KES) · Tap M-Pesa or Cash to save"
                             },
                             fontSize = 10.sp,
                             color = ButcheryPalette.EmeraldHeader,
@@ -383,7 +383,7 @@ fun ButcheryPosScreen(
                     Surface(
                         onClick = {
                             entryMode = if (entryMode == ButcheryEntryMode.WEIGHT_KG) {
-                                keypadInput = "150"
+                                keypadInput = ""
                                 ButcheryEntryMode.AMOUNT_KES
                             } else {
                                 keypadInput = "1.0"
@@ -493,13 +493,21 @@ fun ButcheryPosScreen(
                             rowTokens.forEach { token ->
                                 val isDisabledDot = token == "." && entryMode == ButcheryEntryMode.AMOUNT_KES
                                 val isModeIndicator = token == "kg" || token == "KES"
+                                val keyTag = when (token) {
+                                    "CLR" -> "butchery_key_clr"
+                                    "DEL" -> "butchery_key_del"
+                                    "." -> "butchery_key_dot"
+                                    "+" -> "butchery_key_plus"
+                                    "kg", "KES" -> "butchery_key_mode"
+                                    else -> "butchery_key_$token"
+                                }
                                 Surface(
                                     onClick = {
                                         when {
                                             isDisabledDot -> Unit
                                             isModeIndicator -> {
                                                 entryMode = if (entryMode == ButcheryEntryMode.WEIGHT_KG) {
-                                                    keypadInput = "150"
+                                                    keypadInput = ""
                                                     ButcheryEntryMode.AMOUNT_KES
                                                 } else {
                                                     keypadInput = "1.0"
@@ -515,6 +523,7 @@ fun ButcheryPosScreen(
                                     modifier = Modifier
                                         .weight(1f)
                                         .height(38.dp)
+                                        .testTag(keyTag)
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         if (token == "DEL") {
@@ -618,6 +627,7 @@ fun ButcheryPosScreen(
                                             storedMethod,
                                             if (entryMode == ButcheryEntryMode.AMOUNT_KES) "amount" else "weight"
                                         )
+                                        keypadInput = ""
                                     },
                                     enabled = canRecord,
                                     shape = RoundedCornerShape(14.dp),
