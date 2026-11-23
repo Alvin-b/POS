@@ -71,7 +71,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.alvinb.counterpos.R
-import com.alvinb.counterpos.data.butchery.ButcheryCategory
 import com.alvinb.counterpos.data.butchery.ButcheryEntryMode
 import com.alvinb.counterpos.data.butchery.ButcheryPricing
 import com.alvinb.counterpos.data.local.entity.ButcheryConfigEntity
@@ -111,49 +110,35 @@ fun ButcheryPosScreen(
     ) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val enabledCategories = remember(config?.enabledCategoriesJson, config?.beefOnlyMode) {
-        ButcheryPricing.resolveEnabledCategories(config)
+    val enabledMeats = remember(config?.enabledCategoriesJson, config?.beefOnlyMode) {
+        ButcheryPricing.resolveEnabledMeats(config)
     }
-    val singleMeatOnly = enabledCategories.size == 1
-    val singleMeatLabel = enabledCategories.firstOrNull().orEmpty()
+    val singleMeatOnly = enabledMeats.size == 1
+    val singleMeatLabel = enabledMeats.firstOrNull().orEmpty()
     val butcheryTitle = config?.butcheryName?.takeIf(String::isNotBlank) ?: "Quick Sale - Butchery POS"
     val configuredPaymentMethods = remember(config?.paymentMethodsJson) {
         ButcheryPricing.parsePaymentMethods(config?.paymentMethodsJson)
     }
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
-    var selectedCategory by rememberSaveable { mutableStateOf(ButcheryCategory.ALL.label) }
     var selectedCutId by rememberSaveable { mutableStateOf<String?>(null) }
     var entryMode by rememberSaveable { mutableStateOf(ButcheryEntryMode.AMOUNT_KES) }
     var keypadInput by rememberSaveable { mutableStateOf("") }
 
-    LaunchedEffect(enabledCategories) {
-        selectedCategory = if (enabledCategories.size == 1) {
-            enabledCategories.first()
-        } else {
-            ButcheryCategory.ALL.label
-        }
-    }
-
-    val categories = remember(enabledCategories, cuts) {
-        ButcheryPricing.visibleCategories(enabledCategories, cuts)
-    }
-
-    val filteredCuts = remember(cuts, enabledCategories, selectedCategory, searchQuery) {
+    val filteredCuts = remember(cuts, enabledMeats, searchQuery) {
         ButcheryPricing.filterCuts(
             cuts = cuts,
-            enabledCategories = enabledCategories,
-            selectedCategory = selectedCategory,
+            enabledMeats = enabledMeats,
             searchQuery = searchQuery
         )
     }
 
-    val selectedCut = remember(filteredCuts, cuts, enabledCategories, searchQuery, selectedCutId) {
+    val selectedCut = remember(filteredCuts, cuts, enabledMeats, searchQuery, selectedCutId) {
         filteredCuts.firstOrNull { it.id == selectedCutId }
             ?: filteredCuts.firstOrNull()
             ?: if (searchQuery.isBlank()) {
                 cuts.firstOrNull { cut ->
-                    cut.active && enabledCategories.any { it.equals(cut.category, ignoreCase = true) }
+                    cut.active && enabledMeats.any { it.equals(cut.name, ignoreCase = true) }
                 }
             } else {
                 null
@@ -281,7 +266,7 @@ fun ButcheryPosScreen(
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search meat cuts...", fontSize = 13.sp) },
+                    placeholder = { Text("Search meats...", fontSize = 13.sp) },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
                     trailingIcon = {
                         if (searchQuery.isNotEmpty()) {
@@ -302,34 +287,6 @@ fun ButcheryPosScreen(
                         .fillMaxWidth()
                         .testTag("butchery_search_input")
                 )
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    categories.forEach { category ->
-                        val selected = if (singleMeatOnly) category == singleMeatLabel else selectedCategory == category
-                        Surface(
-                            onClick = { if (!singleMeatOnly) selectedCategory = category },
-                            shape = RoundedCornerShape(18.dp),
-                            color = if (selected) Color(0xFF1F2D27) else Color.White,
-                            border = BorderStroke(1.dp, if (selected) Color(0xFF1F2D27) else ButcheryPalette.KeypadBorder),
-                            modifier = Modifier.height(32.dp)
-                        ) {
-                            Box(Modifier.padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
-                                Text(
-                                    text = if (singleMeatOnly) "$singleMeatLabel Only" else category,
-                                    color = if (selected) Color.White else Color(0xFF334155),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                    }
-                }
             }
         }
 

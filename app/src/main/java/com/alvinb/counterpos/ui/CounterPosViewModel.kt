@@ -3057,7 +3057,7 @@ class CounterPosViewModel(
         beefOnlyMode: Boolean,
         defaultBeefPricePerKgKsh: Int,
         paymentMethods: List<String>? = null,
-        enabledCategories: List<String>? = null
+        enabledMeats: List<String>? = null
     ) {
         val shopId = session.value.activeBusiness?.shopId ?: return
         viewModelScope.launch {
@@ -3069,7 +3069,7 @@ class CounterPosViewModel(
                     beefOnlyMode = beefOnlyMode,
                     defaultBeefPricePerKgKsh = defaultBeefPricePerKgKsh,
                     paymentMethods = paymentMethods,
-                    enabledCategories = enabledCategories
+                    enabledMeats = enabledMeats
                 )
             }.onSuccess {
                 _uiState.update {
@@ -3086,21 +3086,21 @@ class CounterPosViewModel(
     }
 
     fun applyDefaultBeefPricePerKg(pricePerKgKsh: Int) {
-        applyCategoryPricePerKg(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label, pricePerKgKsh)
+        applyMeatPricePerKg("Beef", pricePerKgKsh)
     }
 
-    fun applyCategoryPricePerKg(category: String, pricePerKgKsh: Int) {
+    fun applyMeatPricePerKg(meatName: String, pricePerKgKsh: Int) {
         val shopId = session.value.activeBusiness?.shopId ?: return
         if (pricePerKgKsh <= 0) return
         viewModelScope.launch {
-            runCatching { repository.applyCategoryPricePerKg(shopId, category, pricePerKgKsh) }
+            runCatching { repository.applyMeatPricePerKg(shopId, meatName, pricePerKgKsh) }
                 .onSuccess {
                     _uiState.update {
-                        it.copy(notice = "Updated $category selling price to KES $pricePerKgKsh/kg", actionError = null)
+                        it.copy(notice = "Updated $meatName selling price to KES $pricePerKgKsh/kg", actionError = null)
                     }
                 }
                 .onFailure { err ->
-                    _uiState.update { it.copy(actionError = err.message ?: "Failed to update $category price.") }
+                    _uiState.update { it.copy(actionError = err.message ?: "Failed to update $meatName price.") }
                 }
         }
     }
@@ -3118,6 +3118,33 @@ class CounterPosViewModel(
         }
     }
 
+    fun updateButcheryCutDetails(
+        cutId: String,
+        name: String,
+        pricePerKgKsh: Int,
+        buyingPricePerKgKsh: Int,
+        stockKg: Double
+    ) {
+        if (name.trim().isEmpty() || pricePerKgKsh <= 0) return
+        viewModelScope.launch {
+            runCatching {
+                repository.updateButcheryCutDetails(
+                    cutId = cutId,
+                    name = name,
+                    pricePerKgKsh = pricePerKgKsh,
+                    buyingPricePerKgKsh = buyingPricePerKgKsh,
+                    stockKg = stockKg
+                )
+            }.onSuccess { updated ->
+                if (updated) {
+                    _uiState.update { it.copy(notice = "Saved ${name.trim()} details", actionError = null) }
+                }
+            }.onFailure { err ->
+                _uiState.update { it.copy(actionError = err.message ?: "Failed to update meat details.") }
+            }
+        }
+    }
+
     fun setButcheryCutStockKg(cutId: String, stockKg: Double) {
         viewModelScope.launch {
             runCatching { repository.setButcheryCutStockKg(cutId, stockKg) }
@@ -3132,10 +3159,9 @@ class CounterPosViewModel(
 
     fun addButcheryCut(
         name: String,
-        category: String,
         pricePerKgKsh: Int,
-        stockKg: Double,
-        iconKey: String
+        buyingPricePerKgKsh: Int = 0,
+        stockKg: Double = 0.0
     ) {
         val shopId = session.value.activeBusiness?.shopId ?: return
         viewModelScope.launch {
@@ -3143,15 +3169,14 @@ class CounterPosViewModel(
                 repository.addButcheryCut(
                     shopId = shopId,
                     name = name,
-                    category = category,
                     pricePerKgKsh = pricePerKgKsh,
-                    stockKg = stockKg,
-                    iconKey = iconKey
+                    buyingPricePerKgKsh = buyingPricePerKgKsh,
+                    stockKg = stockKg
                 )
             }.onSuccess {
                 _uiState.update { it.copy(notice = "Added ${name.trim()} to Butchery", actionError = null) }
             }.onFailure { err ->
-                _uiState.update { it.copy(actionError = err.message ?: "Failed to add meat cut.") }
+                _uiState.update { it.copy(actionError = err.message ?: "Failed to add meat.") }
             }
         }
     }

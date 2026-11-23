@@ -21,7 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Assessment
-import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -73,13 +73,18 @@ fun ButcheryWorkspaceScreen(
         beefOnly: Boolean,
         defaultBeefPricePerKgKsh: Int,
         paymentMethods: List<String>,
-        enabledCategories: List<String>
+        enabledMeats: List<String>
     ) -> Unit,
-    onApplyCategoryPrice: (category: String, pricePerKgKsh: Int) -> Unit,
-    onUpdateCutPrice: (cutId: String, pricePerKgKsh: Int) -> Unit,
-    onUpdateCutStockKg: (cutId: String, stockKg: Double) -> Unit,
+    onApplyMeatPrice: (meatName: String, pricePerKgKsh: Int) -> Unit,
+    onUpdateCutDetails: (
+        cutId: String,
+        name: String,
+        pricePerKgKsh: Int,
+        buyingPricePerKgKsh: Int,
+        stockKg: Double
+    ) -> Unit,
     onToggleCutActive: (cutId: String, active: Boolean) -> Unit,
-    onAddCut: (name: String, category: String, pricePerKgKsh: Int, stockKg: Double, iconKey: String) -> Unit,
+    onAddCut: (name: String, pricePerKgKsh: Int, buyingPricePerKgKsh: Int, stockKg: Double) -> Unit,
     onRecordSale: (cut: ButcheryCutEntity, weightGrams: Int, totalKsh: Int, paymentMethod: String, entryMode: String) -> Unit,
     onUndoLastSale: () -> Unit,
     onOpenButcheryEnrollment: (() -> Unit)? = null
@@ -162,7 +167,7 @@ fun ButcheryWorkspaceScreen(
                     )
                     ButcheryNavItem(
                         label = "Daily Sales",
-                        icon = Icons.Default.BarChart,
+                        icon = Icons.Default.CalendarMonth,
                         selected = activeTab == ButcheryTab.DAILY_SALES,
                         tag = "butchery_nav_daily_sales",
                         onClick = { onSelectTab(ButcheryTab.DAILY_SALES) },
@@ -209,8 +214,8 @@ fun ButcheryWorkspaceScreen(
                     onBack = { onSelectTab(ButcheryTab.SELL) }
                 )
                 ButcheryTab.REPORT -> {
-                    val enabledCategories = remember(config) { ButcheryPricing.resolveEnabledCategories(config) }
-                    val singleMeatLabel = if (enabledCategories.size == 1) enabledCategories.first() else null
+                    val enabledMeats = remember(config) { ButcheryPricing.resolveEnabledMeats(config) }
+                    val singleMeatLabel = if (enabledMeats.size == 1) enabledMeats.first() else null
                     ButcheryReportScreen(
                         config = config,
                         sales = sales,
@@ -264,9 +269,8 @@ fun ButcheryWorkspaceScreen(
                     ownerCanEdit = ownerCanEdit,
                     onBack = { onSelectTab(ButcheryTab.SELL) },
                     onSaveConfig = onSaveConfig,
-                    onApplyCategoryPrice = onApplyCategoryPrice,
-                    onUpdateCutPrice = onUpdateCutPrice,
-                    onUpdateCutStockKg = onUpdateCutStockKg,
+                    onApplyMeatPrice = onApplyMeatPrice,
+                    onUpdateCutDetails = onUpdateCutDetails,
                     onToggleCutActive = onToggleCutActive,
                     onAddCut = onAddCut,
                     onOpenButcheryEnrollment = onOpenButcheryEnrollment

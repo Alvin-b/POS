@@ -153,7 +153,7 @@ fun RegisterBusinessScreen(
     var enrollButchery by remember { mutableStateOf(false) }
     var butcheryName by remember { mutableStateOf("") }
     var butcheryCategories by remember {
-        mutableStateOf(com.alvinb.counterpos.data.butchery.ButcheryPricing.ALL_MEAT_CATEGORIES)
+        mutableStateOf(com.alvinb.counterpos.data.butchery.ButcheryPricing.DEFAULT_MEAT_NAMES)
     }
     var butcheryBeefPrice by remember { mutableStateOf("680") }
 
@@ -669,9 +669,9 @@ fun RegisterBusinessScreen(
                                 modifier = Modifier.fillMaxWidth().testTag("register_butchery_name_input")
                             )
                             ButcheryMeatTypesEditor(
-                                selectedCategories = butcheryCategories,
+                                selectedMeats = butcheryCategories,
                                 enabled = !isCreating,
-                                onCategoriesChange = { butcheryCategories = it }
+                                onMeatsChange = { butcheryCategories = it }
                             )
                             val rateLabel = if (butcheryCategories.size == 1) butcheryCategories.first() else "Beef"
                             OutlinedTextField(
@@ -817,7 +817,7 @@ fun RegisterBusinessScreen(
                             val parsedCount = if (isClub) counterCount.toIntOrNull() ?: 1 else 1
                             val parsedBeefPrice = butcheryBeefPrice.toIntOrNull() ?: 680
                             val beefOnly = butcheryCategories.size == 1 &&
-                                butcheryCategories.first().equals(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label, ignoreCase = true)
+                                butcheryCategories.first().equals("Beef", ignoreCase = true)
                             onRegister(
                                 email.trim(),
                                 password,

@@ -2,10 +2,8 @@ package com.alvinb.counterpos.ui
 
 import android.app.DatePickerDialog
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -18,12 +16,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Undo
-import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Share
@@ -50,9 +47,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -60,7 +54,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.alvinb.counterpos.data.butchery.ButcheryBarBucket
 import com.alvinb.counterpos.data.butchery.ButcheryDailyReportSnapshot
 import com.alvinb.counterpos.data.butchery.ButcheryPricing
 import com.alvinb.counterpos.data.local.entity.ButcheryConfigEntity
@@ -121,7 +114,6 @@ fun ButcheryReportScreen(
             .fillMaxSize()
             .background(ButcheryPalette.SoftSurface)
     ) {
-        // Emerald Header matching right side of mockup
         Surface(color = ButcheryPalette.EmeraldHeader, shadowElevation = 2.dp) {
             Row(
                 modifier = Modifier
@@ -162,8 +154,8 @@ fun ButcheryReportScreen(
                 if (onOpenTrends != null) {
                     IconButton(onClick = onOpenTrends, modifier = Modifier.testTag("butchery_report_open_trends_button")) {
                         Icon(
-                            imageVector = Icons.Default.BarChart,
-                            contentDescription = "Open Daily Sales Trends",
+                            imageVector = Icons.Default.CalendarMonth,
+                            contentDescription = "Open Daily Sales Summary",
                             tint = Color.White
                         )
                     }
@@ -181,7 +173,8 @@ fun ButcheryReportScreen(
         LazyColumn(
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth(),
+                .fillMaxWidth()
+                .testTag("butchery_report_list"),
             contentPadding = PaddingValues(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -263,7 +256,42 @@ fun ButcheryReportScreen(
                 }
             }
 
-            // Payment Breakdown Card + Dual-Color Bar Chart
+            // Conditional Profit / Loss Card (ONLY displayed when buying prices were entered)
+            val netProfit = snapshot.totalProfitKsh
+            if (netProfit != null) {
+                item {
+                    val isProfit = netProfit >= 0L
+                    val accent = if (isProfit) ButcheryPalette.EmeraldHeader else Color(0xFFB91C1C)
+                    Card(
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        border = BorderStroke(1.dp, accent.copy(alpha = 0.35f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                text = if (isProfit) "Estimated Profit" else "Estimated Loss",
+                                fontSize = 12.sp,
+                                color = Color(0xFF475569)
+                            )
+                            Text(
+                                text = ButcheryPricing.formatSignedKsh(netProfit),
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = accent,
+                                modifier = Modifier.testTag("butchery_report_profit_loss")
+                            )
+                            Text(
+                                text = "Cost: ${ButcheryPricing.formatKsh(snapshot.totalCostKsh ?: 0L)} · Tracked sales: ${ButcheryPricing.formatKsh(snapshot.costTrackedRevenueKsh)} (${snapshot.costTrackedSalesCount})",
+                                fontSize = 11.sp,
+                                color = Color(0xFF64748B)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Payment Breakdown Cards (pure numeric summary, no bar graph)
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
@@ -321,29 +349,6 @@ fun ButcheryReportScreen(
                             }
                         }
                     }
-
-                    Card(
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        border = BorderStroke(1.dp, ButcheryPalette.KeypadBorder),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            ButcheryPaymentBarsChart(buckets = snapshot.chartBuckets)
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                snapshot.chartBuckets.forEach { bucket ->
-                                    Text(
-                                        text = bucket.label,
-                                        fontSize = 10.sp,
-                                        color = Color(0xFF64748B)
-                                    )
-                                }
-                            }
-                        }
-                    }
                 }
             }
 
@@ -369,6 +374,7 @@ fun ButcheryReportScreen(
                                 val weightText = ButcheryPricing.formatWeightKg(sale.weightGrams, decimals = 2)
                                 val isMpesa = ButcheryPricing.isMpesaPayment(sale.paymentMethod)
                                 val paymentLabel = ButcheryPricing.paymentMethodDisplayLabel(sale.paymentMethod)
+                                val saleProfit = ButcheryPricing.computeSaleProfitKsh(sale)
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -394,12 +400,26 @@ fun ButcheryReportScreen(
                                         )
                                     }
                                     Spacer(Modifier.width(8.dp))
-                                    Text(
-                                        text = ButcheryPricing.formatKsh(sale.totalKsh),
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF0F172A)
-                                    )
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(
+                                            text = ButcheryPricing.formatKsh(sale.totalKsh),
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF0F172A)
+                                        )
+                                        if (saleProfit != null) {
+                                            Text(
+                                                text = if (saleProfit >= 0L) {
+                                                    "Profit ${ButcheryPricing.formatKsh(saleProfit)}"
+                                                } else {
+                                                    "Loss ${ButcheryPricing.formatSignedKsh(saleProfit)}"
+                                                },
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (saleProfit >= 0L) ButcheryPalette.EmeraldHeader else Color(0xFFB91C1C)
+                                            )
+                                        }
+                                    }
                                 }
                                 if (idx < snapshot.sales.lastIndex) {
                                     HorizontalDivider(color = ButcheryPalette.KeypadBorder)
@@ -411,7 +431,6 @@ fun ButcheryReportScreen(
             }
         }
 
-        // Bottom Export Report CTA matching mockup
         Surface(
             color = Color.White,
             border = BorderStroke(1.dp, ButcheryPalette.KeypadBorder),
@@ -502,44 +521,5 @@ fun ButcheryReportScreen(
                 }
             }
         )
-    }
-}
-
-@Composable
-private fun ButcheryPaymentBarsChart(buckets: List<ButcheryBarBucket>) {
-    val maxVal = remember(buckets) {
-        buckets.maxOfOrNull { maxOf(it.mpesaKsh, it.cashKsh) }?.coerceAtLeast(1L) ?: 1L
-    }
-    Canvas(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(92.dp)
-    ) {
-        if (buckets.isEmpty()) return@Canvas
-        val slotWidth = size.width / buckets.size.toFloat()
-        val barWidth = (slotWidth * 0.28f).coerceAtLeast(8f)
-        val gap = 4f
-        val maxHeight = size.height - 6f
-
-        buckets.forEachIndexed { idx, bucket ->
-            val centerX = idx * slotWidth + slotWidth / 2f
-            val mpesaRatio = (bucket.mpesaKsh.toFloat() / maxVal.toFloat()).coerceIn(0f, 1f)
-            val cashRatio = (bucket.cashKsh.toFloat() / maxVal.toFloat()).coerceIn(0f, 1f)
-            val mpesaH = (mpesaRatio * maxHeight).coerceAtLeast(if (bucket.mpesaKsh > 0) 8f else 4f)
-            val cashH = (cashRatio * maxHeight).coerceAtLeast(if (bucket.cashKsh > 0) 8f else 4f)
-
-            drawRoundRect(
-                color = if (bucket.mpesaKsh > 0) ButcheryPalette.EmeraldHeader else Color(0xFFDDE7E1),
-                topLeft = Offset(centerX - barWidth - gap / 2f, size.height - mpesaH),
-                size = Size(barWidth, mpesaH),
-                cornerRadius = CornerRadius(5f, 5f)
-            )
-            drawRoundRect(
-                color = if (bucket.cashKsh > 0) ButcheryPalette.SlateButton else Color(0xFFE2E8F0),
-                topLeft = Offset(centerX + gap / 2f, size.height - cashH),
-                size = Size(barWidth, cashH),
-                cornerRadius = CornerRadius(5f, 5f)
-            )
-        }
     }
 }

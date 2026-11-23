@@ -504,8 +504,8 @@ internal fun buildBrandedReportPdf(
 
     y += kpiH + 12f
 
-    // ==================== VISUAL PAYMENT MIX CARD ====================
-    val mixBoxH = 58f
+    // ==================== PAYMENT COLLECTION MIX SUMMARY ====================
+    val mixBoxH = 44f
     c1.fillRoundBox(margin, y, pageWidth - margin, y + mixBoxH, 9f, PdfPalette.White, PdfPalette.Border, 1f)
     c1.drawStyledText("PAYMENT COLLECTION MIX", margin + 12f, y + 16f, 7.5f, PdfPalette.Emerald, bold = true)
     c1.drawStyledText(
@@ -518,58 +518,20 @@ internal fun buildBrandedReportPdf(
         align = Paint.Align.RIGHT
     )
 
-    val barLeft = margin + 12f
-    val barRight = pageWidth - margin - 12f
-    val barWidth = barRight - barLeft
-    val barTop = y + 23f
-    val barBottom = barTop + 10f
-
-    c1.fillRoundBox(barLeft, barTop, barRight, barBottom, 5f, PdfPalette.SlateSoft)
-    if (grandTotal > 0L) {
-        c1.save()
-        val barClip = Path().apply { addRoundRect(RectF(barLeft, barTop, barRight, barBottom), 5f, 5f, Path.Direction.CW) }
-        c1.clipPath(barClip)
-        var cursorX = barLeft
-        val cashW = (cashTotal.toFloat() / grandTotal.toFloat()) * barWidth
-        val mpesaW = (mpesaTotal.toFloat() / grandTotal.toFloat()) * barWidth
-        val otherW = (otherTotal.coerceAtLeast(0L).toFloat() / grandTotal.toFloat()) * barWidth
-        if (cashW > 0f) {
-            paint.color = PdfPalette.Emerald
-            c1.drawRect(cursorX, barTop, cursorX + cashW, barBottom, paint)
-            cursorX += cashW
-        }
-        if (mpesaW > 0f) {
-            paint.color = PdfPalette.Cobalt
-            c1.drawRect(cursorX, barTop, cursorX + mpesaW, barBottom, paint)
-            cursorX += mpesaW
-        }
-        if (otherW > 0f) {
-            paint.color = PdfPalette.Amber
-            c1.drawRect(cursorX, barTop, cursorX + otherW, barBottom, paint)
-        }
-        c1.restore()
-    }
-
     val cashPct = if (grandTotal > 0L) ((cashTotal.toDouble() / grandTotal.toDouble()) * 100.0).roundToInt() else 0
     val otherPct = if (grandTotal > 0L) (100 - cashPct - mpesaSharePct).coerceAtLeast(0) else 0
-    val legendY = y + 48f
-    fun drawLegendDot(x: Float, color: Int, text: String) {
-        paint.color = color
-        paint.style = Paint.Style.FILL
-        c1.drawCircle(x + 3.5f, legendY - 2.5f, 3.5f, paint)
-        c1.drawStyledText(text, x + 11f, legendY, 7.6f, PdfPalette.Ink, bold = true)
-    }
-    drawLegendDot(margin + 12f, PdfPalette.Emerald, "Cash: ${money(cashTotal)} ($cashPct%)")
-    drawLegendDot(margin + 195f, PdfPalette.Cobalt, "M-Pesa: ${money(mpesaTotal)} ($mpesaSharePct%)")
+    val legendY = y + 33f
+    c1.drawStyledText("Cash: ${money(cashTotal)} ($cashPct%)", margin + 12f, legendY, 7.8f, PdfPalette.Emerald, bold = true)
+    c1.drawStyledText("M-Pesa: ${money(mpesaTotal)} ($mpesaSharePct%)", margin + 195f, legendY, 7.8f, PdfPalette.Cobalt, bold = true)
     if (otherTotal > 0L) {
-        drawLegendDot(margin + 382f, PdfPalette.Amber, "Other: ${money(otherTotal)} ($otherPct%)")
+        c1.drawStyledText("Other: ${money(otherTotal)} ($otherPct%)", margin + 382f, legendY, 7.8f, PdfPalette.Amber, bold = true)
     } else {
-        drawLegendDot(margin + 382f, PdfPalette.AmberAccent, "Counters: ${counters.size.coerceAtLeast(1)}")
+        c1.drawStyledText("Counters: ${counters.size.coerceAtLeast(1)}", margin + 382f, legendY, 7.8f, PdfPalette.Ink, bold = true)
     }
 
     y += mixBoxH + 12f
 
-    // ==================== TOP SELLING PRODUCTS VISUAL BAR PANEL ====================
+    // ==================== TOP SELLING PRODUCTS TABLE ====================
     val topFive = effectiveSnapshot.topProducts.take(5)
     if (topFive.isNotEmpty()) {
         val topBoxH = 26f + topFive.size * 20f + 10f
@@ -584,7 +546,6 @@ internal fun buildBrandedReportPdf(
             bold = true,
             align = Paint.Align.RIGHT
         )
-        val maxProdRev = topFive.maxOfOrNull { it.totalKsh }?.coerceAtLeast(1L) ?: 1L
         var rowY = y + 26f
         topFive.forEachIndexed { idx, prod ->
             val rankColor = when (idx) {
@@ -596,26 +557,18 @@ internal fun buildBrandedReportPdf(
             c1.fillRoundBox(margin + 12f, rowY + 2f, margin + 28f, rowY + 16f, 4f, rankColor)
             c1.drawStyledText("#${idx + 1}", margin + 20f, rowY + 12f, 6.8f, PdfPalette.White, bold = true, align = Paint.Align.CENTER)
             c1.drawStyledText(
-                fittingText("${prod.productName} (${prod.unitName})", 185f, 8.0f, bold = true),
-                margin + 34f,
+                fittingText("${prod.productName} (${prod.unitName})", 300f, 8.2f, bold = true),
+                margin + 36f,
                 rowY + 12.5f,
-                8.0f,
+                8.2f,
                 PdfPalette.Ink,
                 bold = true
             )
-            // Mini horizontal bar
-            val trackLeft = margin + 228f
-            val trackRight = margin + 398f
-            val trackW = trackRight - trackLeft
-            c1.fillRoundBox(trackLeft, rowY + 5f, trackRight, rowY + 13f, 4f, PdfPalette.SlateSoft)
-            val fillW = ((prod.totalKsh.toFloat() / maxProdRev.toFloat()) * trackW).coerceAtLeast(6f)
-            c1.fillRoundBox(trackLeft, rowY + 5f, trackLeft + fillW, rowY + 13f, 4f, rankColor)
-
             c1.drawStyledText(
                 "${prod.totalQuantity} sold",
-                margin + 444f,
+                margin + 430f,
                 rowY + 12.5f,
-                7.6f,
+                7.8f,
                 PdfPalette.Muted,
                 align = Paint.Align.RIGHT
             )
@@ -623,7 +576,7 @@ internal fun buildBrandedReportPdf(
                 money(prod.totalKsh),
                 pageWidth - margin - 12f,
                 rowY + 12.5f,
-                8.0f,
+                8.2f,
                 PdfPalette.Ink,
                 bold = true,
                 align = Paint.Align.RIGHT
@@ -1098,25 +1051,69 @@ internal fun buildButcheryReportPdf(
     }
     y += kpiH + 12f
 
-    // Top Cuts Breakdown
-    val topCuts = snapshot.topCuts.take(5)
+    // Conditional Profit / Loss summary strip — rendered ONLY when buying prices are provided
+    val totalProfitKsh = snapshot.totalProfitKsh
+    val totalCostKsh = snapshot.totalCostKsh
+    if (totalProfitKsh != null && totalCostKsh != null) {
+        val isLoss = totalProfitKsh < 0L
+        val stripBg = if (isLoss) 0xFFFEF2F2.toInt() else PdfPalette.MintSoft
+        val stripAccent = if (isLoss) 0xFFB91C1C.toInt() else PdfPalette.Emerald
+        val stripTitle = if (isLoss) "EST. NET LOSS" else "EST. NET PROFIT"
+        val profitText = com.alvinb.counterpos.data.butchery.ButcheryPricing.formatSignedKsh(totalProfitKsh)
+        val stripH = 38f
+        c1.fillRoundBox(margin, y, pageWidth - margin, y + stripH, 8f, stripBg, PdfPalette.Border, 0.9f)
+        c1.drawStyledText(stripTitle, margin + 12f, y + 15f, 7.0f, stripAccent, bold = true)
+        c1.drawStyledText(profitText, margin + 12f, y + 30f, 11.5f, stripAccent, bold = true, display = true)
+        c1.drawStyledText(
+            "Buying Cost: ${money(totalCostKsh)} · ${snapshot.costTrackedSalesCount}/${snapshot.sales.size} sales cost-tracked",
+            pageWidth - margin - 12f,
+            y + 24f,
+            7.8f,
+            PdfPalette.Muted,
+            bold = true,
+            align = Paint.Align.RIGHT
+        )
+        y += stripH + 10f
+    }
+
+    // Meat Breakdown (numeric tabular layout, no bar graphs)
+    val topCuts = snapshot.topCuts.take(6)
     if (topCuts.isNotEmpty()) {
+        val showProfitCol = totalProfitKsh != null
         val boxH = 26f + topCuts.size * 20f + 8f
         c1.fillRoundBox(margin, y, pageWidth - margin, y + boxH, 9f, PdfPalette.White, PdfPalette.Border, 1f)
-        c1.drawStyledText("CUTS BREAKDOWN", margin + 12f, y + 17f, 7.5f, PdfPalette.Emerald, bold = true)
-        c1.drawStyledText("WEIGHT  ·  REVENUE", pageWidth - margin - 12f, y + 17f, 7.0f, PdfPalette.Muted, bold = true, align = Paint.Align.RIGHT)
-        val maxRev = topCuts.maxOfOrNull { it.totalKsh }?.coerceAtLeast(1L) ?: 1L
+        c1.drawStyledText("MEAT BREAKDOWN", margin + 12f, y + 17f, 7.5f, PdfPalette.Emerald, bold = true)
+        if (showProfitCol) {
+            c1.drawStyledText("WEIGHT", margin + 275f, y + 17f, 7.0f, PdfPalette.Muted, bold = true, align = Paint.Align.RIGHT)
+            c1.drawStyledText("REVENUE", margin + 395f, y + 17f, 7.0f, PdfPalette.Muted, bold = true, align = Paint.Align.RIGHT)
+            c1.drawStyledText("PROFIT / LOSS", pageWidth - margin - 12f, y + 17f, 7.0f, PdfPalette.Muted, bold = true, align = Paint.Align.RIGHT)
+        } else {
+            c1.drawStyledText("WEIGHT", margin + 395f, y + 17f, 7.0f, PdfPalette.Muted, bold = true, align = Paint.Align.RIGHT)
+            c1.drawStyledText("REVENUE", pageWidth - margin - 12f, y + 17f, 7.0f, PdfPalette.Muted, bold = true, align = Paint.Align.RIGHT)
+        }
         var rowY = y + 26f
-        topCuts.forEachIndexed { idx, cut ->
-            val accent = if (idx == 0) PdfPalette.Emerald else if (idx == 1) PdfPalette.Teal else PdfPalette.Amber
-            c1.drawStyledText(fittingText(cut.cutName, 175f, 8.2f, bold = true), margin + 14f, rowY + 12.5f, 8.2f, PdfPalette.Ink, bold = true)
-            val trackL = margin + 195f
-            val trackR = margin + 375f
-            c1.fillRoundBox(trackL, rowY + 5f, trackR, rowY + 13f, 4f, PdfPalette.SlateSoft)
-            val fillW = ((cut.totalKsh.toFloat() / maxRev.toFloat()) * (trackR - trackL)).coerceAtLeast(6f)
-            c1.fillRoundBox(trackL, rowY + 5f, trackL + fillW, rowY + 13f, 4f, accent)
-            c1.drawStyledText(weightLabel(cut.totalGrams), margin + 440f, rowY + 12.5f, 7.8f, PdfPalette.Muted, align = Paint.Align.RIGHT)
-            c1.drawStyledText(money(cut.totalKsh), pageWidth - margin - 12f, rowY + 12.5f, 8.2f, PdfPalette.Ink, bold = true, align = Paint.Align.RIGHT)
+        topCuts.forEach { cut ->
+            c1.drawStyledText(fittingText(cut.cutName, 190f, 8.2f, bold = true), margin + 14f, rowY + 12.5f, 8.2f, PdfPalette.Ink, bold = true)
+            if (showProfitCol) {
+                c1.drawStyledText(weightLabel(cut.totalGrams), margin + 275f, rowY + 12.5f, 7.8f, PdfPalette.Muted, align = Paint.Align.RIGHT)
+                c1.drawStyledText(money(cut.totalKsh), margin + 395f, rowY + 12.5f, 8.2f, PdfPalette.Ink, bold = true, align = Paint.Align.RIGHT)
+                val pVal = cut.totalProfitKsh
+                if (pVal != null) {
+                    val pColor = if (pVal < 0L) 0xFFB91C1C.toInt() else PdfPalette.Emerald
+                    c1.drawStyledText(
+                        com.alvinb.counterpos.data.butchery.ButcheryPricing.formatSignedKsh(pVal),
+                        pageWidth - margin - 12f,
+                        rowY + 12.5f,
+                        8.0f,
+                        pColor,
+                        bold = true,
+                        align = Paint.Align.RIGHT
+                    )
+                }
+            } else {
+                c1.drawStyledText(weightLabel(cut.totalGrams), margin + 395f, rowY + 12.5f, 7.8f, PdfPalette.Muted, align = Paint.Align.RIGHT)
+                c1.drawStyledText(money(cut.totalKsh), pageWidth - margin - 12f, rowY + 12.5f, 8.2f, PdfPalette.Ink, bold = true, align = Paint.Align.RIGHT)
+            }
             rowY += 20f
         }
         y += boxH + 12f

@@ -204,13 +204,20 @@ fun ButcheryPaymentMethodsEditor(
 
 @Composable
 fun ButcheryMeatTypesEditor(
-    selectedCategories: List<String>,
+    selectedMeats: List<String>,
     enabled: Boolean,
-    onCategoriesChange: (List<String>) -> Unit,
+    onMeatsChange: (List<String>) -> Unit,
+    availableMeats: List<String> = ButcheryPricing.DEFAULT_MEAT_NAMES,
     modifier: Modifier = Modifier
 ) {
-    val allCategories = ButcheryPricing.ALL_MEAT_CATEGORIES
-    val singleSelected = selectedCategories.size == 1
+    val allMeats = remember(availableMeats, selectedMeats) {
+        val seen = mutableSetOf<String>()
+        (availableMeats + selectedMeats).mapNotNull { raw ->
+            val cleaned = ButcheryPricing.normalizeLegacyMeatSelection(raw)
+            if (cleaned.isNotEmpty() && seen.add(cleaned.lowercase(Locale.ROOT))) cleaned else null
+        }.ifEmpty { ButcheryPricing.DEFAULT_MEAT_NAMES }
+    }
+    val singleSelected = selectedMeats.size == 1
 
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -218,16 +225,16 @@ fun ButcheryMeatTypesEditor(
     ) {
         Column {
             Text(
-                text = "Meat Types Sold",
+                text = "Meats Sold",
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Text(
                 text = if (singleSelected) {
-                    "Selling ${selectedCategories.first()} only — other meat categories are hidden."
+                    "Selling ${selectedMeats.first()} only — other meats are hidden."
                 } else {
-                    "${selectedCategories.size} meat types active (choose 1 or more)."
+                    "${selectedMeats.size} meats active (choose 1 or more)."
                 },
                 fontSize = 11.sp,
                 color = if (singleSelected) ButcheryPalette.EmeraldHeader else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -240,29 +247,29 @@ fun ButcheryMeatTypesEditor(
             horizontalSpacing = 6.dp,
             verticalSpacing = 6.dp
         ) {
-            allCategories.forEach { category ->
-                val isSelected = selectedCategories.any { it.equals(category, ignoreCase = true) }
-                val tagSuffix = category.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]+"), "_")
+            allMeats.forEach { meat ->
+                val isSelected = selectedMeats.any { it.equals(meat, ignoreCase = true) }
+                val tagSuffix = meat.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]+"), "_")
                 FilterChip(
                     selected = isSelected,
                     enabled = enabled,
                     onClick = {
                         if (isSelected) {
-                            if (selectedCategories.size > 1) {
-                                onCategoriesChange(selectedCategories.filterNot { it.equals(category, ignoreCase = true) })
+                            if (selectedMeats.size > 1) {
+                                onMeatsChange(selectedMeats.filterNot { it.equals(meat, ignoreCase = true) })
                             }
                         } else {
-                            onCategoriesChange(
-                                allCategories.filter { cat ->
-                                    cat.equals(category, ignoreCase = true) ||
-                                        selectedCategories.any { it.equals(cat, ignoreCase = true) }
+                            onMeatsChange(
+                                allMeats.filter { candidate ->
+                                    candidate.equals(meat, ignoreCase = true) ||
+                                        selectedMeats.any { it.equals(candidate, ignoreCase = true) }
                                 }
                             )
                         }
                     },
                     label = {
                         Text(
-                            text = category,
+                            text = meat,
                             fontSize = 12.sp,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                         )
@@ -270,10 +277,10 @@ fun ButcheryMeatTypesEditor(
                     modifier = Modifier.testTag("butchery_meat_type_$tagSuffix")
                 )
             }
-            if (selectedCategories.size < allCategories.size && enabled) {
+            if (selectedMeats.size < allMeats.size && enabled) {
                 FilterChip(
                     selected = false,
-                    onClick = { onCategoriesChange(allCategories) },
+                    onClick = { onMeatsChange(allMeats) },
                     label = { Text("Select All", fontSize = 12.sp) },
                     modifier = Modifier.testTag("butchery_meat_type_all")
                 )

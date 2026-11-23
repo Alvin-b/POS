@@ -711,17 +711,18 @@ class SupabaseRestClient(context: Context) {
             .put("_shop", cut.optString("shop_id"))
             .put("_id", cut.optString("id"))
             .put("_name", cut.optString("name"))
-            .put("_category", cut.optString("category"))
+            .put("_category", cut.optString("category", ""))
             .put("_price_per_kg_ksh", cut.optInt("price_per_kg_ksh"))
+            .put("_buying_price_per_kg_ksh", cut.optInt("buying_price_per_kg_ksh", 0))
             .put("_stock_grams", cut.optInt("stock_grams"))
-            .put("_icon_key", cut.optString("icon_key", "beef_steak"))
+            .put("_icon_key", cut.optString("icon_key", "beef"))
             .put("_active", cut.optBoolean("active", true))
             .put("_sort_order", cut.optInt("sort_order"))
     )
 
-    suspend fun updateButcheryCategoryPrice(shopId: String, category: String, pricePerKgKsh: Int): Int =
-        rpcInt("update_butchery_category_price", JSONObject()
-            .put("_shop", shopId).put("_category", category).put("_price_per_kg_ksh", pricePerKgKsh))
+    suspend fun updateButcheryMeatPrice(shopId: String, meatName: String, pricePerKgKsh: Int): Int =
+        rpcInt("update_butchery_meat_price", JSONObject()
+            .put("_shop", shopId).put("_meat_name", meatName).put("_price_per_kg_ksh", pricePerKgKsh))
 
     suspend fun recordButcherySale(
         shopId: String,

@@ -129,20 +129,20 @@ fun OwnerSettingsScreen(
         )
     }
     var butcheryCategoriesDraft by remember(butcheryConfig?.enabledCategoriesJson, butcheryConfig?.beefOnlyMode) {
-        mutableStateOf(com.alvinb.counterpos.data.butchery.ButcheryPricing.resolveEnabledCategories(butcheryConfig))
+        mutableStateOf(ButcheryPricing.resolveEnabledMeats(butcheryConfig))
     }
     var butcheryBeefPriceDraft by remember(butcheryConfig?.defaultBeefPricePerKgKsh) {
         mutableStateOf((butcheryConfig?.defaultBeefPricePerKgKsh ?: 680).toString())
     }
     var butcheryPaymentMethodsDraft by remember(butcheryConfig?.paymentMethodsJson) {
-        mutableStateOf(com.alvinb.counterpos.data.butchery.ButcheryPricing.parsePaymentMethods(butcheryConfig?.paymentMethodsJson))
+        mutableStateOf(ButcheryPricing.parsePaymentMethods(butcheryConfig?.paymentMethodsJson))
     }
     val butcheryIsBeefOnly = butcheryCategoriesDraft.size == 1 &&
-        butcheryCategoriesDraft.first().equals(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label, ignoreCase = true)
+        butcheryCategoriesDraft.first().equals("Beef", ignoreCase = true)
     val primaryMeatLabel = if (butcheryCategoriesDraft.size == 1) {
         butcheryCategoriesDraft.first()
     } else {
-        com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label
+        "Beef"
     }
     var newCounterName by remember { mutableStateOf("") }
     var editingCounterId by remember { mutableStateOf<String?>(null) }
@@ -292,15 +292,16 @@ fun OwnerSettingsScreen(
                         )
 
                         ButcheryMeatTypesEditor(
-                            selectedCategories = butcheryCategoriesDraft,
+                            selectedMeats = butcheryCategoriesDraft,
                             enabled = ownerCanEdit,
-                            onCategoriesChange = { nextCategories ->
-                                butcheryCategoriesDraft = nextCategories
+                            availableMeats = ButcheryPricing.availableMeatChoices(butcheryCuts, butcheryCategoriesDraft),
+                            onMeatsChange = { nextMeats ->
+                                butcheryCategoriesDraft = nextMeats
                                 if (ownerCanEdit && butcheryNameDraft.trim().isNotEmpty()) {
                                     val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
-                                    val nextBeefOnly = nextCategories.size == 1 &&
-                                        nextCategories.first().equals(com.alvinb.counterpos.data.butchery.ButcheryCategory.BEEF.label, ignoreCase = true)
-                                    onSaveButcheryConfig(true, butcheryNameDraft.trim(), nextBeefOnly, price, butcheryPaymentMethodsDraft, nextCategories)
+                                    val nextBeefOnly = nextMeats.size == 1 &&
+                                        nextMeats.first().equals("Beef", ignoreCase = true)
+                                    onSaveButcheryConfig(true, butcheryNameDraft.trim(), nextBeefOnly, price, butcheryPaymentMethodsDraft, nextMeats)
                                 }
                             }
                         )
@@ -313,7 +314,7 @@ fun OwnerSettingsScreen(
                                 )
                             }
                             sourceCuts.filter { cut ->
-                                cut.active && butcheryCategoriesDraft.any { it.equals(cut.category, ignoreCase = true) }
+                                cut.active && butcheryCategoriesDraft.any { it.equals(cut.name, ignoreCase = true) }
                             }
                         }
 
@@ -369,7 +370,12 @@ fun OwnerSettingsScreen(
                                                     color = MaterialTheme.colorScheme.onSurface
                                                 )
                                                 Text(
-                                                    text = "${product.category} · KES ${product.pricePerKgKsh}/kg",
+                                                    text = buildString {
+                                                        append("Sell KES ${product.pricePerKgKsh}/kg")
+                                                        if (product.buyingPricePerKgKsh > 0) {
+                                                            append(" · Buy KES ${product.buyingPricePerKgKsh}/kg")
+                                                        }
+                                                    },
                                                     fontSize = 11.sp,
                                                     color = ButcheryPalette.EmeraldHeader,
                                                     fontWeight = FontWeight.Medium

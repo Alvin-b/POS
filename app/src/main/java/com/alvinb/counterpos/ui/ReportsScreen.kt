@@ -6,10 +6,8 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,7 +15,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -32,11 +29,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.TrendingDown
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.AccountBalanceWallet
-import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.LocalBar
 import androidx.compose.material.icons.filled.Person
@@ -58,28 +53,18 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -488,7 +473,7 @@ internal fun CounterReportScreen(
             }
         }
 
-        // 5. Last 30 Days Daily Sales Revenue Visualization (Vico) & Actionable Insights
+        // 5. Last 30 Days Daily Sales Summary & Actionable Insights
         item {
             val counterScopeName = if (reportCounterFilter == "all") {
                 "All counters"
@@ -510,17 +495,6 @@ internal fun CounterReportScreen(
                 scopeLabel = scopeLabel,
                 isDarkSurface = isDarkSurface
             )
-        }
-
-        // 6. Period-Specific Trend Breakdown (Hourly for Today / 7-Day View)
-        if (reportFilter != "30d") {
-            item {
-                RevenueTrendChartCard(
-                    reportFilter = reportFilter,
-                    buckets = snapshot.trendBuckets,
-                    isDarkSurface = isDarkSurface
-                )
-            }
         }
 
         // 6. Category Breakdown Card
@@ -578,7 +552,6 @@ internal fun CounterReportScreen(
                     EmptyStateMessage("No sales recorded for this period and filter combination.")
                 } else {
                     val displayedProducts = if (showAllTopProducts) snapshot.topProducts else snapshot.topProducts.take(5)
-                    val maxProductRevenue = snapshot.topProducts.maxOfOrNull { it.totalKsh }?.coerceAtLeast(1L) ?: 1L
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -594,7 +567,6 @@ internal fun CounterReportScreen(
                                     rank = index + 1,
                                     item = item,
                                     productEntity = matchedEntity,
-                                    maxRevenueKsh = maxProductRevenue,
                                     isDarkSurface = isDarkSurface
                                 )
                                 if (index < displayedProducts.lastIndex) {
@@ -643,7 +615,6 @@ internal fun CounterReportScreen(
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             snapshot.counterReports.sortedByDescending { it.totalKsh }.forEachIndexed { index, counterData ->
                                 val counterObj = counters.firstOrNull { it.id == counterData.counterId }
-                                val fraction = (counterData.totalKsh.toFloat() / maxCounterRev.toFloat()).coerceIn(0f, 1f)
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Row(
                                         Modifier.fillMaxWidth(),
@@ -694,21 +665,6 @@ internal fun CounterReportScreen(
                                                 )
                                             }
                                         }
-                                    }
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(6.dp)
-                                            .clip(RoundedCornerShape(999.dp))
-                                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth(if (counterData.totalKsh > 0L) fraction.coerceAtLeast(0.04f) else 0f)
-                                                .fillMaxHeight()
-                                                .clip(RoundedCornerShape(999.dp))
-                                                .background(MaterialTheme.colorScheme.primary)
-                                        )
                                     }
                                     if (counterData.cashKsh > 0L || counterData.mpesaKsh > 0L) {
                                         Text(
@@ -1064,8 +1020,6 @@ private fun PaymentSplitBentoCard(
 ) {
     val cashColor = MaterialTheme.colorScheme.primary
     val mpesaColor = if (isDarkSurface) Color(0xFF38BDF8) else Color(0xFF0284C7)
-    val total = (cashKsh + mpesaKsh).coerceAtLeast(1L)
-    val cashWeight = (cashKsh.toFloat() / total.toFloat()).coerceIn(0f, 1f)
 
     Surface(
         modifier = modifier,
@@ -1075,7 +1029,7 @@ private fun PaymentSplitBentoCard(
     ) {
         Column(
             modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1101,35 +1055,7 @@ private fun PaymentSplitBentoCard(
                 )
             }
 
-            // Proportional two-tone bar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(8.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                if (cashKsh + mpesaKsh > 0L) {
-                    if (cashWeight > 0f) {
-                        Box(
-                            Modifier
-                                .weight(cashWeight.coerceAtLeast(0.05f))
-                                .fillMaxHeight()
-                                .background(cashColor)
-                        )
-                    }
-                    if (1f - cashWeight > 0f) {
-                        Box(
-                            Modifier
-                                .weight((1f - cashWeight).coerceAtLeast(0.05f))
-                                .fillMaxHeight()
-                                .background(mpesaColor)
-                        )
-                    }
-                }
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                         Box(Modifier.size(7.dp).clip(CircleShape).background(cashColor))
@@ -1160,168 +1086,6 @@ private fun PaymentSplitBentoCard(
 }
 
 @Composable
-private fun RevenueTrendChartCard(
-    reportFilter: String,
-    buckets: List<ReportTrendBucket>,
-    isDarkSurface: Boolean
-) {
-    var selectedIdx by remember(buckets) {
-        val peakIndex = buckets.indices.maxByOrNull { buckets[it].revenueKsh } ?: -1
-        mutableIntStateOf(if (peakIndex >= 0 && buckets[peakIndex].revenueKsh > 0L) peakIndex else -1)
-    }
-
-    val title = if (reportFilter == "today") "Hourly Activity" else "Daily Revenue Trend"
-    val maxVal = remember(buckets) { buckets.maxOfOrNull { it.revenueKsh }?.coerceAtLeast(1L) ?: 1L }
-    val hasAnySales = remember(buckets) { buckets.any { it.revenueKsh > 0L } }
-    val primaryColor = MaterialTheme.colorScheme.primary
-    val secondaryColor = MaterialTheme.colorScheme.secondary
-    val gridColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
-    val mutedBarColor = if (isDarkSurface) Color(0xFF214237) else Color(0xFFC2E5D6)
-
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("report_trend_chart"),
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(
-                        Icons.Default.BarChart,
-                        contentDescription = null,
-                        tint = primaryColor,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Text(
-                        title,
-                        fontSize = 15.sp,
-                        fontFamily = SpaceGroteskFontFamily,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-                val inspected = buckets.getOrNull(selectedIdx)
-                if (inspected != null && inspected.revenueKsh > 0L) {
-                    Surface(
-                        shape = RoundedCornerShape(999.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer
-                    ) {
-                        Text(
-                            "${inspected.detailLabel} · ${formatKshLong(inspected.revenueKsh)}",
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    }
-                }
-            }
-
-            if (!hasAnySales || buckets.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(110.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        "Sales activity bars will appear here once orders are completed.",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center
-                    )
-                }
-            } else {
-                Canvas(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(136.dp)
-                        .pointerInput(buckets) {
-                            detectTapGestures { tapOffset ->
-                                if (buckets.isNotEmpty()) {
-                                    val slotWidth = size.width / buckets.size.toFloat()
-                                    val tapped = (tapOffset.x / slotWidth).toInt().coerceIn(0, buckets.lastIndex)
-                                    selectedIdx = tapped
-                                }
-                            }
-                        }
-                ) {
-                    val chartH = size.height
-                    val dashEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 8f), 0f)
-                    listOf(0.25f, 0.55f, 0.85f).forEach { frac ->
-                        val lineY = chartH * frac
-                        drawLine(
-                            color = gridColor,
-                            start = Offset(0f, lineY),
-                            end = Offset(size.width, lineY),
-                            strokeWidth = 1.dp.toPx(),
-                            pathEffect = dashEffect
-                        )
-                    }
-
-                    val count = buckets.size
-                    val slotW = size.width / count.toFloat()
-                    val barW = (slotW * 0.56f).coerceIn(8.dp.toPx(), 26.dp.toPx())
-
-                    buckets.forEachIndexed { idx, bucket ->
-                        val ratio = (bucket.revenueKsh.toFloat() / maxVal.toFloat()).coerceIn(0f, 1f)
-                        val barH = if (bucket.revenueKsh > 0L) (chartH * 0.88f * ratio).coerceAtLeast(8.dp.toPx()) else 3.dp.toPx()
-                        val left = idx * slotW + (slotW - barW) / 2f
-                        val top = chartH - barH
-                        val isSelected = idx == selectedIdx
-                        val barColor = when {
-                            bucket.revenueKsh <= 0L -> gridColor.copy(alpha = 0.4f)
-                            isSelected -> primaryColor
-                            else -> mutedBarColor
-                        }
-                        drawRoundRect(
-                            color = barColor,
-                            topLeft = Offset(left, top),
-                            size = Size(barW, barH),
-                            cornerRadius = CornerRadius(6.dp.toPx(), 6.dp.toPx())
-                        )
-                        if (isSelected && bucket.revenueKsh > 0L) {
-                            drawCircle(
-                                color = secondaryColor,
-                                radius = 3.5.dp.toPx(),
-                                center = Offset(left + barW / 2f, (top - 6.dp.toPx()).coerceAtLeast(4.dp.toPx()))
-                            )
-                        }
-                    }
-                }
-
-                // Clean sparse x-axis labels so text never collides
-                val step = (buckets.size / 6).coerceAtLeast(1)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    buckets.forEachIndexed { idx, bucket ->
-                        if (idx == 0 || idx == buckets.lastIndex || idx % step == 0) {
-                            Text(
-                                text = bucket.label,
-                                fontSize = 10.sp,
-                                fontWeight = if (idx == selectedIdx) FontWeight.Bold else FontWeight.Normal,
-                                color = if (idx == selectedIdx) primaryColor else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun CategoryBreakdownCard(
     categories: List<ReportCategorySummary>,
     isDarkSurface: Boolean
@@ -1340,7 +1104,7 @@ private fun CategoryBreakdownCard(
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1362,55 +1126,40 @@ private fun CategoryBreakdownCard(
 
             categories.take(6).forEachIndexed { idx, cat ->
                 val color = palette[idx % palette.size]
-                val fraction = (cat.sharePercent / 100.0).toFloat().coerceIn(0.03f, 1f)
-                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(7.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Box(Modifier.size(8.dp).clip(CircleShape).background(color))
-                            Text(
-                                cat.category,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                "${cat.unitsSold} units",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                        Box(Modifier.size(8.dp).clip(CircleShape).background(color))
                         Text(
-                            "${formatKshLong(cat.revenueKsh)} (${cat.sharePercent.roundToInt()}%)",
-                            fontSize = 12.sp,
-                            fontFamily = SpaceGroteskFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
+                            cat.category,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            "${cat.unitsSold} units",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(7.dp)
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth(fraction)
-                                .fillMaxHeight()
-                                .clip(RoundedCornerShape(999.dp))
-                                .background(color)
-                        )
-                    }
+                    Text(
+                        "${formatKshLong(cat.revenueKsh)} (${cat.sharePercent.roundToInt()}%)",
+                        fontSize = 12.sp,
+                        fontFamily = SpaceGroteskFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                if (idx < categories.take(6).lastIndex) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                 }
             }
         }
@@ -1422,7 +1171,6 @@ private fun TopProductLeaderboardRow(
     rank: Int,
     item: CounterProductSummary,
     productEntity: ProductEntity?,
-    maxRevenueKsh: Long,
     isDarkSurface: Boolean
 ) {
     val rankAccent = when (rank) {
@@ -1431,7 +1179,6 @@ private fun TopProductLeaderboardRow(
         3 -> MaterialTheme.colorScheme.secondary
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    val barFraction = (item.totalKsh.toFloat() / maxRevenueKsh.coerceAtLeast(1L).toFloat()).coerceIn(0.05f, 1f)
 
     Row(
         modifier = Modifier
@@ -1469,7 +1216,7 @@ private fun TopProductLeaderboardRow(
             Spacer(Modifier.width(10.dp))
         }
 
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(
                 item.productName,
                 fontWeight = FontWeight.SemiBold,
@@ -1500,21 +1247,6 @@ private fun TopProductLeaderboardRow(
                         )
                     }
                 }
-            }
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(barFraction)
-                        .fillMaxHeight()
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(rankAccent)
-                )
             }
         }
         Spacer(Modifier.width(12.dp))
