@@ -90,6 +90,15 @@ data class AdminBusinessCreationResult(
     val businesses: List<AdminBusiness>
 )
 
+data class AdminPaymentLockUpdateResult(
+    val businesses: List<AdminBusiness>?,
+    val refreshed: Boolean,
+    val paymentLockActive: Boolean,
+    val paymentLockAmountKsh: Int,
+    val paymentLockReason: String?,
+    val paymentLockStartedAt: String?
+)
+
 private data class BundledProductMetadata(
     val imageAssetName: String,
     val verifiedBarcode: String?,
@@ -471,15 +480,10 @@ class CounterPosRepository(
         val response = remote.createAccessChallenge()
         val token = response.optString("token")
             .ifBlank { response.optString("challenge_token") }
-            .let { raw ->
-                raw.substringAfter("CPR1|", raw).trim()
-            }
+            .let(::normalizeAccessChallengeToken)
             .takeIf(String::isNotBlank)
             ?: throw IllegalStateException("Could not create QR sign-in request.")
-        val qrPayload = response.optString("qr_payload")
-            .takeIf(String::isNotBlank)
-            ?.let { payload -> if (payload.startsWith("CPR1|", ignoreCase = true)) payload else "CPR1|$payload" }
-            ?: "CPR1|$token"
+        val qrPayload = accessChallengeQrPayload(response.optString("qr_payload"), token)
         val lifetimeSeconds = response.optLong("expires_in_seconds", 600L).coerceAtLeast(30L)
         AccessChallenge(token, qrPayload, System.currentTimeMillis() + lifetimeSeconds * 1_000L)
     }
@@ -526,7 +530,7 @@ class CounterPosRepository(
             ensureButcheryEnabledForShop(shop, stationName)
         }
         remote.approveAccessChallenge(
-            token = token.substringAfter("CPR1|", token).trim(),
+            token = normalizeAccessChallengeToken(token),
             shopId = shop.shopId,
             role = "cashier",
             station = if (normalized == "butchery") "butchery" else "waiter"
@@ -536,7 +540,7 @@ class CounterPosRepository(
     suspend fun adminApproveAccessChallenge(token: String, shopId: String, role: String) = withContext(Dispatchers.IO) {
         require(account?.isPlatformAdmin == true) { "Only a platform administrator can enroll a user into a business." }
         require(role in setOf("owner", "manager", "inventory_clerk", "cashier")) { "Choose a valid business role." }
-        remote.approveAccessChallenge(token.substringAfter("CPR1|", token).trim(), shopId, role)
+        remote.approveAccessChallenge(normalizeAccessChallengeToken(token), shopId, role)
     }
 
     suspend fun shopMembers(): JSONArray = withContext(Dispatchers.IO) {
@@ -1282,12 +1286,26 @@ class CounterPosRepository(
         locked: Boolean,
         amountKsh: Int? = null,
         reason: String? = null
-    ): List<AdminBusiness> = withContext(Dispatchers.IO) {
+    ): AdminPaymentLockUpdateResult = withContext(Dispatchers.IO) {
         require(account?.isPlatformAdmin == true) { "Only a platform administrator can change a payment lock." }
-        remote.adminSetShopPaymentLock(shopId, locked, amountKsh, reason)
-        val fresh = remote.adminBusinesses()
-        saveCachedAdminBusinesses(fresh)
-        fresh
+        val response = remote.adminSetShopPaymentLock(shopId, locked, amountKsh, reason)
+        val fresh = try {
+            remote.adminBusinesses()
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            null
+        }
+        if (fresh != null) saveCachedAdminBusinesses(fresh)
+        AdminPaymentLockUpdateResult(
+            businesses = fresh,
+            refreshed = fresh != null,
+            paymentLockActive = response.optBoolean("payment_lock_active", locked),
+            paymentLockAmountKsh = response.optInt("payment_lock_amount_ksh", if (locked) amountKsh ?: 0 else 0),
+            paymentLockReason = response.optString("payment_lock_reason")
+                .takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
+            paymentLockStartedAt = response.optString("payment_lock_started_at")
+                .takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+        )
     }
 
     suspend fun adminUpdateBusinessPhone(shopId: String, phone: String): List<AdminBusiness> = withContext(Dispatchers.IO) {

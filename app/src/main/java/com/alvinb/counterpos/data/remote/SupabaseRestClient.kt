@@ -1576,7 +1576,26 @@ class SupabaseRestClient(context: Context) {
             .put("p_locked", locked)
         if (amountKsh != null) payload.put("p_amount_ksh", amountKsh)
         if (reason != null) payload.put("p_reason", reason)
-        return rpcObject("admin_set_shop_payment_lock", payload)
+        return try {
+            rpcObject("admin_set_shop_payment_lock", payload)
+        } catch (error: Exception) {
+            val messages = generateSequence(error) { it.cause }
+                .mapNotNull { it.message }
+                .toList()
+            val missingRpc = (error is SupabaseApiException && error.statusCode == 404) ||
+                messages.any { message ->
+                    message.contains("PGRST202", ignoreCase = true) ||
+                        (message.contains("admin_set_shop_payment_lock", ignoreCase = true) &&
+                            (message.contains("not found", ignoreCase = true) || message.contains("schema cache", ignoreCase = true)))
+                }
+            if (missingRpc) {
+                throw IOException(
+                    "Instant payment-lock control is not enabled in this Supabase project. Verify the production migration history, apply 202611240002_superadmin_action_repairs.sql if it is missing, then refresh the PostgREST schema cache.",
+                    error
+                )
+            }
+            throw error
+        }
     }
 
     private suspend fun authenticate(grantType: String, email: String, password: String): AuthSession =

@@ -721,7 +721,11 @@ class CounterPosViewModel(
                     delay(1_500)
                     return pollAccessChallengeUntilApproved(token, missingQrRetries + 1)
                 }
-                val friendly = if (message.contains("expired", ignoreCase = true) || message.contains("used", ignoreCase = true)) {
+                val qrReadFailure = message.contains("could not read qr", ignoreCase = true) ||
+                    message.contains("failed to read qr", ignoreCase = true)
+                val friendly = if (qrReadFailure) {
+                    "The other device decoded the QR, but the Supabase polling function could not read its challenge token. This is a backend QR token/deployment mismatch, not a camera failure. Deploy matching create-access-challenge, poll-access-challenge, and approve-access-challenge functions, then generate a fresh QR."
+                } else if (message.contains("expired", ignoreCase = true) || message.contains("used", ignoreCase = true)) {
                     "This QR code has expired or was already used. Tap Refresh QR to generate a new one."
                 } else if (qrNotFound) {
                     "This QR is not registered by the connected backend. Deploy the current create-access-challenge and poll-access-challenge functions, then generate a new QR."
@@ -1869,13 +1873,39 @@ class CounterPosViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isUpdatingSubscription = true, startupError = null) }
             runCatching { repository.adminSetShopPaymentLock(shopId, locked, amountKsh, reason) }
-                .onSuccess { updated ->
+                .onSuccess { result ->
+                    val currentBusinesses = _adminBusinesses.value
+                    val updated = result.businesses ?: currentBusinesses.map { business ->
+                        if (business.shopId == shopId) {
+                            business.copy(
+                                paymentLockActive = result.paymentLockActive,
+                                paymentLockAmountKsh = result.paymentLockAmountKsh,
+                                paymentLockReason = result.paymentLockReason,
+                                paymentLockStartedAt = result.paymentLockStartedAt
+                            )
+                        } else {
+                            business
+                        }
+                    }
                     _adminBusinesses.value = updated
-                    _uiState.update {
-                        it.copy(
+                    _uiState.update { state ->
+                        val selectedBusiness = state.adminSelectedSubscriptionBusiness
+                            ?.takeIf { it.shopId == shopId }
+                        val changedBusiness = updated.firstOrNull { business -> business.shopId == shopId }
+                            ?: selectedBusiness?.copy(
+                                paymentLockActive = result.paymentLockActive,
+                                paymentLockAmountKsh = result.paymentLockAmountKsh,
+                                paymentLockReason = result.paymentLockReason,
+                                paymentLockStartedAt = result.paymentLockStartedAt
+                            )
+                        state.copy(
                             isUpdatingSubscription = false,
-                            adminSelectedSubscriptionBusiness = updated.firstOrNull { b -> b.shopId == shopId },
-                            notice = if (locked) "Payment lock started for the business" else "Payment lock cleared"
+                            adminSelectedSubscriptionBusiness = changedBusiness ?: state.adminSelectedSubscriptionBusiness,
+                            notice = when {
+                                !result.refreshed -> "${if (locked) "Payment lock" else "Unlock"} was accepted by Supabase and updated locally, but the business list could not refresh. Reopen the Superadmin dashboard to verify the latest status."
+                                locked -> "Payment lock started for the business"
+                                else -> "Payment lock cleared"
+                            }
                         )
                     }
                 }
