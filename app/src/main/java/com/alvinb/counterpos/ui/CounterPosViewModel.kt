@@ -724,7 +724,7 @@ class CounterPosViewModel(
                 val qrReadFailure = message.contains("could not read qr", ignoreCase = true) ||
                     message.contains("failed to read qr", ignoreCase = true)
                 val friendly = if (qrReadFailure) {
-                    "The other device decoded the QR, but the Supabase polling function could not read its challenge token. This is a backend QR token/deployment mismatch, not a camera failure. Deploy matching create-access-challenge, poll-access-challenge, and approve-access-challenge functions, then generate a fresh QR."
+                    "This phone could not read its QR enrollment request from the backend. The owner’s scanning phone is not the problem. Refresh the QR and try again; if it continues, deploy the matching QR enrollment functions and database migration."
                 } else if (message.contains("expired", ignoreCase = true) || message.contains("used", ignoreCase = true)) {
                     "This QR code has expired or was already used. Tap Refresh QR to generate a new one."
                 } else if (qrNotFound) {
