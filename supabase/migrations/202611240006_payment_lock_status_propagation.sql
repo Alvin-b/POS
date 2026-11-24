@@ -71,6 +71,10 @@ $$;
 -- Reopening a business from the Superadmin portfolio must also clear an
 -- administrator payment lock. Subscription dates remain unchanged; this only
 -- removes the explicit manual lock that blocks the owner device.
+-- PostgreSQL does not allow CREATE OR REPLACE to change an existing function's
+-- return type, so remove the previous definition before recreating it.
+DROP FUNCTION IF EXISTS public.admin_set_business_status(uuid, text, text);
+
 CREATE OR REPLACE FUNCTION public.admin_set_business_status(
   _shop uuid,
   _status text,
