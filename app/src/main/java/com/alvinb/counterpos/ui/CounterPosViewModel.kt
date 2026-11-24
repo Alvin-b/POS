@@ -722,7 +722,9 @@ class CounterPosViewModel(
                     return pollAccessChallengeUntilApproved(token, missingQrRetries + 1)
                 }
                 val qrReadFailure = message.contains("could not read qr", ignoreCase = true) ||
-                    message.contains("failed to read qr", ignoreCase = true)
+                    message.contains("failed to read qr", ignoreCase = true) ||
+                    message.contains("could_not_read_qr", ignoreCase = true) ||
+                    message.contains("failed_to_read_qr", ignoreCase = true)
                 val friendly = if (qrReadFailure) {
                     "This phone could not read its QR enrollment request from the backend. The owner’s scanning phone is not the problem. Refresh the QR and try again; if it continues, deploy the matching QR enrollment functions and database migration."
                 } else if (message.contains("expired", ignoreCase = true) || message.contains("used", ignoreCase = true)) {
