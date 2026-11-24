@@ -1539,13 +1539,17 @@ class SupabaseRestClient(context: Context) {
         trialEndsAtIso: String? = null,
         note: String? = null
     ): JSONObject {
-        val payload = JSONObject().put("p_shop_id", shopId)
-        if (priceKsh != null) payload.put("p_price_ksh", priceKsh)
-        if (endsAtIso != null) payload.put("p_ends_at", endsAtIso)
-        if (status != null) payload.put("p_status", status)
-        if (planDays != null) payload.put("p_plan_days", planDays)
-        if (trialEndsAtIso != null) payload.put("p_trial_ends_at", trialEndsAtIso)
-        if (note != null) payload.put("p_note", note)
+        // PostgREST resolves overloaded RPCs from the named keys supplied in
+        // the JSON body. Send every declared parameter, including explicit
+        // nulls, so the seven-parameter backend signature is unambiguous.
+        val payload = JSONObject()
+            .put("p_shop_id", shopId)
+            .putNullable("p_price_ksh", priceKsh)
+            .putNullable("p_ends_at", endsAtIso)
+            .putNullable("p_status", status)
+            .putNullable("p_plan_days", planDays)
+            .putNullable("p_trial_ends_at", trialEndsAtIso)
+            .putNullable("p_note", note)
         return rpcObject("admin_update_shop_subscription", payload)
     }
 
