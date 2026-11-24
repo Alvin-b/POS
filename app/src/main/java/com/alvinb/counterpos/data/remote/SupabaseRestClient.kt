@@ -23,6 +23,7 @@ import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.UUID
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
@@ -309,8 +310,19 @@ class SupabaseRestClient(context: Context) {
         )
     }
 
-    suspend fun createAccessPass(shopId: String, role: String): JSONObject =
-        parseObject(request("/functions/v1/create-access-pass", "POST", JSONObject().put("shop_id", shopId).put("role", role).toString(), true))
+    suspend fun createAccessPass(shopId: String, role: String, station: String? = null): JSONObject =
+        parseObject(
+            request(
+                "/functions/v1/create-access-pass",
+                "POST",
+                JSONObject()
+                    .put("shop_id", shopId)
+                    .put("role", role)
+                    .putNullable("station", station?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() })
+                    .toString(),
+                true
+            )
+        )
 
     suspend fun createAccessChallenge(): JSONObject = parseObject(withNetworkRetry {
         request(

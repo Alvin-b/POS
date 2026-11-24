@@ -443,7 +443,11 @@ class CounterPosRepository(
         if (isButchery) {
             ensureButcheryEnabledForShop(shop, stationName)
         }
-        val response = remote.createAccessPass(shop.shopId, "cashier")
+        val response = remote.createAccessPass(
+            shopId = shop.shopId,
+            role = "cashier",
+            station = if (isButchery) "butchery" else "waiter"
+        )
         if (isButchery) {
             val rawCode = response.optString("passkey").trim()
             if (rawCode.isNotBlank()) {

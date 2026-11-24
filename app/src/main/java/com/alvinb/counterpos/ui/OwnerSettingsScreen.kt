@@ -181,12 +181,20 @@ fun OwnerSettingsScreen(
                         IconButton(onClick = onClose) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                         }
-                        Text(
-                            text = "Settings",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.weight(1f)
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Settings",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = businessName.ifBlank { "Business workspace" },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                         Surface(
                             shape = RoundedCornerShape(999.dp),
                             color = if (ownerCanEdit) {
@@ -235,6 +243,42 @@ fun OwnerSettingsScreen(
                 }
                 if (!state.notice.isNullOrBlank()) {
                     SettingsMessage(message = state.notice.orEmpty(), isError = false)
+                }
+
+                SettingsCard {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        SettingsIconBadge(Icons.Default.Storefront)
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = businessName.ifBlank { "Business workspace" },
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "${businessType.replace('_', ' ').replaceFirstChar { it.uppercase() }} · ${role.replace('_', ' ').replaceFirstChar { it.uppercase() }}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                text = "ACTIVE",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                            )
+                        }
+                    }
                 }
 
                 // 1. Business Profile (compact inline row)

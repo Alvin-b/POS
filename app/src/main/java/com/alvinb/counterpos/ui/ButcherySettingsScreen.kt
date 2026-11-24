@@ -165,6 +165,13 @@ fun ButcherySettingsScreen(
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
                     )
+                    Text(
+                        text = businessName.ifBlank { "Butchery workspace" },
+                        color = Color.White.copy(alpha = 0.78f),
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         }
@@ -177,6 +184,39 @@ fun ButcherySettingsScreen(
             contentPadding = PaddingValues(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = ButcheryPalette.EmeraldHeader),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Text(
+                            text = "Butchery workspace",
+                            color = Color.White.copy(alpha = 0.82f),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = nameDraft.ifBlank { "Main Butchery" },
+                            color = Color.White,
+                            fontSize = 21.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = if (enabledDraft) "Ready for pricing, stock and phone enrollment" else "Module is disabled",
+                            color = Color.White.copy(alpha = 0.82f),
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+
             // Core Enrollment & Package Controls
             item {
                 Card(

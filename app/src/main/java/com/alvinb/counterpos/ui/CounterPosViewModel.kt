@@ -484,20 +484,25 @@ class CounterPosViewModel(
             while (isActive) {
                 delay(5_000)
                 val sess = repository.session.value
-                if (sess.isAuthenticated && sess.activeBusiness != null && !sess.isPlatformAdmin && _uiState.value.isOnline) {
+                if (sess.isAuthenticated && !sess.isPlatformAdmin && _uiState.value.isOnline) {
                     runCatching {
-                        val wasEntitled = _uiState.value.isSubscriptionEntitled
-                        val refreshed = repository.refreshActiveBusinessSubscription()
-                        refreshSubscriptionEntitlement(refreshed, online = _uiState.value.isOnline)
-                        if (!wasEntitled && _uiState.value.isSubscriptionEntitled) {
-                            subscriptionPollingJob?.cancel()
-                            _uiState.update {
-                                it.copy(
-                                    isSubscriptionModalOpen = false,
-                                    isPollingStkPayment = false,
-                                    isInitiatingStkPush = false,
-                                    subscriptionPaymentError = null
-                                )
+                        if (sess.activeBusiness == null) {
+                            // A locked business is removed from activeBusiness and therefore no
+                            // longer has a realtime channel. Poll the account until the admin
+                            // reopens it, then the normal routing opens it on this phone.
+                            repository.refreshAccount()
+                        } else {
+                            val wasEntitled = _uiState.value.isSubscriptionEntitled
+                            val refreshed = repository.refreshActiveBusinessSubscription()
+                            refreshSubscriptionEntitlement(refreshed, online = _uiState.value.isOnline)
+                            if (!wasEntitled && _uiState.value.isSubscriptionEntitled) {
+                                subscriptionPollingJob?.cancel()
+                                _uiState.update {
+                                    it.copy(
+                                        isSubscriptionModalOpen = false,
+                                        notice = "Business access restored."
+                                    )
+                                }
                             }
                         }
                     }
