@@ -1544,10 +1544,10 @@ class SupabaseRestClient(context: Context) {
         // nulls, so the seven-parameter backend signature is unambiguous.
         val payload = JSONObject()
             .put("p_shop_id", shopId)
-            .putNullable("p_price_ksh", priceKsh)
+            .put("p_price_ksh", priceKsh ?: JSONObject.NULL)
             .putNullable("p_ends_at", endsAtIso)
             .putNullable("p_status", status)
-            .putNullable("p_plan_days", planDays)
+            .put("p_plan_days", planDays ?: JSONObject.NULL)
             .putNullable("p_trial_ends_at", trialEndsAtIso)
             .putNullable("p_note", note)
         return rpcObject("admin_update_shop_subscription", payload)

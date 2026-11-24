@@ -147,6 +147,8 @@ data class CounterPosUiState(
     val loginQrPayload: String? = null,
     val loginQrExpiresAtMillis: Long? = null,
     val isQrPolling: Boolean = false,
+    val qrError: String? = null,
+    val pendingQrStation: String = "waiter",
     val isAuthenticating: Boolean = false,
     val employeeMembers: List<JSONObject> = emptyList(),
     val isSavingBusinessName: Boolean = false,
@@ -644,7 +646,7 @@ class CounterPosViewModel(
         loginQrJob?.cancel()
         loginQrJob = viewModelScope.launch {
             _uiState.update {
-                it.copy(loginQrPayload = null, isQrPolling = false, startupError = null, notice = "Connecting to secure QR sign-in…")
+                it.copy(loginQrPayload = null, isQrPolling = false, qrError = null, startupError = null, notice = "Connecting to secure QR sign-in…")
             }
             try {
                 val challenge = repository.createAccessChallenge()
@@ -654,6 +656,7 @@ class CounterPosViewModel(
                         loginQrExpiresAtMillis = challenge.expiresAtMillis,
                         isQrPolling = true,
                         startupError = null,
+                        qrError = null,
                         notice = "QR ready. Ask an authorized administrator to scan it; this phone will sign in automatically."
                     )
                 }
@@ -669,9 +672,15 @@ class CounterPosViewModel(
                         "The QR sign-in service rejected this request. Check the deployed enrollment functions, then refresh QR."
                     else -> "QR sign-in is unavailable right now. Tap Refresh QR to try again."
                 }
-                _uiState.update { it.copy(isQrPolling = false, startupError = friendly, notice = null) }
+                _uiState.update { it.copy(isQrPolling = false, qrError = friendly, startupError = null, notice = null) }
             }
         }
+    }
+
+    fun selectPendingQrStation(station: String) {
+        val normalized = station.trim().lowercase()
+        if (normalized !in setOf("waiter", "butchery")) return
+        _uiState.update { it.copy(pendingQrStation = normalized, qrError = null) }
     }
 
     private suspend fun pollAccessChallengeUntilApproved(token: String, missingQrRetries: Int = 0) {
@@ -927,7 +936,7 @@ class CounterPosViewModel(
         _uiState.update { it.copy(loginQrPayload = null, loginQrExpiresAtMillis = null, isQrPolling = false, adminEnrollmentCredential = null, startupError = null, notice = null) }
     }
 
-    fun clearStartupError() = _uiState.update { it.copy(startupError = null) }
+    fun clearStartupError() = _uiState.update { it.copy(startupError = null, qrError = null) }
 
     fun openTeamPanel() = _uiState.update { it.copy(isTeamPanelOpen = true, isAccessLocked = false, actionError = null) }
 
