@@ -136,9 +136,12 @@ fun CounterPosApp(
             )
             !session.isAuthenticated -> AuthScreen(
                 error = state.startupError,
+                qrError = state.qrError,
                 notice = state.notice,
                 isAuthenticating = state.isAuthenticating || state.isCreatingBusiness,
                 isLoadingQr = state.loginQrPayload == null && state.isQrPolling,
+                selectedQrStation = state.pendingQrStation,
+                onSelectQrStation = viewModel::selectPendingQrStation,
                 onEmailSignIn = viewModel::signIn,
                 onCreateAccount = viewModel::signUp,
                 onRegisterBusiness = { email, password, name, type, size, mode, count, phone ->
@@ -221,11 +224,14 @@ private fun LoadingScreen() {
 }
 
 @Composable
-private fun AuthScreen(
+internal fun AuthScreen(
     error: String?,
+    qrError: String? = null,
     notice: String?,
     isAuthenticating: Boolean,
     isLoadingQr: Boolean = false,
+    selectedQrStation: String = "waiter",
+    onSelectQrStation: (String) -> Unit = {},
     onEmailSignIn: (String, String) -> Unit,
     onCreateAccount: (String, String) -> Unit,
     onRegisterBusiness: (String, String, String, String, String, String, Int, String) -> Unit,
@@ -267,7 +273,7 @@ private fun AuthScreen(
         businessName.trim().isNotBlank() && businessName.length <= 120 && ownerPhoneValid &&
         (!isClub || parsedCounterCount in 1..50) && !isAuthenticating
 
-    val visibleAuthError = error?.takeUnless { it.contains("QR", ignoreCase = true) }
+    val visibleAuthError = error?.takeIf(String::isNotBlank)
 
     fun pasteFromClipboard() {
         val clipText = clipboardManager.getText()?.text
@@ -842,15 +848,51 @@ private fun AuthScreen(
                         Text("Hide QR / Passkey", fontSize = 12.sp)
                     }
                 }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val isButcheryQr = selectedQrStation.equals("butchery", ignoreCase = true)
+                    FilterChip(
+                        selected = !isButcheryQr,
+                        onClick = { onSelectQrStation("waiter") },
+                        label = { Text("Waiter / POS", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("qr_station_waiter")
+                    )
+                    FilterChip(
+                        selected = isButcheryQr,
+                        onClick = { onSelectQrStation("butchery") },
+                        label = { Text("Butchery Station", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("qr_station_butchery")
+                    )
+                }
                 Spacer(Modifier.height(10.dp))
-                val qrExpired = error?.let { message ->
+                val effectiveQrMessage = qrError?.takeIf(String::isNotBlank)
+                    ?: error?.takeIf { it.contains("QR", ignoreCase = true) }
+                val qrExpired = effectiveQrMessage?.let { message ->
                     message.contains("expired", ignoreCase = true) ||
-                        message.contains("session expired", ignoreCase = true) ||
                         message.contains("already used", ignoreCase = true) ||
-                        message.contains("used", ignoreCase = true)
+                        message.contains("already_used", ignoreCase = true) ||
+                        message.contains("qr_used", ignoreCase = true) ||
+                        message.contains("consumed", ignoreCase = true) ||
+                        message.contains("no longer active", ignoreCase = true)
                 } == true
-                if (qrPayload != null && !qrExpired) {
-                    LoginQrCard(payload = qrPayload, onRefresh = { onClearError(); onRefreshQr() })
+                val stationDisplayLabel = if (selectedQrStation.equals("butchery", ignoreCase = true)) {
+                    "Butchery Station"
+                } else {
+                    "Waiter / Main POS"
+                }
+                if (qrPayload != null) {
+                    LoginQrCard(
+                        payload = qrPayload,
+                        onRefresh = { onClearError(); onRefreshQr() },
+                        stationLabel = stationDisplayLabel,
+                        statusMessage = notice?.takeIf { it.contains("Waiting", ignoreCase = true) }
+                    )
                 } else if (isLoadingQr) {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -874,24 +916,51 @@ private fun AuthScreen(
                     }
                 } else {
                     Card(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("qr_fallback_card"),
                         shape = RoundedCornerShape(20.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (!effectiveQrMessage.isNullOrBlank()) {
+                                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            }
+                        ),
                         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                     ) {
                         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(if (qrExpired) "QR code expired" else "QR sign-in code", fontWeight = FontWeight.SemiBold)
                             Text(
-                                if (qrExpired) "The previous QR code has expired. Tap to generate a fresh QR code."
-                                else "Tap to load your device sign-in QR code.",
+                                text = when {
+                                    qrExpired -> "QR code expired"
+                                    !effectiveQrMessage.isNullOrBlank() -> "QR sign-in paused"
+                                    else -> "QR sign-in code"
+                                },
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (!effectiveQrMessage.isNullOrBlank()) {
+                                    MaterialTheme.colorScheme.onErrorContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                }
+                            )
+                            Text(
+                                text = effectiveQrMessage?.takeIf(String::isNotBlank)
+                                    ?: "Tap to load your device sign-in QR code.",
                                 fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = if (!effectiveQrMessage.isNullOrBlank()) {
+                                    MaterialTheme.colorScheme.onErrorContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                }
                             )
                             OutlinedButton(
                                 onClick = { onClearError(); onRefreshQr() },
-                                modifier = Modifier.fillMaxWidth().testTag("load_qr_code_button")
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("load_qr_code_button")
                             ) {
-                                Text(if (qrExpired) "Refresh QR" else "Load QR code")
+                                Text(if (qrExpired || !effectiveQrMessage.isNullOrBlank()) "Refresh QR" else "Load QR code")
                             }
                         }
                     }

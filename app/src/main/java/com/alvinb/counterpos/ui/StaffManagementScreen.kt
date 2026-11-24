@@ -649,6 +649,24 @@ private fun EnrollWaitersTabContent(
                 )
             }
 
+            if (!state.actionError.isNullOrBlank()) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("staff_enroll_error_banner")
+                ) {
+                    Text(
+                        text = state.actionError,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+            }
+
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
             Text(
@@ -719,6 +737,43 @@ private fun EnrollWaitersTabContent(
                             letterSpacing = 1.5.sp,
                             color = if (isButchery) ButcheryPalette.EmeraldHeader else MaterialTheme.colorScheme.onPrimaryContainer,
                             modifier = Modifier.testTag(if (isButchery) "butchery_passkey_value" else "waiter_passkey_value")
+                        )
+                        val qrPayload = remember(passkey, isButchery) {
+                            when {
+                                passkey.startsWith("CPB1.", ignoreCase = true) ||
+                                    passkey.startsWith("CPX1.", ignoreCase = true) -> passkey
+                                isButchery -> "CPB1.$passkey"
+                                else -> "CPX1.$passkey"
+                            }
+                        }
+                        val passkeyQrBitmap = remember(qrPayload) { createLoginQr(qrPayload) }
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = Color.White,
+                            shadowElevation = 2.dp,
+                            modifier = Modifier
+                                .size(196.dp)
+                                .align(Alignment.CenterHorizontally)
+                                .testTag(if (isButchery) "butchery_passkey_qr" else "waiter_passkey_qr")
+                        ) {
+                            Image(
+                                bitmap = passkeyQrBitmap.asImageBitmap(),
+                                contentDescription = if (isButchery) "Butchery enrollment QR code" else "Waiter enrollment QR code",
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(10.dp)
+                            )
+                        }
+                        Text(
+                            text = if (isButchery) {
+                                "On the butchery phone, tap Scan QR or enter this passkey."
+                            } else {
+                                "On the employee phone, tap Scan QR or enter this passkey."
+                            },
+                            fontSize = 11.sp,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.fillMaxWidth()
                         )
                         Row(
                             modifier = Modifier.fillMaxWidth(),

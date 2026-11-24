@@ -74,28 +74,33 @@ fun ButcheryPaymentMethodsEditor(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Row(
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Icon(
-                imageVector = Icons.Default.Payments,
-                contentDescription = null,
-                tint = ButcheryPalette.EmeraldHeader,
-                modifier = Modifier.size(18.dp)
-            )
-            Column {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Payments,
+                    contentDescription = null,
+                    tint = ButcheryPalette.EmeraldHeader,
+                    modifier = Modifier.size(16.dp)
+                )
                 Text(
-                    text = "Custom Payment Methods",
+                    text = "Payment Methods",
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurface
                 )
-                Text(
-                    text = "Displayed as direct one-tap checkout buttons (no STK push).",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
+            Text(
+                text = "${methods.size} active",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Medium
+            )
         }
 
         WrapFlowLayout(
@@ -221,25 +226,31 @@ fun ButcheryMeatTypesEditor(
 
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
             Text(
                 text = "Meats Sold",
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurface
             )
-            Text(
-                text = if (singleSelected) {
-                    "Selling ${selectedMeats.first()} only — other meats are hidden."
-                } else {
-                    "${selectedMeats.size} meats active (choose 1 or more)."
-                },
-                fontSize = 11.sp,
-                color = if (singleSelected) ButcheryPalette.EmeraldHeader else MaterialTheme.colorScheme.onSurfaceVariant,
-                fontWeight = if (singleSelected) FontWeight.SemiBold else FontWeight.Normal
-            )
+            Surface(
+                shape = RoundedCornerShape(999.dp),
+                color = if (singleSelected) ButcheryPalette.EmeraldHeader.copy(alpha = 0.12f) else Color(0xFFF1F5F9)
+            ) {
+                Text(
+                    text = if (singleSelected) "${selectedMeats.first()} only" else "${selectedMeats.size} active",
+                    fontSize = 11.sp,
+                    color = if (singleSelected) ButcheryPalette.EmeraldHeader else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                )
+            }
         }
 
         WrapFlowLayout(

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,6 +20,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -26,10 +28,17 @@ import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 
 @Composable
-fun LoginQrCard(payload: String, onRefresh: () -> Unit = {}) {
+fun LoginQrCard(
+    payload: String,
+    onRefresh: () -> Unit = {},
+    stationLabel: String? = null,
+    statusMessage: String? = null
+) {
     val bitmap = remember(payload) { createLoginQr(payload) }
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("login_qr_card"),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -40,10 +49,11 @@ fun LoginQrCard(payload: String, onRefresh: () -> Unit = {}) {
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
-                "Scan to Sign In",
+                text = if (!stationLabel.isNullOrBlank()) "Scan to Sign In · $stationLabel" else "Scan to Sign In",
                 fontSize = 17.sp,
                 fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                textAlign = TextAlign.Center
             )
             androidx.compose.material3.Surface(
                 shape = RoundedCornerShape(16.dp),
@@ -58,12 +68,20 @@ fun LoginQrCard(payload: String, onRefresh: () -> Unit = {}) {
                 )
             }
             Text(
-                "Ask the business owner or platform administrator to scan this QR code.",
+                text = statusMessage?.takeIf(String::isNotBlank)
+                    ?: "Ask the business owner or platform administrator to scan this QR code.",
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
-            TextButton(onClick = onRefresh) { Text("Refresh QR") }
+            TextButton(
+                onClick = onRefresh,
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .testTag("refresh_qr_button")
+            ) {
+                Text("Refresh QR")
+            }
         }
     }
 }

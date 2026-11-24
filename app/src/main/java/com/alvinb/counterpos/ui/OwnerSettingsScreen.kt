@@ -1,55 +1,54 @@
 package com.alvinb.counterpos.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Business
-import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CreditCard
-import androidx.compose.ui.graphics.Color
-import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Scale
-import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Store
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -68,12 +67,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -81,12 +79,10 @@ import com.alvinb.counterpos.data.butchery.ButcheryPricing
 import com.alvinb.counterpos.data.local.entity.ButcheryConfigEntity
 import com.alvinb.counterpos.data.local.entity.ButcheryCutEntity
 import com.alvinb.counterpos.data.remote.ServiceCounter
-import org.json.JSONObject
 import java.util.Locale
 
 /**
- * Full-screen owner controls. This screen deliberately receives callbacks for all mutations so its
- * parent remains responsible for navigation, scanner presentation, and ViewModel wiring.
+ * Clean, well-structured Owner Settings Hub.
  */
 @Composable
 fun OwnerSettingsScreen(
@@ -118,8 +114,6 @@ fun OwnerSettingsScreen(
 ) {
     BackHandler(onBack = onClose)
     val ownerCanEdit = role.equals("owner", ignoreCase = true)
-    val isLiquorStore = businessType.equals("counter_seller", ignoreCase = true) ||
-        businessType.equals("liquor_store", ignoreCase = true)
     var businessNameDraft by remember(businessName) { mutableStateOf(businessName) }
     var butcheryEnabledDraft by remember(butcheryConfig?.enabled) { mutableStateOf(butcheryConfig?.enabled ?: false) }
     var butcheryNameDraft by remember(butcheryConfig?.butcheryName, businessName) {
@@ -137,6 +131,8 @@ fun OwnerSettingsScreen(
     var butcheryPaymentMethodsDraft by remember(butcheryConfig?.paymentMethodsJson) {
         mutableStateOf(ButcheryPricing.parsePaymentMethods(butcheryConfig?.paymentMethodsJson))
     }
+    var showButcheryPaymentsEditor by remember { mutableStateOf(false) }
+
     val butcheryIsBeefOnly = butcheryCategoriesDraft.size == 1 &&
         butcheryCategoriesDraft.first().equals("Beef", ignoreCase = true)
     val primaryMeatLabel = if (butcheryCategoriesDraft.size == 1) {
@@ -144,13 +140,12 @@ fun OwnerSettingsScreen(
     } else {
         "Beef"
     }
+
     var newCounterName by remember { mutableStateOf("") }
     var editingCounterId by remember { mutableStateOf<String?>(null) }
     var editingCounterName by remember { mutableStateOf("") }
     var counterPendingDeletion by remember { mutableStateOf<ServiceCounter?>(null) }
 
-    // The roster is intentionally derived only from actual member rows. There are no sample names,
-    // placeholder emails, or local fallback accounts in this screen.
     val waiters = remember(state.employeeMembers) {
         state.employeeMembers
             .asSequence()
@@ -167,102 +162,222 @@ fun OwnerSettingsScreen(
         if (ownerCanEdit) onLoadMembers()
     }
 
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Scaffold(
-            contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            topBar = {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close settings")
-                    }
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Settings", style = MaterialTheme.typography.titleLarge)
+    Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 1.dp
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .statusBarsPadding()
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = onClose) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
                         Text(
-                            if (ownerCanEdit) "Owner controls" else "View-only settings",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall
+                            text = "Settings",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
                         )
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = if (ownerCanEdit) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            }
+                        ) {
+                            Text(
+                                text = if (ownerCanEdit) "Owner" else "View Only",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (ownerCanEdit) {
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
                     }
-                    Icon(Icons.Default.Settings, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 }
             }
-        ) { paddingValues ->
+        }
+    ) { paddingValues ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues),
+            contentAlignment = Alignment.TopCenter
+        ) {
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
+                    .widthIn(max = 600.dp)
                     .verticalScroll(rememberScrollState())
                     .imePadding()
                     .navigationBarsPadding()
-                    .padding(paddingValues)
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 if (!state.actionError.isNullOrBlank()) {
-                    SettingsMessage(
-                        message = state.actionError.orEmpty(),
-                        isError = true
-                    )
+                    SettingsMessage(message = state.actionError.orEmpty(), isError = true)
                 }
                 if (!state.notice.isNullOrBlank()) {
-                    SettingsMessage(
-                        message = state.notice.orEmpty(),
-                        isError = false
-                    )
+                    SettingsMessage(message = state.notice.orEmpty(), isError = false)
                 }
 
-                SettingsSection(
-                    title = "Business profile",
-                    description = "Change the business name.",
-                    icon = Icons.Default.Business
-                ) {
-                    OutlinedTextField(
-                        value = businessNameDraft,
-                        onValueChange = { businessNameDraft = it.take(80) },
-                        label = { Text("Business name") },
-                        singleLine = true,
-                        enabled = ownerCanEdit && !state.isSavingBusinessName,
-                        modifier = Modifier.fillMaxWidth()
+                // 1. Business Profile (compact inline row)
+                SettingsCard {
+                    SettingsHeaderRow(
+                        icon = Icons.Default.Business,
+                        title = "Business"
                     )
-                    Button(
-                        onClick = { onBusinessNameSave(businessNameDraft.trim()) },
-                        enabled = ownerCanEdit && businessNameDraft.trim().isNotBlank() &&
-                            businessNameDraft.trim() != businessName.trim() && !state.isSavingBusinessName,
-                        modifier = Modifier.fillMaxWidth()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (state.isSavingBusinessName) {
-                            CircularProgressIndicator(modifier = Modifier.size(17.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.width(8.dp))
+                        OutlinedTextField(
+                            value = businessNameDraft,
+                            onValueChange = { businessNameDraft = it.take(80) },
+                            label = { Text("Business name") },
+                            singleLine = true,
+                            enabled = ownerCanEdit && !state.isSavingBusinessName,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
+                        )
+                        Button(
+                            onClick = { onBusinessNameSave(businessNameDraft.trim()) },
+                            enabled = ownerCanEdit && businessNameDraft.trim().isNotBlank() &&
+                                businessNameDraft.trim() != businessName.trim() && !state.isSavingBusinessName,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.height(52.dp)
+                        ) {
+                            if (state.isSavingBusinessName) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            } else {
+                                Text("Save", fontWeight = FontWeight.Bold)
+                            }
                         }
-                        Text("Save business name")
                     }
-                    if (!ownerCanEdit) ReadOnlyHint()
                 }
 
-                SettingsSection(
-                    title = "Butchery Module",
-                    description = "Enable Butchery POS with custom payment methods and Price per KG calculations.",
-                    icon = Icons.Default.Scale
-                ) {
+                // 2. Team & Subscription (clean grouped action rows)
+                SettingsCard {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
+                        SettingsIconBadge(Icons.Default.Badge)
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = if (butcheryEnabledDraft) "Butchery Module ON" else "Enable Butchery Module",
-                                fontWeight = FontWeight.SemiBold,
-                                style = MaterialTheme.typography.titleSmall
+                                text = "Team & Waiters",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "Separate meat counter POS, weight/price calculator, payment methods & kg reports.",
-                                fontSize = 12.sp,
+                                text = if (waiters.isEmpty()) "No waiters yet" else "${waiters.size} active waiter${if (waiters.size == 1) "" else "s"}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (state.isLoadingEmployeeMembers) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        } else {
+                            IconButton(
+                                onClick = onLoadMembers,
+                                enabled = role in setOf("owner", "manager")
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = "Refresh waiters")
+                            }
+                        }
+                        FilledTonalButton(
+                            onClick = onOpenStaffManagement,
+                            enabled = role in setOf("owner", "manager"),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                            modifier = Modifier.height(40.dp)
+                        ) {
+                            Text("Manage", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+
+                    val entitlement = state.subscriptionEntitlement
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        SettingsIconBadge(Icons.Default.CreditCard)
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = "Subscription",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (entitlement != null) {
+                                    "${entitlement.statusLabel} · Until ${entitlement.expiryFormatted}"
+                                } else {
+                                    "M-Pesa billing"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (entitlement?.isEntitled == false) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Button(
+                            onClick = onOpenSubscription,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00A349)),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                            modifier = Modifier.height(40.dp)
+                        ) {
+                            Text("Renew", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
+                }
+
+                // 3. Butchery Module (clean, structured, concise)
+                SettingsCard {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        SettingsIconBadge(
+                            icon = Icons.Default.Scale,
+                            containerColor = Color(0xFF1F8E4E).copy(alpha = 0.14f),
+                            iconTint = Color(0xFF1F8E4E)
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Butchery Module",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (butcheryEnabledDraft) "Enabled" else "Turn on to manage meat counter",
+                                style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -272,7 +387,14 @@ fun OwnerSettingsScreen(
                                 butcheryEnabledDraft = enabled
                                 if (ownerCanEdit) {
                                     val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
-                                    onSaveButcheryConfig(enabled, butcheryNameDraft.trim(), butcheryIsBeefOnly, price, butcheryPaymentMethodsDraft, butcheryCategoriesDraft)
+                                    onSaveButcheryConfig(
+                                        enabled,
+                                        butcheryNameDraft.trim(),
+                                        butcheryIsBeefOnly,
+                                        price,
+                                        butcheryPaymentMethodsDraft,
+                                        butcheryCategoriesDraft
+                                    )
                                 }
                             },
                             enabled = ownerCanEdit,
@@ -280,340 +402,300 @@ fun OwnerSettingsScreen(
                         )
                     }
 
-                    if (butcheryEnabledDraft) {
-                        OutlinedTextField(
-                            value = butcheryNameDraft,
-                            onValueChange = { butcheryNameDraft = it.take(80) },
-                            label = { Text("Enrolled Butchery Name") },
-                            placeholder = { Text("e.g. Prime Cuts Butchery") },
-                            singleLine = true,
-                            enabled = ownerCanEdit,
-                            modifier = Modifier.fillMaxWidth().testTag("owner_settings_butchery_name_input")
-                        )
-
-                        ButcheryMeatTypesEditor(
-                            selectedMeats = butcheryCategoriesDraft,
-                            enabled = ownerCanEdit,
-                            availableMeats = ButcheryPricing.availableMeatChoices(butcheryCuts, butcheryCategoriesDraft),
-                            onMeatsChange = { nextMeats ->
-                                butcheryCategoriesDraft = nextMeats
-                                if (ownerCanEdit && butcheryNameDraft.trim().isNotEmpty()) {
-                                    val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
-                                    val nextBeefOnly = nextMeats.size == 1 &&
-                                        nextMeats.first().equals("Beef", ignoreCase = true)
-                                    onSaveButcheryConfig(true, butcheryNameDraft.trim(), nextBeefOnly, price, butcheryPaymentMethodsDraft, nextMeats)
-                                }
-                            }
-                        )
-
-                        val chosenButcheryProducts = remember(butcheryCuts, butcheryCategoriesDraft, butcheryBeefPriceDraft, butcheryConfig?.shopId) {
-                            val sourceCuts = butcheryCuts.ifEmpty {
-                                ButcheryPricing.defaultCuts(
-                                    shopId = butcheryConfig?.shopId ?: "preview",
-                                    beefPricePerKgKsh = butcheryBeefPriceDraft.toIntOrNull() ?: 680
-                                )
-                            }
-                            sourceCuts.filter { cut ->
-                                cut.active && butcheryCategoriesDraft.any { it.equals(cut.name, ignoreCase = true) }
-                            }
-                        }
-
-                        if (chosenButcheryProducts.isNotEmpty()) {
-                            Column(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Text(
-                                    text = if (chosenButcheryProducts.size == 1) {
-                                        "Displayed Product"
-                                    } else {
-                                        "Displayed Products (${chosenButcheryProducts.size})"
-                                    },
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                chosenButcheryProducts.forEach { product ->
-                                    Surface(
-                                        shape = RoundedCornerShape(12.dp),
-                                        color = MaterialTheme.colorScheme.surface,
-                                        border = BorderStroke(1.dp, ButcheryPalette.KeypadBorder),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .testTag("owner_butchery_chosen_product_${product.id}")
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                        ) {
-                                            Surface(
-                                                shape = RoundedCornerShape(10.dp),
-                                                color = Color.White,
-                                                border = BorderStroke(1.dp, ButcheryPalette.KeypadBorder),
-                                                modifier = Modifier.size(40.dp)
-                                            ) {
-                                                Image(
-                                                    painter = painterResource(id = butcheryDrawableRes(product.iconKey)),
-                                                    contentDescription = product.name,
-                                                    contentScale = ContentScale.Crop,
-                                                    modifier = Modifier
-                                                        .fillMaxSize()
-                                                        .clip(RoundedCornerShape(10.dp))
-                                                )
-                                            }
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(
-                                                    text = product.name,
-                                                    fontWeight = FontWeight.Bold,
-                                                    fontSize = 13.sp,
-                                                    color = MaterialTheme.colorScheme.onSurface
-                                                )
-                                                Text(
-                                                    text = buildString {
-                                                        append("Sell KES ${product.pricePerKgKsh}/kg")
-                                                        if (product.buyingPricePerKgKsh > 0) {
-                                                            append(" · Buy KES ${product.buyingPricePerKgKsh}/kg")
-                                                        }
-                                                    },
-                                                    fontSize = 11.sp,
-                                                    color = ButcheryPalette.EmeraldHeader,
-                                                    fontWeight = FontWeight.Medium
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        OutlinedTextField(
-                            value = butcheryBeefPriceDraft,
-                            onValueChange = { butcheryBeefPriceDraft = it.filter(Char::isDigit).take(5) },
-                            label = { Text("Default $primaryMeatLabel Price per kg (KES)") },
-                            supportingText = {
-                                Text("Digital-scale customers buying KES 100 / 150 / 200 compute exact kg from this rate.")
-                            },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            enabled = ownerCanEdit,
-                            modifier = Modifier.fillMaxWidth().testTag("owner_settings_beef_price_input")
-                        )
-
-                        ButcheryPaymentMethodsEditor(
-                            methods = butcheryPaymentMethodsDraft,
-                            enabled = ownerCanEdit,
-                            onMethodsChange = { butcheryPaymentMethodsDraft = it }
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    AnimatedVisibility(visible = butcheryEnabledDraft) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Button(
-                                onClick = {
-                                    val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
-                                    onSaveButcheryConfig(true, butcheryNameDraft.trim(), butcheryIsBeefOnly, price, butcheryPaymentMethodsDraft, butcheryCategoriesDraft)
-                                },
-                                enabled = ownerCanEdit && butcheryNameDraft.trim().isNotEmpty(),
-                                modifier = Modifier.weight(1f).testTag("owner_settings_save_butchery_button")
-                            ) {
-                                Text("Save Butchery", fontWeight = FontWeight.Bold)
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
-                                    if (ownerCanEdit) {
-                                        onSaveButcheryConfig(true, butcheryNameDraft.trim(), butcheryIsBeefOnly, price, butcheryPaymentMethodsDraft, butcheryCategoriesDraft)
-                                    }
-                                    onOpenButcheryWorkspace(ButcheryTab.SETTINGS)
-                                },
-                                modifier = Modifier.weight(1f).testTag("owner_settings_butchery_cuts_button")
-                            ) {
-                                Text("Cuts & Prices")
-                            }
-                        }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
 
-                        Button(
-                            onClick = {
-                                val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
-                                if (ownerCanEdit) {
-                                    onSaveButcheryConfig(true, butcheryNameDraft.trim(), butcheryIsBeefOnly, price, butcheryPaymentMethodsDraft, butcheryCategoriesDraft)
-                                }
-                                onOpenButcheryWorkspace(ButcheryTab.SELL)
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1F8E4E)),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth().testTag("owner_settings_open_butchery_pos_button")
-                        ) {
-                            Icon(Icons.Default.Storefront, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Open Butchery POS", fontWeight = FontWeight.Bold)
-                        }
-
-                        if (ownerCanEdit) {
-                            OutlinedButton(
-                                onClick = {
-                                    val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
-                                    onSaveButcheryConfig(true, butcheryNameDraft.trim(), butcheryIsBeefOnly, price, butcheryPaymentMethodsDraft, butcheryCategoriesDraft)
-                                    onOpenButcheryEnrollment()
-                                },
+                            OutlinedTextField(
+                                value = butcheryNameDraft,
+                                onValueChange = { butcheryNameDraft = it.take(80) },
+                                label = { Text("Butchery name") },
+                                placeholder = { Text("e.g. Prime Cuts Butchery") },
+                                singleLine = true,
+                                enabled = ownerCanEdit,
                                 shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.fillMaxWidth().testTag("owner_settings_enroll_butchery_button")
-                            ) {
-                                Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text("Enroll Butchery Phone (Passkey / QR)", fontWeight = FontWeight.SemiBold)
-                            }
-                        }
-                    }
-                    if (!ownerCanEdit) ReadOnlyHint()
-                }
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("owner_settings_butchery_name_input")
+                            )
 
-                SettingsSection(
-                    title = "Subscription & M-Pesa billing",
-                    description = "Manage Daraja M-Pesa renewals and store entitlement.",
-                    icon = Icons.Default.CreditCard
-                ) {
-                    val entitlement = state.subscriptionEntitlement
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        if (entitlement != null) {
+                            OutlinedTextField(
+                                value = butcheryBeefPriceDraft,
+                                onValueChange = { butcheryBeefPriceDraft = it.filter(Char::isDigit).take(5) },
+                                label = { Text("$primaryMeatLabel price / kg (KES)") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                enabled = ownerCanEdit,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("owner_settings_beef_price_input")
+                            )
+
+                            ButcheryMeatTypesEditor(
+                                selectedMeats = butcheryCategoriesDraft,
+                                enabled = ownerCanEdit,
+                                availableMeats = ButcheryPricing.availableMeatChoices(butcheryCuts, butcheryCategoriesDraft),
+                                onMeatsChange = { nextMeats ->
+                                    butcheryCategoriesDraft = nextMeats
+                                    if (ownerCanEdit && butcheryNameDraft.trim().isNotEmpty()) {
+                                        val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                        val nextBeefOnly = nextMeats.size == 1 &&
+                                            nextMeats.first().equals("Beef", ignoreCase = true)
+                                        onSaveButcheryConfig(
+                                            true,
+                                            butcheryNameDraft.trim(),
+                                            nextBeefOnly,
+                                            price,
+                                            butcheryPaymentMethodsDraft,
+                                            nextMeats
+                                        )
+                                    }
+                                }
+                            )
+
+                            // Compact Payment Methods disclosure row
                             Surface(
+                                onClick = { showButcheryPaymentsEditor = !showButcheryPaymentsEditor },
                                 shape = RoundedCornerShape(12.dp),
-                                color = if (entitlement.isEntitled) {
-                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-                                } else {
-                                    MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
-                                },
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Column(
-                                    modifier = Modifier.padding(12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    Text(
-                                        text = entitlement.statusLabel,
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (entitlement.isEntitled) {
-                                            MaterialTheme.colorScheme.onPrimaryContainer
-                                        } else {
-                                            MaterialTheme.colorScheme.onErrorContainer
-                                        }
+                                    Icon(
+                                        imageVector = Icons.Default.Payments,
+                                        contentDescription = null,
+                                        tint = Color(0xFF1F8E4E),
+                                        modifier = Modifier.size(18.dp)
                                     )
-                                    Text(
-                                        text = "Valid until ${entitlement.expiryFormatted} · KSh ${entitlement.amountDueKsh} / ${entitlement.planDays} days",
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Payment Methods",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            text = butcheryPaymentMethodsDraft.joinToString(" · "),
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    Icon(
+                                        imageVector = if (showButcheryPaymentsEditor) {
+                                            Icons.Default.KeyboardArrowUp
+                                        } else {
+                                            Icons.Default.KeyboardArrowDown
+                                        },
+                                        contentDescription = if (showButcheryPaymentsEditor) "Collapse" else "Edit",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
-                        }
-                        Text(
-                            "One subscription covers all counters, staff, and devices in this shop.",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Button(
-                            onClick = onOpenSubscription,
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00A349)),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Default.CreditCard, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Manage / Renew Subscription", fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
 
-                SettingsSection(
-                    title = "Team & working hours",
-                    description = "Manage waiters, access, and schedules in one place.",
-                    icon = Icons.Default.Badge
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Text(
-                                if (waiters.isEmpty()) "No waiters added yet" else "${waiters.size} waiter${if (waiters.size == 1) "" else "s"}",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                "Passkeys, QR approvals, and duty hours",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                        if (state.isLoadingEmployeeMembers) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                        } else {
-                            IconButton(onClick = onLoadMembers, enabled = role in setOf("owner", "manager")) {
-                                Icon(Icons.Default.Refresh, contentDescription = "Refresh waiter count")
+                            AnimatedVisibility(visible = showButcheryPaymentsEditor) {
+                                ButcheryPaymentMethodsEditor(
+                                    methods = butcheryPaymentMethodsDraft,
+                                    enabled = ownerCanEdit,
+                                    onMethodsChange = { butcheryPaymentMethodsDraft = it }
+                                )
+                            }
+
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+
+                            // Clean 2x2 action buttons
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                        onSaveButcheryConfig(
+                                            true,
+                                            butcheryNameDraft.trim(),
+                                            butcheryIsBeefOnly,
+                                            price,
+                                            butcheryPaymentMethodsDraft,
+                                            butcheryCategoriesDraft
+                                        )
+                                    },
+                                    enabled = ownerCanEdit && butcheryNameDraft.trim().isNotEmpty(),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(46.dp)
+                                        .testTag("owner_settings_save_butchery_button")
+                                ) {
+                                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Save", fontWeight = FontWeight.Bold)
+                                }
+                                Button(
+                                    onClick = {
+                                        val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                        if (ownerCanEdit) {
+                                            onSaveButcheryConfig(
+                                                true,
+                                                butcheryNameDraft.trim(),
+                                                butcheryIsBeefOnly,
+                                                price,
+                                                butcheryPaymentMethodsDraft,
+                                                butcheryCategoriesDraft
+                                            )
+                                        }
+                                        onOpenButcheryWorkspace(ButcheryTab.SELL)
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1F8E4E)),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(46.dp)
+                                        .testTag("owner_settings_open_butchery_pos_button")
+                                ) {
+                                    Icon(Icons.Default.Storefront, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Open POS", fontWeight = FontWeight.Bold)
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                FilledTonalButton(
+                                    onClick = {
+                                        val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                        if (ownerCanEdit) {
+                                            onSaveButcheryConfig(
+                                                true,
+                                                butcheryNameDraft.trim(),
+                                                butcheryIsBeefOnly,
+                                                price,
+                                                butcheryPaymentMethodsDraft,
+                                                butcheryCategoriesDraft
+                                            )
+                                        }
+                                        onOpenButcheryWorkspace(ButcheryTab.SETTINGS)
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(46.dp)
+                                        .testTag("owner_settings_butchery_cuts_button")
+                                ) {
+                                    Text("Meats & Stock", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                }
+
+                                if (ownerCanEdit) {
+                                    FilledTonalButton(
+                                        onClick = {
+                                            val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                            onSaveButcheryConfig(
+                                                true,
+                                                butcheryNameDraft.trim(),
+                                                butcheryIsBeefOnly,
+                                                price,
+                                                butcheryPaymentMethodsDraft,
+                                                butcheryCategoriesDraft
+                                            )
+                                            onOpenButcheryEnrollment()
+                                        },
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(46.dp)
+                                            .testTag("owner_settings_enroll_butchery_button")
+                                    ) {
+                                        Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("Enroll Phone", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                    }
+                                }
                             }
                         }
                     }
-                    Button(
-                        onClick = onOpenStaffManagement,
-                        enabled = role in setOf("owner", "manager"),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                        ),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Manage team", fontWeight = FontWeight.SemiBold)
-                    }
-                    if (!ownerCanEdit) ReadOnlyHint()
                 }
 
-                SettingsSection(
-                    title = "Service counters",
-                    description = if (isLiquorStore) "Add, rename, or remove checkout counters." else "Add, rename, or remove service counters.",
-                    icon = Icons.Default.Tune
-                ) {
-                    if (isLiquorStore && registeredCounters.size <= 1) {
+                // 4. Service Counters (compact list + inline Add)
+                SettingsCard {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        SettingsIconBadge(Icons.Default.Tune)
                         Text(
-                            text = "Liquor Store default is 1 counter. Add more counters below whenever needed.",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = "Service Counters",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
                         )
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Text(
+                                text = "${registeredCounters.size}",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
+                            )
+                        }
                     }
+
                     if (registeredCounters.isEmpty()) {
                         Text(
-                            "No registered counters yet. Add your first counter below.",
+                            text = "No counters yet.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodySmall
                         )
                     } else {
-                        registeredCounters.forEach { counter ->
-                            CounterSettingsRow(
-                                counter = counter,
-                                ownerCanEdit = ownerCanEdit && !state.isManagingCounters,
-                                canDelete = registeredCounters.size > 1,
-                                editing = editingCounterId == counter.id,
-                                editingName = editingCounterName,
-                                onStartEditing = {
-                                    editingCounterId = counter.id
-                                    editingCounterName = counter.name
-                                },
-                                onEditingNameChange = { editingCounterName = it.take(60) },
-                                onRename = {
-                                    onCounterRename(counter.id, editingCounterName.trim())
-                                    editingCounterId = null
-                                },
-                                onRequestDelete = { counterPendingDeletion = counter }
-                            )
-                        }
-                        if (registeredCounters.size == 1) {
-                            Text(
-                                text = "At least 1 active service counter is required. Add another counter before removing this one.",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                registeredCounters.forEachIndexed { index, counter ->
+                                    CounterSettingsRow(
+                                        counter = counter,
+                                        ownerCanEdit = ownerCanEdit && !state.isManagingCounters,
+                                        canDelete = registeredCounters.size > 1,
+                                        editing = editingCounterId == counter.id,
+                                        editingName = editingCounterName,
+                                        onStartEditing = {
+                                            editingCounterId = counter.id
+                                            editingCounterName = counter.name
+                                        },
+                                        onEditingNameChange = { editingCounterName = it.take(60) },
+                                        onRename = {
+                                            onCounterRename(counter.id, editingCounterName.trim())
+                                            editingCounterId = null
+                                        },
+                                        onRequestDelete = { counterPendingDeletion = counter }
+                                    )
+                                    if (index < registeredCounters.lastIndex) {
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                    }
+                                }
+                            }
                         }
                     }
+
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -622,12 +704,13 @@ fun OwnerSettingsScreen(
                         OutlinedTextField(
                             value = newCounterName,
                             onValueChange = { newCounterName = it.take(60) },
-                            label = { Text("New counter name") },
+                            label = { Text("New counter") },
                             placeholder = {
                                 Text(if (registeredCounters.isEmpty()) "Main Counter" else "Counter ${registeredCounters.size + 1}")
                             },
                             singleLine = true,
                             enabled = ownerCanEdit && !state.isManagingCounters,
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("new_counter_name_input")
@@ -638,21 +721,23 @@ fun OwnerSettingsScreen(
                                 newCounterName = ""
                             },
                             enabled = ownerCanEdit && !state.isManagingCounters && newCounterName.trim().isNotBlank(),
-                            modifier = Modifier.testTag("add_counter_button")
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .height(52.dp)
+                                .testTag("add_counter_button")
                         ) {
                             if (state.isManagingCounters) {
                                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                             } else {
                                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(17.dp))
                                 Spacer(Modifier.width(4.dp))
-                                Text("Add")
+                                Text("Add", fontWeight = FontWeight.Bold)
                             }
                         }
                     }
-                    if (!ownerCanEdit) ReadOnlyHint()
                 }
 
-                Spacer(Modifier.size(6.dp))
+                Spacer(Modifier.height(12.dp))
             }
         }
     }
@@ -673,7 +758,7 @@ fun OwnerSettingsScreen(
             },
             text = {
                 Text(
-                    "This counter will be removed from checkout and bar selectors. Historical sales and reports remain preserved.",
+                    "Past sales and reports stay saved.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -691,7 +776,7 @@ fun OwnerSettingsScreen(
                     ),
                     modifier = Modifier.testTag("confirm_delete_counter_button")
                 ) {
-                    Text("Delete Counter", fontWeight = FontWeight.Bold)
+                    Text("Delete", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -704,39 +789,67 @@ fun OwnerSettingsScreen(
             }
         )
     }
-
 }
 
 @Composable
-private fun SettingsSection(
-    title: String,
-    description: String,
-    icon: ImageVector,
+private fun SettingsCard(
     content: @Composable () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    shape = RoundedCornerShape(11.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier.size(38.dp)
-                ) {
-                    Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.padding(9.dp))
-                }
-                Spacer(Modifier.width(11.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(title, style = MaterialTheme.typography.titleMedium)
-                    Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                }
-            }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(11.dp)
+        ) {
             content()
         }
+    }
+}
+
+@Composable
+private fun SettingsIconBadge(
+    icon: ImageVector,
+    containerColor: Color = MaterialTheme.colorScheme.primaryContainer,
+    iconTint: Color = MaterialTheme.colorScheme.onPrimaryContainer
+) {
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = containerColor,
+        modifier = Modifier.size(36.dp)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(19.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingsHeaderRow(
+    icon: ImageVector,
+    title: String
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        SettingsIconBadge(icon)
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 
@@ -747,15 +860,6 @@ private fun SettingsMessage(message: String, isError: Boolean) {
     Surface(color = container, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
         Text(message, color = content, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(12.dp))
     }
-}
-
-@Composable
-private fun ReadOnlyHint() {
-    Text(
-        "Only the business owner can change these settings.",
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        style = MaterialTheme.typography.bodySmall
-    )
 }
 
 @Composable
@@ -770,54 +874,70 @@ private fun CounterSettingsRow(
     onRename: () -> Unit,
     onRequestDelete: () -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.fillMaxWidth()) {
-        if (editing) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = editingName,
-                    onValueChange = onEditingNameChange,
-                    label = { Text("Counter name") },
-                    singleLine = true,
-                    enabled = ownerCanEdit,
-                    modifier = Modifier.weight(1f)
-                )
-                Button(onClick = onRename, enabled = ownerCanEdit && editingName.trim().isNotBlank()) { Text("Save") }
-            }
-        } else {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                modifier = Modifier.fillMaxWidth()
+    if (editing) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 8.dp)
+        ) {
+            OutlinedTextField(
+                value = editingName,
+                onValueChange = onEditingNameChange,
+                label = { Text("Counter name") },
+                singleLine = true,
+                enabled = ownerCanEdit,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.weight(1f)
+            )
+            Button(
+                onClick = onRename,
+                enabled = ownerCanEdit && editingName.trim().isNotBlank(),
+                shape = RoundedCornerShape(10.dp)
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(counter.name, fontWeight = FontWeight.SemiBold)
-                        if (!counter.active) Text("Inactive", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                    }
-                    IconButton(
-                        onClick = onStartEditing,
-                        enabled = ownerCanEdit,
-                        modifier = Modifier.testTag("rename_counter_${counter.id}")
-                    ) {
-                        Icon(Icons.Default.Edit, contentDescription = "Rename ${counter.name}")
-                    }
-                    IconButton(
-                        onClick = onRequestDelete,
-                        enabled = ownerCanEdit && canDelete,
-                        modifier = Modifier.testTag("delete_counter_${counter.id}")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "Delete ${counter.name}",
-                            tint = if (ownerCanEdit && canDelete) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
-                        )
-                    }
+                Text("Save")
+            }
+        }
+    } else {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = counter.name,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp
+                )
+                if (!counter.active) {
+                    Text(
+                        text = "Inactive",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
+            }
+            IconButton(
+                onClick = onStartEditing,
+                enabled = ownerCanEdit,
+                modifier = Modifier.testTag("rename_counter_${counter.id}")
+            ) {
+                Icon(Icons.Default.Edit, contentDescription = "Rename ${counter.name}", modifier = Modifier.size(18.dp))
+            }
+            IconButton(
+                onClick = onRequestDelete,
+                enabled = ownerCanEdit && canDelete,
+                modifier = Modifier.testTag("delete_counter_${counter.id}")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "Delete ${counter.name}",
+                    tint = if (ownerCanEdit && canDelete) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                    modifier = Modifier.size(18.dp)
+                )
             }
         }
     }

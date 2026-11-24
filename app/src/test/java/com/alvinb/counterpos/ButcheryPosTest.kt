@@ -10,6 +10,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.room.Room
@@ -23,11 +24,14 @@ import com.alvinb.counterpos.data.butchery.ButcheryTrendRange
 import com.alvinb.counterpos.data.local.AppDatabase
 import com.alvinb.counterpos.data.local.entity.ButcheryConfigEntity
 import com.alvinb.counterpos.data.local.entity.ButcherySaleEntity
+import com.alvinb.counterpos.data.remote.ServiceCounter
 import com.alvinb.counterpos.data.remote.SupabaseRestClient
 import com.alvinb.counterpos.ui.ButcheryDailySalesScreen
 import com.alvinb.counterpos.ui.ButcheryPosScreen
 import com.alvinb.counterpos.ui.ButcheryReportScreen
 import com.alvinb.counterpos.ui.ButcherySettingsScreen
+import com.alvinb.counterpos.ui.CounterPosUiState
+import com.alvinb.counterpos.ui.OwnerSettingsScreen
 import com.alvinb.counterpos.ui.PdfDocumentSession
 import com.alvinb.counterpos.ui.buildButcheryReportPdf
 import org.junit.Assert.assertFalse
@@ -1253,5 +1257,58 @@ class ButcheryPosTest {
         useLoss.value = true
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("butchery_report_profit_loss").assertTextEquals("-KES 120")
+    }
+
+    @Test
+    fun ownerSettingsScreenCompactLayoutAndButcheryDisclosureWork() {
+        var toggledEnabled: Boolean? = null
+        var addedCounterName: String? = null
+        val counters = listOf(
+            ServiceCounter(id = "c1", name = "Main Bar", active = true),
+            ServiceCounter(id = "c2", name = "VIP Lounge", active = true)
+        )
+
+        composeRule.setContent {
+            OwnerSettingsScreen(
+                state = CounterPosUiState(),
+                businessName = "Savannah Club",
+                role = "owner",
+                registeredCounters = counters,
+                butcheryConfig = ButcheryConfigEntity(
+                    shopId = "shop-1",
+                    enabled = false,
+                    butcheryName = "Savannah Butchery",
+                    beefOnlyMode = false,
+                    defaultBeefPricePerKgKsh = 680
+                ),
+                onClose = {},
+                onBusinessNameSave = {},
+                onLoadMembers = {},
+                onCounterCreate = { addedCounterName = it },
+                onCounterRename = { _, _ -> },
+                onCounterDelete = {},
+                onSaveButcheryConfig = { enabled, _, _, _, _, _ -> toggledEnabled = enabled }
+            )
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("Business").assertIsDisplayed()
+        composeRule.onNodeWithText("Team & Waiters").assertIsDisplayed()
+        composeRule.onNodeWithText("Subscription").assertIsDisplayed()
+        composeRule.onNodeWithText("Butchery Module").assertIsDisplayed()
+
+        // Turn Butchery Module ON -> reveals concise fields + collapsible payment methods row
+        composeRule.onNodeWithTag("owner_settings_butchery_switch").performClick()
+        composeRule.waitForIdle()
+        assertEquals(true, toggledEnabled)
+
+        composeRule.onNodeWithTag("owner_settings_butchery_name_input").assertIsDisplayed()
+        composeRule.onNodeWithTag("owner_settings_beef_price_input").assertIsDisplayed()
+        composeRule.onNodeWithTag("butchery_custom_payment_input").assertDoesNotExist()
+
+        // Expanding Payment Methods reveals the editor cleanly
+        composeRule.onNodeWithText("Payment Methods").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("butchery_custom_payment_input").performScrollTo().assertIsDisplayed()
     }
 }

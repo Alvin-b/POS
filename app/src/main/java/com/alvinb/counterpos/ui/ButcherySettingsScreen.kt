@@ -165,11 +165,6 @@ fun ButcherySettingsScreen(
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
                     )
-                    Text(
-                        text = "Configure meats, selling/buying price per kg, stock & payments",
-                        color = Color.White.copy(alpha = 0.85f),
-                        fontSize = 11.sp
-                    )
                 }
             }
         }
@@ -192,12 +187,23 @@ fun ButcherySettingsScreen(
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             Icon(Icons.Default.Storefront, contentDescription = null, tint = ButcheryPalette.EmeraldHeader)
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Butchery Package", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFF0F172A))
+                            Text(
+                                text = "Butchery Module",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = Color(0xFF0F172A),
+                                modifier = Modifier.weight(1f)
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(999.dp),
+                                color = if (enabledDraft) ButcheryPalette.EmeraldHeader.copy(alpha = 0.12f) else Color(0xFFF1F5F9)
+                            ) {
                                 Text(
-                                    "Manage your meat counter independently from bar & club drinks.",
-                                    fontSize = 12.sp,
-                                    color = Color(0xFF64748B)
+                                    text = if (enabledDraft) "ON" else "OFF",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (enabledDraft) ButcheryPalette.EmeraldHeader else Color(0xFF64748B),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                 )
                             }
                             Switch(
@@ -211,7 +217,7 @@ fun ButcherySettingsScreen(
                         OutlinedTextField(
                             value = nameDraft,
                             onValueChange = { nameDraft = it.take(80) },
-                            label = { Text("Enrolled Butchery Name") },
+                            label = { Text("Butchery name") },
                             placeholder = { Text("e.g. Prime Cuts Butchery") },
                             singleLine = true,
                             enabled = ownerCanEdit,
@@ -278,43 +284,48 @@ fun ButcherySettingsScreen(
                             onMethodsChange = { paymentMethodsDraft = it }
                         )
 
-                        Button(
-                            onClick = {
-                                val price = defaultRateDraft.toIntOrNull() ?: 680
-                                onSaveConfig(
-                                    enabledDraft,
-                                    nameDraft.trim(),
-                                    isBeefOnlyDraft,
-                                    price,
-                                    paymentMethodsDraft,
-                                    enabledMeatsDraft
-                                )
-                            },
-                            enabled = ownerCanEdit && nameDraft.trim().isNotEmpty(),
-                            colors = ButtonDefaults.buttonColors(containerColor = ButcheryPalette.EmeraldHeader),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                                .testTag("butchery_save_settings_button")
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Save Butchery Settings", fontWeight = FontWeight.Bold)
-                        }
-
-                        if (ownerCanEdit && onOpenButcheryEnrollment != null) {
-                            OutlinedButton(
-                                onClick = onOpenButcheryEnrollment,
+                            Button(
+                                onClick = {
+                                    val price = defaultRateDraft.toIntOrNull() ?: 680
+                                    onSaveConfig(
+                                        enabledDraft,
+                                        nameDraft.trim(),
+                                        isBeefOnlyDraft,
+                                        price,
+                                        paymentMethodsDraft,
+                                        enabledMeatsDraft
+                                    )
+                                },
+                                enabled = ownerCanEdit && nameDraft.trim().isNotEmpty(),
+                                colors = ButtonDefaults.buttonColors(containerColor = ButcheryPalette.EmeraldHeader),
                                 shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier
-                                    .fillMaxWidth()
+                                    .weight(1f)
                                     .height(48.dp)
-                                    .testTag("butchery_settings_enroll_device_button")
+                                    .testTag("butchery_save_settings_button")
                             ) {
-                                Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text("Enroll Butchery Phone (Passkey / QR)", fontWeight = FontWeight.SemiBold)
+                                Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Save", fontWeight = FontWeight.Bold)
+                            }
+
+                            if (ownerCanEdit && onOpenButcheryEnrollment != null) {
+                                OutlinedButton(
+                                    onClick = onOpenButcheryEnrollment,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(48.dp)
+                                        .testTag("butchery_settings_enroll_device_button")
+                                ) {
+                                    Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Enroll Phone", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                }
                             }
                         }
                     }
@@ -328,23 +339,17 @@ fun ButcherySettingsScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = if (enabledMeatsDraft.size == 1) {
-                                "${enabledMeatsDraft.first()} · Price & Cost per kg"
-                            } else {
-                                "Meats · Price, Buying Cost & Stock"
-                            },
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = Color(0xFF0F172A)
-                        )
-                        Text(
-                            text = "Optional buying price & stock (kg) enable Profit/Loss tracking in reports.",
-                            fontSize = 11.sp,
-                            color = Color(0xFF64748B)
-                        )
-                    }
+                    Text(
+                        text = if (enabledMeatsDraft.size == 1) {
+                            "${enabledMeatsDraft.first()} Pricing"
+                        } else {
+                            "Meats (${visibleCuts.size})"
+                        },
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = Color(0xFF0F172A),
+                        modifier = Modifier.weight(1f)
+                    )
                     if (ownerCanEdit) {
                         Button(
                             onClick = { showAddCutDialog = true },
@@ -663,11 +668,6 @@ private fun AddButcheryCutModal(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().testTag("butchery_new_cut_stock_input")
-                )
-                Text(
-                    text = "Enter Buying Price and Stock (kg) to calculate Profit/Loss & inventory. Leave Buying Price blank to omit Profit/Loss from reports.",
-                    fontSize = 11.sp,
-                    color = Color(0xFF64748B)
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),

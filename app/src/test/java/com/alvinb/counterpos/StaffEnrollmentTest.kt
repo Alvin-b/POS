@@ -8,12 +8,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import com.alvinb.counterpos.data.remote.SupabaseRestClient
+import com.alvinb.counterpos.ui.AuthScreen
 import com.alvinb.counterpos.ui.CounterPosUiState
 import com.alvinb.counterpos.ui.StaffManagementScreen
 import org.json.JSONArray
@@ -332,11 +336,119 @@ class StaffEnrollmentTest {
         composeRule.waitForIdle()
 
         assertEquals("Prime Nyama Grill", issuedButcheryName)
-        composeRule.onNodeWithTag("butchery_passkey_value").assertIsDisplayed()
+        composeRule.onNodeWithTag("butchery_passkey_value").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("butchery_passkey_value").assertTextEquals("CPB1.BCH-9944")
+        composeRule.onNodeWithTag("butchery_passkey_qr").performScrollTo().assertIsDisplayed()
 
-        composeRule.onNodeWithTag("scan_butchery_challenge_button").performClick()
+        composeRule.onNodeWithTag("scan_butchery_challenge_button").performScrollTo().performClick()
         composeRule.waitForIdle()
         assertEquals("Prime Nyama Grill", scannedButcheryName)
+    }
+
+    @Test
+    fun staffManagementScreenDisplaysInlineEnrollmentError() {
+        composeRule.setContent {
+            StaffManagementScreen(
+                state = CounterPosUiState(
+                    staffEnrollmentStation = "butchery",
+                    actionError = "Could not approve Butchery QR: connection timed out."
+                ),
+                businessName = "Kenyatta Club",
+                role = "owner",
+                businessType = "BAR_NIGHTCLUB",
+                startOnButchery = true,
+                onClose = {},
+                onLoadMembers = {},
+                onIssueWaiterPass = {},
+                onSetEmployeeStatus = { _, _ -> },
+                onSetEmployeeRole = { _, _ -> },
+                onRenameEmployee = { _, _ -> },
+                onRemoveEmployee = { _ -> },
+                onIssueEmployeeRecoveryPass = { _, _ -> },
+                onClearEmployeeRecoveryPass = {},
+                onSaveEmployeeSchedule = { _, _, _, _, _ -> },
+                onSaveBusinessHours = {},
+                onScanWaiterCode = {}
+            )
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("staff_enroll_error_banner").performScrollTo().assertIsDisplayed()
+        composeRule.onAllNodesWithText("Could not approve Butchery QR: connection timed out.")
+            .onFirst()
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun authScreenKeepsQrVisibleWhenNoticeOrConnectionRefusedAndSupportsButcheryStationSelection() {
+        var selectedStation = "waiter"
+        composeRule.setContent {
+            var qrPayload by remember { mutableStateOf<String?>("CPR1|VALID-CHALLENGE-TOKEN") }
+            var station by remember { mutableStateOf("waiter") }
+            AuthScreen(
+                error = "Connection refused while refreshing feed",
+                qrError = null,
+                notice = "Waiting for approval… (checking connection)",
+                isAuthenticating = false,
+                isLoadingQr = false,
+                selectedQrStation = station,
+                onSelectQrStation = {
+                    station = it
+                    selectedStation = it
+                },
+                onEmailSignIn = { _, _ -> },
+                onCreateAccount = { _, _ -> },
+                onRegisterBusiness = { _, _, _, _, _, _, _, _ -> },
+                onCredentialSignIn = {},
+                onOpenScanner = {},
+                onRefreshQr = { qrPayload = "CPR1|VALID-CHALLENGE-TOKEN" },
+                qrPayload = qrPayload,
+                onClearError = {}
+            )
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("login_with_qr_or_passkey_button").performScrollTo().performClick()
+        composeRule.waitForIdle()
+
+        // Word "refused" in unrelated error must not expire/hide LoginQrCard
+        composeRule.onNodeWithTag("login_qr_card").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("qr_station_waiter").assertIsDisplayed()
+        composeRule.onNodeWithTag("qr_station_butchery").performClick()
+        composeRule.waitForIdle()
+
+        assertEquals("butchery", selectedStation)
+        composeRule.onNodeWithText("Scan to Sign In · Butchery Station").assertIsDisplayed()
+    }
+
+    @Test
+    fun authScreenShowsQrErrorVisiblyWhenChallengeExpiresOrFails() {
+        composeRule.setContent {
+            AuthScreen(
+                error = null,
+                qrError = "This QR code has expired or was already used. Tap Refresh QR to generate a new one.",
+                notice = null,
+                isAuthenticating = false,
+                isLoadingQr = false,
+                selectedQrStation = "butchery",
+                onSelectQrStation = {},
+                onEmailSignIn = { _, _ -> },
+                onCreateAccount = { _, _ -> },
+                onRegisterBusiness = { _, _, _, _, _, _, _, _ -> },
+                onCredentialSignIn = {},
+                onOpenScanner = {},
+                onRefreshQr = {},
+                qrPayload = null,
+                onClearError = {}
+            )
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("login_with_qr_or_passkey_button").performScrollTo().performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("qr_fallback_card").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("QR code expired").assertIsDisplayed()
+        composeRule.onNodeWithText("This QR code has expired or was already used. Tap Refresh QR to generate a new one.").assertIsDisplayed()
     }
 }
