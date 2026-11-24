@@ -1603,6 +1603,31 @@ class SupabaseRestClient(context: Context) {
             created
         }
 
+    /** Accept both deployed QR response formats: direct Supabase tokens and
+     * the legacy temporary email/password credentials. */
+    suspend fun authenticateApprovedAccess(payload: JSONObject): AuthSession {
+        val accessToken = payload.optString("access_token").takeIf(String::isNotBlank)
+        val refreshToken = payload.optString("refresh_token").takeIf(String::isNotBlank)
+        if (accessToken != null && refreshToken != null) {
+            val user = payload.optJSONObject("user")
+            val created = AuthSession(
+                accessToken = accessToken,
+                refreshToken = refreshToken,
+                userId = payload.optString("user_id").ifBlank { user?.optString("id").orEmpty() },
+                email = payload.optString("email").takeIf(String::isNotBlank)
+                    ?: user?.optString("email")?.takeIf(String::isNotBlank)
+            )
+            saveSession(created)
+            return created
+        }
+        val email = payload.optString("email").trim()
+        val password = payload.optString("password")
+        require(email.isNotBlank() && password.isNotBlank()) {
+            "QR approval did not return a usable enrollment session. Deploy the current QR enrollment functions and try again."
+        }
+        return authenticate("password", email, password)
+    }
+
     private suspend fun query(path: String): JSONArray =
         parseArray(request("/rest/v1/$path", "GET", null, true))
 
