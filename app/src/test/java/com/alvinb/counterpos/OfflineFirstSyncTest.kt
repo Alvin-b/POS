@@ -46,7 +46,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowNetworkCapabilities
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [35])
 class OfflineFirstSyncTest {
     private lateinit var context: Context
     private lateinit var database: AppDatabase

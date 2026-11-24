@@ -47,7 +47,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36], qualifiers = "w412dp-h915dp")
+@Config(sdk = [35], qualifiers = "w412dp-h915dp")
 class ButcheryPosTest {
     @get:Rule
     val composeRule = createComposeRule()
