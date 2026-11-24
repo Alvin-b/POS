@@ -103,7 +103,11 @@ class CounterPosRepository(
     private val assets: AssetManager,
     private val remote: SupabaseRestClient
 ) {
-    data class AccessChallenge(val token: String, val expiresAtMillis: Long)
+    data class AccessChallenge(
+        val token: String,
+        val qrPayload: String,
+        val expiresAtMillis: Long
+    )
     data class ApprovedAccess(val session: SessionSnapshot, val businessId: String?)
 
     val products: Flow<List<ProductEntity>> = dao.observeProducts()
@@ -461,10 +465,19 @@ class CounterPosRepository(
 
     suspend fun createAccessChallenge(): AccessChallenge = withContext(Dispatchers.IO) {
         val response = remote.createAccessChallenge()
-        val token = response.optString("token").takeIf(String::isNotBlank)
+        val token = response.optString("token")
+            .ifBlank { response.optString("challenge_token") }
+            .let { raw ->
+                raw.substringAfter("CPR1|", raw).trim()
+            }
+            .takeIf(String::isNotBlank)
             ?: throw IllegalStateException("Could not create QR sign-in request.")
+        val qrPayload = response.optString("qr_payload")
+            .takeIf(String::isNotBlank)
+            ?.let { payload -> if (payload.startsWith("CPR1|", ignoreCase = true)) payload else "CPR1|$payload" }
+            ?: "CPR1|$token"
         val lifetimeSeconds = response.optLong("expires_in_seconds", 600L).coerceAtLeast(30L)
-        AccessChallenge(token, System.currentTimeMillis() + lifetimeSeconds * 1_000L)
+        AccessChallenge(token, qrPayload, System.currentTimeMillis() + lifetimeSeconds * 1_000L)
     }
 
     suspend fun pollAccessChallenge(token: String): ApprovedAccess? = withContext(Dispatchers.IO) {
@@ -485,6 +498,12 @@ class CounterPosRepository(
         } catch (error: Exception) {
             throw IllegalStateException("QR was approved, but the enrolled business data could not load: ${error.message.orEmpty()}", error)
         }
+        val enrolledRole = result.optString("role").ifBlank { result.optString("station") }
+        if (enrolledRole.equals("butchery", ignoreCase = true) ||
+            session.activeBusiness?.role.equals("butchery", ignoreCase = true)
+        ) {
+            remote.saveButcheryDeviceShopId(shopId)
+        }
         ApprovedAccess(session, shopId ?: session.activeBusiness?.shopId)
     }
 
@@ -502,13 +521,18 @@ class CounterPosRepository(
         if (normalized == "butchery") {
             ensureButcheryEnabledForShop(shop, stationName)
         }
-        remote.approveAccessChallenge(token, shop.shopId, "cashier")
+        remote.approveAccessChallenge(
+            token = token.substringAfter("CPR1|", token).trim(),
+            shopId = shop.shopId,
+            role = "cashier",
+            station = if (normalized == "butchery") "butchery" else "waiter"
+        )
     }
 
     suspend fun adminApproveAccessChallenge(token: String, shopId: String, role: String) = withContext(Dispatchers.IO) {
         require(account?.isPlatformAdmin == true) { "Only a platform administrator can enroll a user into a business." }
         require(role in setOf("owner", "manager", "inventory_clerk", "cashier")) { "Choose a valid business role." }
-        remote.approveAccessChallenge(token, shopId, role)
+        remote.approveAccessChallenge(token.substringAfter("CPR1|", token).trim(), shopId, role)
     }
 
     suspend fun shopMembers(): JSONArray = withContext(Dispatchers.IO) {

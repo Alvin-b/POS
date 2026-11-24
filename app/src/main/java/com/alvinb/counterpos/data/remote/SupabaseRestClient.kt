@@ -325,8 +325,17 @@ class SupabaseRestClient(context: Context) {
         request("/functions/v1/poll-access-challenge", "POST", JSONObject().put("token", token).toString(), false)
     })
 
-    suspend fun approveAccessChallenge(token: String, shopId: String, role: String): JSONObject =
-        parseObject(request("/functions/v1/approve-access-challenge", "POST", JSONObject().put("token", token).put("shop_id", shopId).put("role", role).toString(), true))
+    suspend fun approveAccessChallenge(token: String, shopId: String, role: String, station: String? = null): JSONObject =
+        parseObject(request(
+            "/functions/v1/approve-access-challenge",
+            "POST",
+            JSONObject()
+                .put("token", token)
+                .put("shop_id", shopId)
+                .put("role", role)
+                .putNullable("station", station?.takeIf { it.isNotBlank() }),
+            true
+        ))
 
     suspend fun listShopMembers(shopId: String): JSONArray =
         rpcArray("admin_list_shop_members", JSONObject().put("_shop", shopId))

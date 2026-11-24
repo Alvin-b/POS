@@ -650,7 +650,7 @@ class CounterPosViewModel(
                 val challenge = repository.createAccessChallenge()
                 _uiState.update {
                     it.copy(
-                        loginQrPayload = challenge.token,
+                        loginQrPayload = challenge.qrPayload,
                         loginQrExpiresAtMillis = challenge.expiresAtMillis,
                         isQrPolling = true,
                         startupError = null,
@@ -669,7 +669,7 @@ class CounterPosViewModel(
                         "The QR sign-in service rejected this request. Check the deployed enrollment functions, then refresh QR."
                     else -> "QR sign-in is unavailable right now. Tap Refresh QR to try again."
                 }
-                _uiState.update { it.copy(loginQrPayload = null, isQrPolling = false, startupError = friendly, notice = null) }
+                _uiState.update { it.copy(isQrPolling = false, startupError = friendly, notice = null) }
             }
         }
     }
@@ -684,9 +684,12 @@ class CounterPosViewModel(
                     if (targetBusinessId.isNullOrBlank() || activeBusiness == null || activeBusiness.shopId != targetBusinessId) {
                         throw IllegalStateException("The QR was approved, but this account is not connected to the enrolled business. Ask the owner to verify the staff membership.")
                     }
+                    val openButchery = repository.isButcheryDeviceShop(targetBusinessId)
                     _uiState.update {
                         it.copy(
                             isQrPolling = false,
+                            isButcheryWorkspaceOpen = openButchery,
+                            butcheryTab = if (openButchery) ButcheryTab.SELL else it.butcheryTab,
                             startupError = null,
                             notice = "Signed in to ${activeBusiness.shopName}"
                         )
@@ -712,7 +715,7 @@ class CounterPosViewModel(
                     message.takeIf { it.isNotBlank() }?.let { "QR sign-in failed: $it" }
                         ?: "QR sign-in is unavailable right now. Tap Refresh QR to try again."
                 }
-                _uiState.update { it.copy(loginQrPayload = null, isQrPolling = false, startupError = friendly, notice = null) }
+                _uiState.update { it.copy(isQrPolling = false, startupError = friendly, notice = null) }
                 return
             }
             delay(2_000)
