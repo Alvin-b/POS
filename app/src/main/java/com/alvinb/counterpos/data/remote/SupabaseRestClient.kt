@@ -333,7 +333,8 @@ class SupabaseRestClient(context: Context) {
                 .put("token", token)
                 .put("shop_id", shopId)
                 .put("role", role)
-                .putNullable("station", station?.takeIf { it.isNotBlank() }),
+                .putNullable("station", station?.takeIf { it.isNotBlank() })
+                .toString(),
             true
         ))
 
