@@ -141,6 +141,7 @@ fun ButcheryWorkspaceScreen(
     val fileDateFormat = remember { SimpleDateFormat("yyyy-MM-dd", Locale.US) }
     val canUndo = remember(sales) { sales.any { !it.undone } }
 
+    ButcheryLightTheme {
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -277,6 +278,7 @@ fun ButcheryWorkspaceScreen(
                 )
             }
         }
+    }
     }
 }
 

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <style name="Theme.CounterPos" parent="android:Theme.Material.NoActionBar">
-        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:forceDarkAllowed" tools:targetApi="q">false</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowBackground">@color/counter_pos_background</item>
         <item name="android:colorAccent">#70D6A8</item>

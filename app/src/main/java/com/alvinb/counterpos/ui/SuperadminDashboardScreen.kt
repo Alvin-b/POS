@@ -199,7 +199,9 @@ fun SuperadminDashboardScreen(
             onProductScannedForTable = {},
             onAdminQrCodeScanned = viewModel::handleAdminQrCode,
             onBarcodeAssigned = {},
-            onBarcodeNotRecognized = viewModel::handleAdminQrCode
+            onBarcodeNotRecognized = viewModel::handleAdminQrCode,
+            scannerTitle = "ADMIN ENROLLMENT QR",
+            scannerSubtitle = "Scan a business owner or staff phone's sign-in QR to authorize it."
         )
         return
     }

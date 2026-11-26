@@ -289,6 +289,8 @@ class CounterPosViewModel(
     private var lastSessionKeepAliveAt = 0L
     private var previousPendingSyncCount = 0
     private var pendingButcheryStationName: String = ""
+    @Volatile
+    private var isApprovingQrChallenge = false
 
     private fun handleStableConnectivityDetected(wasStable: Boolean) {
         refreshSubscriptionEntitlement()
@@ -639,6 +641,13 @@ class CounterPosViewModel(
         val value = credential.trim()
         if (value.startsWith("CPSA1|", ignoreCase = true)) {
             signInWithSuperadminToken(value)
+        } else if (value.startsWith("CPR1|", ignoreCase = true)) {
+            _uiState.update {
+                it.copy(
+                    qrError = "That is another phone's sign-in QR. To enroll this device, show this phone's QR code for the owner or administrator to scan.",
+                    startupError = "That is another phone's sign-in QR. Show this phone's QR code for the owner or administrator to scan, or enter a passkey (CPX1 / CPB1)."
+                )
+            }
         } else if (value.startsWith("CPX1.", ignoreCase = true) || value.startsWith("CPB1.", ignoreCase = true)) {
             // Preserve CPB1. prefix so signInWithPasskey opens the Butchery POS workspace on login.
             signInWithPasskey(value)
@@ -688,20 +697,30 @@ class CounterPosViewModel(
         _uiState.update { it.copy(pendingQrStation = normalized, qrError = null) }
     }
 
-    private suspend fun pollAccessChallengeUntilApproved(token: String, missingQrRetries: Int = 0) {
+    private suspend fun pollAccessChallengeUntilApproved(
+        token: String,
+        missingQrRetries: Int = 0,
+        readErrorRetries: Int = 0,
+        transientErrorRetries: Int = 0
+    ) {
         repeat(300) {
             try {
-                val result = repository.pollAccessChallenge(token)
+                val expectedStation = _uiState.value.pendingQrStation
+                val result = repository.pollAccessChallenge(token, expectedStation = expectedStation)
                 if (result != null) {
                     val targetBusinessId = result.businessId ?: result.session.activeBusiness?.shopId
                     val activeBusiness = result.session.activeBusiness
                     if (targetBusinessId.isNullOrBlank() || activeBusiness == null || activeBusiness.shopId != targetBusinessId) {
                         throw IllegalStateException("The QR was approved, but this account is not connected to the enrolled business. Ask the owner to verify the staff membership.")
                     }
-                    val openButchery = repository.isButcheryDeviceShop(targetBusinessId)
+                    val openButchery = result.isButchery || repository.isButcheryDeviceShop(targetBusinessId)
                     _uiState.update {
                         it.copy(
+                            loginQrPayload = null,
+                            loginQrExpiresAtMillis = null,
                             isQrPolling = false,
+                            qrError = null,
+                            pendingQrStation = "waiter",
                             isButcheryWorkspaceOpen = openButchery,
                             butcheryTab = if (openButchery) ButcheryTab.SELL else it.butcheryTab,
                             startupError = null,
@@ -719,31 +738,79 @@ class CounterPosViewModel(
                     // Do not silently replace the displayed token: an owner or
                     // administrator may already be scanning this exact QR.
                     delay(1_500)
-                    return pollAccessChallengeUntilApproved(token, missingQrRetries + 1)
+                    return pollAccessChallengeUntilApproved(
+                        token = token,
+                        missingQrRetries = missingQrRetries + 1,
+                        readErrorRetries = readErrorRetries,
+                        transientErrorRetries = transientErrorRetries
+                    )
                 }
                 val qrReadFailure = message.contains("could not read qr", ignoreCase = true) ||
                     message.contains("failed to read qr", ignoreCase = true) ||
                     message.contains("could_not_read_qr", ignoreCase = true) ||
                     message.contains("failed_to_read_qr", ignoreCase = true)
+                if (qrReadFailure && readErrorRetries < 3) {
+                    delay(1_500)
+                    return pollAccessChallengeUntilApproved(
+                        token = token,
+                        missingQrRetries = missingQrRetries,
+                        readErrorRetries = readErrorRetries + 1,
+                        transientErrorRetries = transientErrorRetries
+                    )
+                }
+                val isTransient = error is java.io.IOException ||
+                    message.contains("timed out", ignoreCase = true) ||
+                    message.contains("timeout", ignoreCase = true) ||
+                    message.contains("connection", ignoreCase = true) ||
+                    message.contains("unable to reach", ignoreCase = true) ||
+                    message.contains("500", ignoreCase = true) ||
+                    message.contains("502", ignoreCase = true) ||
+                    message.contains("503", ignoreCase = true) ||
+                    message.contains("504", ignoreCase = true) ||
+                    message.contains("429", ignoreCase = true)
+                if (isTransient && transientErrorRetries < 5) {
+                    delay(2_000)
+                    return pollAccessChallengeUntilApproved(
+                        token = token,
+                        missingQrRetries = missingQrRetries,
+                        readErrorRetries = readErrorRetries,
+                        transientErrorRetries = transientErrorRetries + 1
+                    )
+                }
                 val friendly = if (qrReadFailure) {
-                    "This phone could not read its QR enrollment request from the backend. The owner’s scanning phone is not the problem. Refresh the QR and try again; if it continues, deploy the matching QR enrollment functions and database migration."
-                } else if (message.contains("expired", ignoreCase = true) || message.contains("used", ignoreCase = true)) {
+                    "This phone could not read its QR enrollment request from the backend. Tap Refresh QR to try again; if it continues, apply the QR enrollment database migration and redeploy the enrollment Edge Functions."
+                } else if (message.contains("expired", ignoreCase = true) ||
+                    message.contains("used", ignoreCase = true) ||
+                    message.contains("consumed", ignoreCase = true)
+                ) {
                     "This QR code has expired or was already used. Tap Refresh QR to generate a new one."
                 } else if (qrNotFound) {
-                    "This QR is not registered by the connected backend. Deploy the current create-access-challenge and poll-access-challenge functions, then generate a new QR."
+                    "This QR is not registered by the connected backend. Deploy the current create-access-challenge and poll-access-challenge functions, then tap Refresh QR."
                 } else {
                     message.takeIf { it.isNotBlank() }?.let { "QR sign-in failed: $it" }
                         ?: "QR sign-in is unavailable right now. Tap Refresh QR to try again."
                 }
-                _uiState.update { it.copy(isQrPolling = false, startupError = friendly, notice = null) }
+                _uiState.update {
+                    it.copy(
+                        loginQrPayload = null,
+                        loginQrExpiresAtMillis = null,
+                        isQrPolling = false,
+                        qrError = friendly,
+                        startupError = null,
+                        notice = null
+                    )
+                }
                 return
             }
             delay(2_000)
         }
         _uiState.update {
             it.copy(
+                loginQrPayload = null,
+                loginQrExpiresAtMillis = null,
                 isQrPolling = false,
-                startupError = "This QR code has expired. Tap Refresh QR to generate a new one.",
+                qrError = "This QR code has expired. Tap Refresh QR to generate a new one.",
+                startupError = null,
                 notice = null
             )
         }
@@ -943,8 +1010,26 @@ class CounterPosViewModel(
     }
 
     fun signOut() = viewModelScope.launch {
+        loginQrJob?.cancel()
+        pendingButcheryStationName = ""
+        isApprovingQrChallenge = false
         repository.signOut()
-        _uiState.update { it.copy(loginQrPayload = null, loginQrExpiresAtMillis = null, isQrPolling = false, adminEnrollmentCredential = null, startupError = null, notice = null) }
+        _uiState.update {
+            it.copy(
+                loginQrPayload = null,
+                loginQrExpiresAtMillis = null,
+                isQrPolling = false,
+                qrError = null,
+                pendingQrStation = "waiter",
+                isButcheryWorkspaceOpen = false,
+                isStaffManagementOpen = false,
+                isTeamPanelOpen = false,
+                adminEnrollmentCredential = null,
+                startupError = null,
+                actionError = null,
+                notice = null
+            )
+        }
     }
 
     fun clearStartupError() = _uiState.update { it.copy(startupError = null, qrError = null) }
@@ -1850,7 +1935,7 @@ class CounterPosViewModel(
     fun adminSetCustomTrial(shopId: String, daysFromNow: Int) {
         val safeDays = daysFromNow.coerceIn(1, 365)
         val newTime = System.currentTimeMillis() + (safeDays * 86_400_000L)
-        val iso = java.time.Instant.ofEpochMilli(newTime).toString()
+        val iso = com.alvinb.counterpos.data.SubscriptionManager.formatUtcIso(newTime)
         adminUpdateShopSubscription(shopId = shopId, trialEndsAtIso = iso, status = "trial")
     }
 
@@ -1858,7 +1943,7 @@ class CounterPosViewModel(
         val target = _adminBusinesses.value.firstOrNull { it.shopId == shopId }
         val baseTime = target?.trialEndsAt?.let { com.alvinb.counterpos.data.SubscriptionManager.parseTimestamp(it) } ?: System.currentTimeMillis()
         val newTime = maxOf(baseTime, System.currentTimeMillis()) + (daysToAdd * 86_400_000L)
-        val iso = java.time.Instant.ofEpochMilli(newTime).toString()
+        val iso = com.alvinb.counterpos.data.SubscriptionManager.formatUtcIso(newTime)
         adminUpdateShopSubscription(shopId = shopId, trialEndsAtIso = iso, status = "trial")
     }
 
@@ -1866,7 +1951,7 @@ class CounterPosViewModel(
         val target = _adminBusinesses.value.firstOrNull { it.shopId == shopId }
         val baseTime = target?.subscriptionEndsAt?.let { com.alvinb.counterpos.data.SubscriptionManager.parseTimestamp(it) } ?: System.currentTimeMillis()
         val newTime = maxOf(baseTime, System.currentTimeMillis()) + (daysToAdd * 86_400_000L)
-        val iso = java.time.Instant.ofEpochMilli(newTime).toString()
+        val iso = com.alvinb.counterpos.data.SubscriptionManager.formatUtcIso(newTime)
         adminUpdateShopSubscription(shopId = shopId, endsAtIso = iso, status = "active", planDays = daysToAdd, priceKsh = priceKsh)
     }
 
@@ -2003,6 +2088,10 @@ class CounterPosViewModel(
     }
 
     fun openAdminEnrollmentScanner(shopId: String, role: String) {
+        if (isApprovingQrChallenge) {
+            _uiState.update { it.copy(notice = "Still finishing the previous QR approval…") }
+            return
+        }
         val business = _adminBusinesses.value.firstOrNull { it.shopId == shopId }
         if (!session.value.isPlatformAdmin) {
             _uiState.update { it.copy(startupError = "Only a platform administrator can use this enrollment flow.") }
@@ -2042,59 +2131,95 @@ class CounterPosViewModel(
         val role = if (isPlatformAdmin) currentState.adminQrRole else "cashier"
 
         if (qr.startsWith("CPR1|", ignoreCase = true)) {
+            if (isApprovingQrChallenge) {
+                _uiState.update { it.copy(isScannerOpen = false) }
+                return
+            }
             if (shopId.isNullOrBlank()) {
                 _uiState.update { it.copy(isScannerOpen = false, startupError = "Select a business before scanning the phone's sign-in QR.") }
             } else if (isPlatformAdmin && (business == null || business.status != "active")) {
                 _uiState.update { it.copy(isScannerOpen = false, startupError = "The selected business is not active. Reopen it before enrolling a phone.") }
             } else if (!isPlatformAdmin && businessRole != "owner") {
-                _uiState.update { it.copy(isScannerOpen = false, actionError = "Only the business owner can approve a Waiter sign-in QR.") }
+                _uiState.update {
+                    it.copy(
+                        isScannerOpen = false,
+                        isStaffManagementOpen = true,
+                        actionError = "Only the business owner can approve a Waiter or Butchery sign-in QR."
+                    )
+                }
             } else {
                 val businessName = business?.shopName ?: currentSession.activeBusiness?.shopName ?: "the business"
+                val staffStation = if (!isPlatformAdmin && currentState.staffEnrollmentStation == "butchery") "butchery" else "waiter"
+                val capturedStationName = pendingButcheryStationName
+                isApprovingQrChallenge = true
+                _uiState.update {
+                    it.copy(
+                        isScannerOpen = false,
+                        isStaffManagementOpen = if (!isPlatformAdmin) true else it.isStaffManagementOpen,
+                        startupError = null,
+                        actionError = null,
+                        notice = when {
+                            isPlatformAdmin -> "Approving phone for $businessName…"
+                            staffStation == "butchery" -> "Enrolling Butchery phone for $businessName…"
+                            else -> "Enrolling Waiter phone for $businessName…"
+                        }
+                    )
+                }
                 viewModelScope.launch {
-                    val staffStation = if (!isPlatformAdmin && currentState.staffEnrollmentStation == "butchery") "butchery" else "cashier"
-                    runCatching {
-                        if (isPlatformAdmin) repository.adminApproveAccessChallenge(qr, shopId, role)
-                        else repository.approveAccessChallenge(qr, staffStation, pendingButcheryStationName)
+                    try {
+                        if (isPlatformAdmin) {
+                            repository.adminApproveAccessChallenge(qr, shopId, role)
+                        } else {
+                            repository.approveAccessChallenge(qr, staffStation, capturedStationName)
+                        }
+                        pendingButcheryStationName = ""
+                        _uiState.update {
+                            it.copy(
+                                isScannerOpen = false,
+                                isStaffManagementOpen = if (!isPlatformAdmin) true else it.isStaffManagementOpen,
+                                startupError = null,
+                                actionError = null,
+                                notice = when {
+                                    isPlatformAdmin ->
+                                        "Approved and enrolled the other phone for $businessName as ${role.replace('_', ' ')}. You remain in Superadmin."
+                                    staffStation == "butchery" ->
+                                        "Approved Butchery station phone for $businessName."
+                                    else ->
+                                        "Approved and enrolled for $businessName as waiter."
+                                }
+                            )
+                        }
+                        if (isPlatformAdmin) {
+                            loadAdminBusinesses()
+                            loadAdminAuditEvents()
+                        } else {
+                            refreshAccessNow()
+                        }
+                    } catch (error: Exception) {
+                        if (error is CancellationException) throw error
+                        pendingButcheryStationName = ""
+                        val message = error.message.orEmpty()
+                        val friendly = when {
+                            message.contains("expired", ignoreCase = true) ||
+                                (message.contains("session", ignoreCase = true) && message.contains("used", ignoreCase = true)) ||
+                                message.contains("already_used", ignoreCase = true) ->
+                                "This QR session has expired or was already used. Ask the other phone to tap Refresh QR, then scan the new code."
+                            message.contains("not_found", ignoreCase = true) || message.contains("not found", ignoreCase = true) ->
+                                "This sign-in QR was not found on the server. Ask the other phone to tap Refresh QR, then scan again."
+                            else -> message.ifBlank { "Could not approve sign-in QR" }
+                        }
+                        _uiState.update {
+                            it.copy(
+                                isScannerOpen = false,
+                                isStaffManagementOpen = if (!isPlatformAdmin) true else it.isStaffManagementOpen,
+                                startupError = if (isPlatformAdmin) friendly else null,
+                                actionError = if (!isPlatformAdmin) friendly else null,
+                                notice = null
+                            )
+                        }
+                    } finally {
+                        isApprovingQrChallenge = false
                     }
-                        .onSuccess {
-                            pendingButcheryStationName = ""
-                            _uiState.update {
-                                it.copy(
-                                    isScannerOpen = false,
-                                    isStaffManagementOpen = if (!isPlatformAdmin) true else it.isStaffManagementOpen,
-                                    startupError = null,
-                                    actionError = null,
-                                    notice = when {
-                                        isPlatformAdmin ->
-                                            "Approved and enrolled the other phone for $businessName as ${role.replace('_', ' ')}. You remain in Superadmin."
-                                        staffStation == "butchery" ->
-                                            "Approved Butchery station phone for $businessName."
-                                        else ->
-                                            "Approved and enrolled for $businessName as waiter."
-                                    }
-                                )
-                            }
-                            if (isPlatformAdmin) {
-                                loadAdminBusinesses()
-                                loadAdminAuditEvents()
-                            } else {
-                                refreshAccessNow()
-                            }
-                        }
-                        .onFailure { error ->
-                            pendingButcheryStationName = ""
-                            val message = error.message.orEmpty()
-                            val friendly = if (message.contains("expired", ignoreCase = true) || message.contains("session", ignoreCase = true) && message.contains("used", ignoreCase = true)) {
-                                "This QR session has expired. Ask the other phone to tap Refresh QR, then scan the new code."
-                            } else message.ifBlank { "Could not approve sign-in QR" }
-                            _uiState.update {
-                                it.copy(
-                                    isScannerOpen = false,
-                                    isStaffManagementOpen = if (!isPlatformAdmin) true else it.isStaffManagementOpen,
-                                    startupError = friendly
-                                )
-                            }
-                        }
                 }
             }
             return
@@ -2159,7 +2284,14 @@ class CounterPosViewModel(
             return
         }
 
-        _uiState.update { it.copy(isScannerOpen = false, startupError = "Unrecognized CounterPOS QR. Use a business or user enrollment QR.") }
+        _uiState.update {
+            it.copy(
+                isScannerOpen = false,
+                isStaffManagementOpen = if (!isPlatformAdmin) true else it.isStaffManagementOpen,
+                startupError = if (isPlatformAdmin) "Unrecognized CounterPOS QR. Use a business or user enrollment QR." else it.startupError,
+                actionError = if (!isPlatformAdmin) "Unrecognized QR code. Ask the other phone to show its sign-in QR (CPR1)." else it.actionError
+            )
+        }
     }
 
     fun selectTab(tab: PosTab) = _uiState.update {
@@ -2318,6 +2450,10 @@ class CounterPosViewModel(
     }
 
     fun openStaffEnrollmentScanner(role: String, stationName: String = "") {
+        if (isApprovingQrChallenge) {
+            _uiState.update { it.copy(notice = "Still finishing the previous QR approval…") }
+            return
+        }
         val business = session.value.activeBusiness
         if (business == null) {
             _uiState.update { it.copy(actionError = "Select an active business before scanning an employee phone.") }
@@ -2547,7 +2683,10 @@ class CounterPosViewModel(
     }
 
     fun closeScanner() = _uiState.update {
-        val wasStaffScan = it.scannerMode == ScannerMode.ADMIN_QR && !session.value.isPlatformAdmin
+        val currentSession = session.value
+        val wasStaffScan = it.scannerMode == ScannerMode.ADMIN_QR &&
+            currentSession.isAuthenticated &&
+            !currentSession.isPlatformAdmin
         it.copy(
             isScannerOpen = false,
             unrecognizedBarcode = null,

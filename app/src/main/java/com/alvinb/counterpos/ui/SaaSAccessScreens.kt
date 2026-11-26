@@ -128,7 +128,9 @@ fun CounterPosApp(
                 onBarcodeNotRecognized = { payload ->
                     viewModel.closeScanner()
                     viewModel.signInWithCredential(payload)
-                }
+                },
+                scannerTitle = "SCAN ENROLLMENT QR",
+                scannerSubtitle = "Scan a Waiter, Butchery, or Superadmin passkey QR code."
             )
             !session.isAuthenticated && showRegisterScreen -> RegisterBusinessScreen(
                 viewModel = viewModel,
@@ -274,6 +276,13 @@ internal fun AuthScreen(
         (!isClub || parsedCounterCount in 1..50) && !isAuthenticating
 
     val visibleAuthError = error?.takeIf(String::isNotBlank)
+    val scrollState = rememberScrollState()
+
+    LaunchedEffect(showQrOrPasskey) {
+        if (showQrOrPasskey) {
+            scrollState.animateScrollTo(scrollState.maxValue)
+        }
+    }
 
     fun pasteFromClipboard() {
         val clipText = clipboardManager.getText()?.text
@@ -299,8 +308,8 @@ internal fun AuthScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .widthIn(max = 480.dp)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 24.dp)
+                .verticalScroll(scrollState)
+                .padding(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 36.dp)
                 .heightIn(min = maxHeight),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally

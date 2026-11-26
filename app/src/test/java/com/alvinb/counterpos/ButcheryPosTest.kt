@@ -30,6 +30,7 @@ import com.alvinb.counterpos.ui.ButcheryDailySalesScreen
 import com.alvinb.counterpos.ui.ButcheryPosScreen
 import com.alvinb.counterpos.ui.ButcheryReportScreen
 import com.alvinb.counterpos.ui.ButcherySettingsScreen
+import com.alvinb.counterpos.ui.CounterPosTheme
 import com.alvinb.counterpos.ui.CounterPosUiState
 import com.alvinb.counterpos.ui.OwnerSettingsScreen
 import com.alvinb.counterpos.ui.PdfDocumentSession
@@ -471,6 +472,8 @@ class ButcheryPosTest {
         }
         composeRule.waitForIdle()
 
+        composeRule.onNodeWithTag("butchery_settings_tab_payments").performClick()
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("butchery_custom_payment_input").performTextInput("Pochi 0712")
         composeRule.onNodeWithTag("butchery_add_payment_method_button").performClick()
         composeRule.waitForIdle()
@@ -731,7 +734,9 @@ class ButcheryPosTest {
         composeRule.onNodeWithTag("butchery_meat_type_pork_chops").performClick()
         composeRule.waitForIdle()
 
-        // Settings list below displays only the chosen Beef product
+        // Settings list on the Meats & Stock tab displays only the chosen Beef product
+        composeRule.onNodeWithTag("butchery_settings_tab_meats").performClick()
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("butchery_settings_list")
             .performScrollToNode(hasTestTag("butchery_edit_cut_${shopId}_beef"))
         composeRule.onNodeWithTag("butchery_edit_cut_${shopId}_beef").assertIsDisplayed()
@@ -1197,6 +1202,8 @@ class ButcheryPosTest {
         }
         composeRule.waitForIdle()
 
+        composeRule.onNodeWithTag("butchery_settings_tab_meats").performClick()
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("butchery_settings_list")
             .performScrollToNode(hasTestTag("butchery_add_cut_button"))
         composeRule.onNodeWithTag("butchery_add_cut_button").performClick()
@@ -1269,35 +1276,51 @@ class ButcheryPosTest {
         )
 
         composeRule.setContent {
-            OwnerSettingsScreen(
-                state = CounterPosUiState(),
-                businessName = "Savannah Club",
-                role = "owner",
-                registeredCounters = counters,
-                butcheryConfig = ButcheryConfigEntity(
-                    shopId = "shop-1",
-                    enabled = false,
-                    butcheryName = "Savannah Butchery",
-                    beefOnlyMode = false,
-                    defaultBeefPricePerKgKsh = 680
-                ),
-                onClose = {},
-                onBusinessNameSave = {},
-                onLoadMembers = {},
-                onCounterCreate = { addedCounterName = it },
-                onCounterRename = { _, _ -> },
-                onCounterDelete = {},
-                onSaveButcheryConfig = { enabled, _, _, _, _, _ -> toggledEnabled = enabled }
-            )
+            CounterPosTheme(darkTheme = true) {
+                OwnerSettingsScreen(
+                    state = CounterPosUiState(),
+                    businessName = "Savannah Club",
+                    role = "owner",
+                    registeredCounters = counters,
+                    butcheryConfig = ButcheryConfigEntity(
+                        shopId = "shop-1",
+                        enabled = false,
+                        butcheryName = "Savannah Butchery",
+                        beefOnlyMode = false,
+                        defaultBeefPricePerKgKsh = 680
+                    ),
+                    onClose = {},
+                    onBusinessNameSave = {},
+                    onLoadMembers = {},
+                    onCounterCreate = { addedCounterName = it },
+                    onCounterRename = { _, _ -> },
+                    onCounterDelete = {},
+                    onSaveButcheryConfig = { enabled, _, _, _, _, _ -> toggledEnabled = enabled }
+                )
+            }
         }
         composeRule.waitForIdle()
 
+        // General tab shows Business, Team & Waiters, Subscription without cluttering Counters or Butchery
         composeRule.onNodeWithText("Business").assertIsDisplayed()
         composeRule.onNodeWithText("Team & Waiters").assertIsDisplayed()
         composeRule.onNodeWithText("Subscription").assertIsDisplayed()
-        composeRule.onNodeWithText("Butchery Module").assertIsDisplayed()
+        composeRule.onNodeWithText("Service Counters").assertDoesNotExist()
+        composeRule.onNodeWithText("Butchery Module").assertDoesNotExist()
 
-        // Turn Butchery Module ON -> reveals concise fields + collapsible payment methods row
+        // Counters tab shows Service Counters and supports adding a counter
+        composeRule.onNodeWithTag("owner_settings_tab_counters").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Service Counters").assertIsDisplayed()
+        composeRule.onNodeWithTag("new_counter_name_input").performTextInput("Patio Bar")
+        composeRule.onNodeWithTag("add_counter_button").performClick()
+        composeRule.waitForIdle()
+        assertEquals("Patio Bar", addedCounterName)
+
+        // Butchery tab -> Turn Butchery Module ON -> reveals concise fields + collapsible payment methods row
+        composeRule.onNodeWithTag("owner_settings_tab_butchery").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Butchery Module").assertIsDisplayed()
         composeRule.onNodeWithTag("owner_settings_butchery_switch").performClick()
         composeRule.waitForIdle()
         assertEquals(true, toggledEnabled)
@@ -1310,5 +1333,60 @@ class ButcheryPosTest {
         composeRule.onNodeWithText("Payment Methods").performScrollTo().performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("butchery_custom_payment_input").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun butcherySettingsScreenDisplaysPriceMarginAndStockMetricChips() {
+        val shopId = "shop-butchery-chips"
+        val config = ButcheryConfigEntity(
+            shopId = shopId,
+            enabled = true,
+            butcheryName = "Prime Valley Meats",
+            beefOnlyMode = true,
+            defaultBeefPricePerKgKsh = 700,
+            enabledCategoriesJson = ButcheryPricing.serializeEnabledMeats(listOf("Beef"))
+        )
+        val cuts = listOf(
+            com.alvinb.counterpos.data.local.entity.ButcheryCutEntity(
+                id = "${shopId}_beef",
+                shopId = shopId,
+                name = "Beef",
+                category = "",
+                pricePerKgKsh = 700,
+                buyingPricePerKgKsh = 520,
+                stockGrams = 18_500,
+                iconKey = "beef",
+                active = true,
+                sortOrder = 1
+            )
+        )
+
+        composeRule.setContent {
+            // Render under CounterPosTheme(darkTheme = true) to verify ButcherySettingsScreen enforces light surface contrast
+            CounterPosTheme(darkTheme = true) {
+                ButcherySettingsScreen(
+                    config = config,
+                    cuts = cuts,
+                    businessName = "Prime Valley",
+                    ownerCanEdit = true,
+                    onBack = {},
+                    onSaveConfig = { _, _, _, _, _, _ -> },
+                    onApplyMeatPrice = { _, _ -> },
+                    onUpdateCutDetails = { _, _, _, _, _ -> },
+                    onToggleCutActive = { _, _ -> },
+                    onAddCut = { _, _, _, _ -> }
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("butchery_settings_tab_meats").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("butchery_settings_list")
+            .performScrollToNode(hasTestTag("butchery_edit_cut_${shopId}_beef"))
+        composeRule.onNodeWithText("Sell KES 700/kg").assertIsDisplayed()
+        composeRule.onNodeWithText("Buy KES 520/kg").assertIsDisplayed()
+        composeRule.onNodeWithText("+180/kg").assertIsDisplayed()
+        composeRule.onNodeWithText("18.5 kg").assertIsDisplayed()
     }
 }

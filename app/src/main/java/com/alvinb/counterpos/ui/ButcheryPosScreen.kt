@@ -85,6 +85,43 @@ internal object ButcheryPalette {
     val KeypadBorder = Color(0xFFE1E8E4)
 }
 
+private val ButcheryLightColorScheme = androidx.compose.material3.lightColorScheme(
+    primary = ButcheryPalette.EmeraldHeader,
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFD8F3E8),
+    onPrimaryContainer = Color(0xFF07553F),
+    secondary = ButcheryPalette.SlateButton,
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFE2E8F0),
+    onSecondaryContainer = Color(0xFF0F172A),
+    tertiary = Color(0xFF0F766E),
+    onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFCCFBF1),
+    onTertiaryContainer = Color(0xFF134E4A),
+    error = Color(0xFFB42318),
+    onError = Color.White,
+    errorContainer = Color(0xFFFEE4E2),
+    onErrorContainer = Color(0xFF7A271A),
+    background = ButcheryPalette.SoftSurface,
+    onBackground = Color(0xFF0F172A),
+    surface = Color.White,
+    onSurface = Color(0xFF0F172A),
+    surfaceVariant = Color(0xFFF1F5F9),
+    onSurfaceVariant = Color(0xFF475569),
+    outline = Color(0xFFCBD5E1),
+    outlineVariant = Color(0xFFE2E8F0)
+)
+
+@Composable
+internal fun ButcheryLightTheme(content: @Composable () -> Unit) {
+    MaterialTheme(
+        colorScheme = ButcheryLightColorScheme,
+        typography = MaterialTheme.typography,
+        shapes = MaterialTheme.shapes,
+        content = content
+    )
+}
+
 internal fun butcheryDrawableRes(iconKey: String): Int = when (iconKey.lowercase()) {
     "goat" -> R.drawable.img_butchery_goat
     "chicken" -> R.drawable.img_butchery_chicken

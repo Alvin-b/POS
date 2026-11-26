@@ -245,6 +245,17 @@ class SupabaseRestClient(context: Context) {
     suspend fun signIn(email: String, password: String): AuthSession =
         authenticate("password", email, password)
 
+    suspend fun establishSessionFromTokens(
+        accessToken: String,
+        refreshToken: String,
+        userId: String,
+        email: String?
+    ): AuthSession = withContext(Dispatchers.IO) {
+        val created = AuthSession(accessToken, refreshToken, userId, email)
+        saveSession(created)
+        created
+    }
+
     suspend fun redeemSuperadminToken(token: String): AuthSession = withContext(Dispatchers.IO) {
         val cleanToken = token.trim()
         require(cleanToken.isNotBlank()) { "Enter the current Superadmin token." }
@@ -324,6 +335,15 @@ class SupabaseRestClient(context: Context) {
             )
         )
 
+    private fun normalizeAccessChallengeToken(raw: String): String {
+        val trimmed = raw.trim()
+        return if (trimmed.startsWith("CPR1|", ignoreCase = true)) {
+            trimmed.substring(5).trim()
+        } else {
+            trimmed
+        }
+    }
+
     suspend fun createAccessChallenge(): JSONObject = parseObject(withNetworkRetry {
         request(
             "/functions/v1/create-access-challenge",
@@ -334,21 +354,52 @@ class SupabaseRestClient(context: Context) {
     })
 
     suspend fun pollAccessChallenge(token: String): JSONObject = parseObject(withNetworkRetry {
-        request("/functions/v1/poll-access-challenge", "POST", JSONObject().put("token", token).toString(), false)
+        request(
+            "/functions/v1/poll-access-challenge",
+            "POST",
+            JSONObject().put("token", normalizeAccessChallengeToken(token)).toString(),
+            false
+        )
     })
 
-    suspend fun approveAccessChallenge(token: String, shopId: String, role: String, station: String? = null): JSONObject =
-        parseObject(request(
-            "/functions/v1/approve-access-challenge",
-            "POST",
-            JSONObject()
-                .put("token", token)
+    suspend fun approveAccessChallenge(
+        token: String,
+        shopId: String,
+        role: String,
+        station: String? = null,
+        stationName: String? = null
+    ): JSONObject {
+        val cleanToken = normalizeAccessChallengeToken(token)
+        val cleanStation = station?.trim()?.takeIf { it.isNotEmpty() }
+        val cleanStationName = stationName?.trim()?.takeIf { it.isNotEmpty() }
+        val fullPayload = JSONObject()
+            .put("token", cleanToken)
+            .put("shop_id", shopId)
+            .put("role", role)
+            .apply {
+                if (cleanStation != null) put("station", cleanStation)
+                if (cleanStationName != null) put("station_name", cleanStationName)
+            }
+        return try {
+            parseObject(request("/functions/v1/approve-access-challenge", "POST", fullPayload.toString(), true))
+        } catch (error: SupabaseApiException) {
+            val msg = error.message.orEmpty().lowercase()
+            val shouldFallbackLegacy = (error.statusCode == HttpURLConnection.HTTP_BAD_REQUEST || error.statusCode == 422) &&
+                (cleanStation != null || cleanStationName != null) &&
+                !msg.contains("expired") &&
+                !msg.contains("used") &&
+                !msg.contains("not_found") &&
+                !msg.contains("not found") &&
+                !msg.contains("forbidden") &&
+                !msg.contains("unauthorized")
+            if (!shouldFallbackLegacy) throw error
+            val minimalPayload = JSONObject()
+                .put("token", cleanToken)
                 .put("shop_id", shopId)
                 .put("role", role)
-                .putNullable("station", station?.takeIf { it.isNotBlank() })
-                .toString(),
-            true
-        ))
+            parseObject(request("/functions/v1/approve-access-challenge", "POST", minimalPayload.toString(), true))
+        }
+    }
 
     suspend fun listShopMembers(shopId: String): JSONArray =
         rpcArray("admin_list_shop_members", JSONObject().put("_shop", shopId))
@@ -1579,7 +1630,7 @@ class SupabaseRestClient(context: Context) {
         return try {
             rpcObject("admin_set_shop_payment_lock", payload)
         } catch (error: Exception) {
-            val messages = generateSequence(error) { it.cause }
+            val messages = generateSequence<Throwable>(error) { it.cause }
                 .mapNotNull { it.message }
                 .toList()
             val missingRpc = (error is SupabaseApiException && error.statusCode == 404) ||

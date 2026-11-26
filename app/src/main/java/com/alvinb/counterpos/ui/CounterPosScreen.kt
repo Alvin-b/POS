@@ -301,6 +301,16 @@ fun CounterPosWorkspace(
 
     // Camera Scanner view
     if (state.isScannerOpen) {
+        val enrollTitle = if (state.scannerMode == ScannerMode.ADMIN_QR) {
+            if (state.staffEnrollmentStation == "butchery") "BUTCHERY ENROLLMENT QR" else "STAFF ENROLLMENT QR"
+        } else null
+        val enrollSubtitle = if (state.scannerMode == ScannerMode.ADMIN_QR) {
+            if (state.staffEnrollmentStation == "butchery") {
+                "Scan the sign-in QR shown on the butchery phone to link it to this business."
+            } else {
+                "Scan the sign-in QR shown on the employee phone to enroll them as a waiter."
+            }
+        } else null
         BarcodeScannerScreen(
             mode = state.scannerMode,
             products = products,
@@ -310,7 +320,9 @@ fun CounterPosWorkspace(
             onProductScannedForTable = viewModel::handleScannedTableProduct,
             onAdminQrCodeScanned = viewModel::handleAdminQrCode,
             onBarcodeAssigned = viewModel::handleAssignedBarcode,
-            onBarcodeNotRecognized = viewModel::handleUnrecognizedBarcode
+            onBarcodeNotRecognized = viewModel::handleUnrecognizedBarcode,
+            scannerTitle = enrollTitle,
+            scannerSubtitle = enrollSubtitle
         )
         return
     }

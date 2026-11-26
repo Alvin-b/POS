@@ -166,6 +166,12 @@ interface CounterPosDao {
     suspend fun markTransactionLogCancelledBySale(saleId: Long, updatedAt: Long)
 
     @Query(
+        "UPDATE offline_transaction_logs SET status = 'CANCELLED', lastError = NULL, updatedAt = :updatedAt " +
+            "WHERE operationId = :operationId AND status <> 'SYNCED'"
+    )
+    suspend fun markTransactionLogCancelled(operationId: String, updatedAt: Long)
+
+    @Query(
         "UPDATE offline_transaction_logs SET status = 'QUEUED', lastError = NULL, updatedAt = :updatedAt " +
             "WHERE shopId = :shopId AND status IN ('BLOCKED', 'RETRY_WAITING')"
     )

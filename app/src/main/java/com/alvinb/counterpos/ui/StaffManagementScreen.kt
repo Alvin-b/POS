@@ -208,6 +208,7 @@ fun StaffManagementScreen(
         when {
             !state.actionError.isNullOrBlank() -> snackbarHostState.showSnackbar(state.actionError)
             state.notice == "Business hours saved." -> snackbarHostState.showSnackbar("Business hours saved. POS access rules updated.")
+            !state.notice.isNullOrBlank() -> snackbarHostState.showSnackbar(state.notice)
         }
     }
 
@@ -662,6 +663,23 @@ private fun EnrollWaitersTabContent(
                         color = MaterialTheme.colorScheme.onErrorContainer,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+            } else if (!state.notice.isNullOrBlank()) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFE8F5EE),
+                    border = BorderStroke(1.dp, ButcheryPalette.EmeraldHeader.copy(alpha = 0.35f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("staff_enroll_notice_banner")
+                ) {
+                    Text(
+                        text = state.notice,
+                        color = ButcheryPalette.EmeraldHeader,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.padding(12.dp)
                     )
                 }

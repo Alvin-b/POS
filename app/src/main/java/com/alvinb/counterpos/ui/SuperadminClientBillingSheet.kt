@@ -691,14 +691,14 @@ internal fun AdminClientBillingSheet(
                         val daysInt = planDaysText.toIntOrNull()
                         val endsIso = customEndsAt.trim().takeIf(String::isNotBlank)
                             ?: if (selectedStatus == "active" && daysInt != null && daysInt > 0) {
-                                java.time.Instant.ofEpochMilli(System.currentTimeMillis() + daysInt * 86_400_000L).toString()
+                                com.alvinb.counterpos.data.SubscriptionManager.formatUtcIso(System.currentTimeMillis() + daysInt * 86_400_000L)
                             } else {
                                 null
                             }
                         val trialIso = trialEndsAtText.trim().takeIf(String::isNotBlank)
                             ?: if (selectedStatus == "trial") {
                                 val trialDays = (parsedCustomTrialDays ?: 14)
-                                java.time.Instant.ofEpochMilli(System.currentTimeMillis() + trialDays * 86_400_000L).toString()
+                                com.alvinb.counterpos.data.SubscriptionManager.formatUtcIso(System.currentTimeMillis() + trialDays * 86_400_000L)
                             } else {
                                 null
                             }

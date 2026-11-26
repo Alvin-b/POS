@@ -141,28 +141,58 @@ class SubscriptionManager(context: Context) {
             .firstNotNullOfOrNull { candidate -> normalizeKenyanPhone(candidate)?.let(::formatPhoneForDisplay) }
             .orEmpty()
 
-    /** Parses ISO 8601 or Postgres UTC timestamps (including +00/+00:00 offsets) to epoch millis. */
+    /** Formats epoch milliseconds as an ISO-8601 UTC timestamp compatible with API 24+. */
+    fun formatUtcIso(timestampMillis: Long): String {
+        return SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("UTC")
+        }.format(Date(timestampMillis))
+    }
+
+    /** Parses ISO 8601 or Postgres UTC timestamps (including +00/+00:00 offsets) to epoch millis without API 26+ APIs. */
     fun parseTimestamp(iso: String?): Long? {
         val trimmed = iso?.trim()?.takeIf {
             it.isNotEmpty() && !it.equals("null", ignoreCase = true) && !it.equals("undefined", ignoreCase = true)
         } ?: return null
 
-        val isoCandidate = trimmed
-            .replace(' ', 'T')
-            .let { value ->
-                if (Regex(".*[+-]\\d{2}$").matches(value)) "$value:00" else value
-            }
+        val match = ISO_TIMESTAMP_REGEX.matchEntire(trimmed) ?: return null
+        val year = match.groupValues[1].toIntOrNull() ?: return null
+        val month = match.groupValues[2].toIntOrNull() ?: return null
+        val day = match.groupValues[3].toIntOrNull() ?: return null
+        val hour = match.groupValues[4].takeIf(String::isNotEmpty)?.toIntOrNull() ?: 0
+        val minute = match.groupValues[5].takeIf(String::isNotEmpty)?.toIntOrNull() ?: 0
+        val second = match.groupValues[6].takeIf(String::isNotEmpty)?.toIntOrNull() ?: 0
+        val fracRaw = match.groupValues[7]
+        val millis = if (fracRaw.isEmpty()) {
+            0
+        } else {
+            fracRaw.take(3).padEnd(3, '0').toIntOrNull() ?: return null
+        }
 
-        return runCatching { java.time.Instant.parse(trimmed).toEpochMilli() }.getOrNull()
-            ?: runCatching { java.time.OffsetDateTime.parse(isoCandidate).toInstant().toEpochMilli() }.getOrNull()
-            ?: listOf("yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd").firstNotNullOfOrNull { pattern ->
-                runCatching {
-                    SimpleDateFormat(pattern, Locale.US).apply {
-                        timeZone = java.util.TimeZone.getTimeZone("UTC")
-                    }.parse(trimmed)?.time
-                }.getOrNull()
-            }
+        val tzPart = match.groupValues[8]
+        val offsetMillis = if (tzPart.isEmpty() || tzPart.equals("Z", ignoreCase = true)) {
+            0L
+        } else {
+            val sign = if (tzPart[0] == '-') -1 else 1
+            val tzHour = tzPart.substring(1, 3).toIntOrNull() ?: return null
+            val tzMin = match.groupValues[9].takeIf(String::isNotEmpty)?.toIntOrNull() ?: 0
+            if (tzHour > 23 || tzMin > 59) return null
+            sign * ((tzHour * 60L + tzMin) * 60_000L)
+        }
+
+        return runCatching {
+            val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"), Locale.US)
+            cal.isLenient = false
+            cal.clear()
+            cal.set(year, month - 1, day, hour, minute, second)
+            cal.set(java.util.Calendar.MILLISECOND, millis)
+            cal.timeInMillis - offsetMillis
+        }.getOrNull()
     }
+
+    private val ISO_TIMESTAMP_REGEX = Regex(
+        """^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?)?(Z|[+-]\d{2}(?::?(\d{2}))?)?$""",
+        RegexOption.IGNORE_CASE
+    )
 
     /** Formats timestamp to readable format (e.g. 24 Nov 2026). */
     fun formatDate(timestampMillis: Long): String {

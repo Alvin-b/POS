@@ -16,8 +16,14 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
+import com.alvinb.counterpos.data.CounterPosRepository
+import com.alvinb.counterpos.data.SessionSnapshot
+import com.alvinb.counterpos.data.butchery.ButcheryPricing
+import com.alvinb.counterpos.data.local.entity.ButcheryConfigEntity
 import com.alvinb.counterpos.data.remote.SupabaseRestClient
 import com.alvinb.counterpos.ui.AuthScreen
+import com.alvinb.counterpos.ui.ButcherySettingsScreen
+import com.alvinb.counterpos.ui.CounterPosTheme
 import com.alvinb.counterpos.ui.CounterPosUiState
 import com.alvinb.counterpos.ui.StaffManagementScreen
 import org.json.JSONArray
@@ -450,5 +456,77 @@ class StaffEnrollmentTest {
         composeRule.onNodeWithTag("qr_fallback_card").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("QR code expired").assertIsDisplayed()
         composeRule.onNodeWithText("This QR code has expired or was already used. Tap Refresh QR to generate a new one.").assertIsDisplayed()
+    }
+
+    @Test
+    fun approvedAccessTracksButcheryStationFlagExplicitly() {
+        val session = SessionSnapshot(
+            isAuthenticated = true,
+            email = "butchery@club.test",
+            isPlatformAdmin = false,
+            memberships = emptyList(),
+            activeBusiness = null
+        )
+        val waiterAccess = CounterPosRepository.ApprovedAccess(
+            session = session,
+            businessId = "shop-1"
+        )
+        val butcheryAccess = CounterPosRepository.ApprovedAccess(
+            session = session,
+            businessId = "shop-1",
+            isButchery = true
+        )
+
+        assertFalse(waiterAccess.isButchery)
+        assertTrue(butcheryAccess.isButchery)
+        assertEquals("shop-1", butcheryAccess.businessId)
+    }
+
+    @Test
+    fun butcherySettingsScreenSwitchesCleanlyBetweenStationMeatsAndPaymentsTabs() {
+        val shopId = "shop-tabs-ui"
+        val config = ButcheryConfigEntity(
+            shopId = shopId,
+            enabled = true,
+            butcheryName = "Prime Butchery",
+            beefOnlyMode = false,
+            defaultBeefPricePerKgKsh = 680
+        )
+        composeRule.setContent {
+            CounterPosTheme(darkTheme = true) {
+                ButcherySettingsScreen(
+                    config = config,
+                    cuts = ButcheryPricing.defaultCuts(shopId, 680),
+                    businessName = "Prime Club",
+                    ownerCanEdit = true,
+                    onBack = {},
+                    onSaveConfig = { _, _, _, _, _, _ -> },
+                    onApplyMeatPrice = { _, _ -> },
+                    onUpdateCutDetails = { _, _, _, _, _ -> },
+                    onToggleCutActive = { _, _ -> },
+                    onAddCut = { _, _, _, _ -> },
+                    onOpenButcheryEnrollment = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        // Station tab shows identity, rate, and enroll phone controls without payment editor or meat list
+        composeRule.onNodeWithTag("butchery_name_input").assertIsDisplayed()
+        composeRule.onNodeWithTag("butchery_settings_enroll_device_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("butchery_settings_list").assertDoesNotExist()
+        composeRule.onNodeWithTag("butchery_custom_payment_input").assertDoesNotExist()
+
+        // Meats & Stock tab shows meat list & Add Meat CTA
+        composeRule.onNodeWithTag("butchery_settings_tab_meats").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("butchery_settings_list").assertIsDisplayed()
+        composeRule.onNodeWithTag("butchery_add_cut_button").assertIsDisplayed()
+
+        // Payments tab shows payment editor & Save button
+        composeRule.onNodeWithTag("butchery_settings_tab_payments").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("butchery_custom_payment_input").assertIsDisplayed()
+        composeRule.onNodeWithTag("butchery_save_settings_button").assertIsDisplayed()
     }
 }

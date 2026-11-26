@@ -20,11 +20,13 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.Placeable
 import androidx.compose.ui.platform.testTag
@@ -69,6 +72,9 @@ fun ButcheryPaymentMethodsEditor(
         }
     }
 
+    val isLightSurface = MaterialTheme.colorScheme.surface.luminance() >= 0.5f
+    val accentColor = if (isLightSurface) ButcheryPalette.EmeraldHeader else Color(0xFF5EE6B0)
+
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -85,7 +91,7 @@ fun ButcheryPaymentMethodsEditor(
                 Icon(
                     imageVector = Icons.Default.Payments,
                     contentDescription = null,
-                    tint = ButcheryPalette.EmeraldHeader,
+                    tint = accentColor,
                     modifier = Modifier.size(16.dp)
                 )
                 Text(
@@ -111,8 +117,8 @@ fun ButcheryPaymentMethodsEditor(
             methods.forEachIndexed { index, method ->
                 Surface(
                     shape = RoundedCornerShape(10.dp),
-                    color = ButcheryPalette.EmeraldHeader.copy(alpha = 0.10f),
-                    border = BorderStroke(1.dp, ButcheryPalette.EmeraldHeader.copy(alpha = 0.45f)),
+                    color = accentColor.copy(alpha = 0.12f),
+                    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.45f)),
                     modifier = Modifier.testTag("butchery_configured_method_$index")
                 ) {
                     Row(
@@ -123,7 +129,7 @@ fun ButcheryPaymentMethodsEditor(
                             text = method,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = ButcheryPalette.EmeraldHeader
+                            color = accentColor
                         )
                         if (methods.size > 1 && enabled) {
                             IconButton(
@@ -137,7 +143,7 @@ fun ButcheryPaymentMethodsEditor(
                                 Icon(
                                     imageVector = Icons.Default.Close,
                                     contentDescription = "Remove $method",
-                                    tint = ButcheryPalette.EmeraldHeader,
+                                    tint = accentColor,
                                     modifier = Modifier.size(14.dp)
                                 )
                             }
@@ -159,6 +165,16 @@ fun ButcheryPaymentMethodsEditor(
                     label = { Text("Add payment method") },
                     placeholder = { Text("e.g. Till 8291, Pochi, Card") },
                     singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        focusedLabelColor = accentColor,
+                        unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        focusedBorderColor = accentColor,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                    ),
                     modifier = Modifier
                         .weight(1f)
                         .testTag("butchery_custom_payment_input")
@@ -172,7 +188,7 @@ fun ButcheryPaymentMethodsEditor(
                         methods.none { it.equals(customInput.trim(), ignoreCase = true) },
                     shape = RoundedCornerShape(10.dp),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ButcheryPalette.EmeraldHeader),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = accentColor),
                     modifier = Modifier
                         .height(52.dp)
                         .testTag("butchery_add_payment_method_button")
@@ -197,7 +213,7 @@ fun ButcheryPaymentMethodsEditor(
                         FilterChip(
                             selected = false,
                             onClick = { addMethod(suggestion) },
-                            label = { Text("+ $suggestion", fontSize = 11.sp) },
+                            label = { Text("+ $suggestion", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface) },
                             modifier = Modifier.testTag("butchery_suggest_method_$tagSuffix")
                         )
                     }
@@ -224,6 +240,9 @@ fun ButcheryMeatTypesEditor(
     }
     val singleSelected = selectedMeats.size == 1
 
+    val isLightSurface = MaterialTheme.colorScheme.surface.luminance() >= 0.5f
+    val accentColor = if (isLightSurface) ButcheryPalette.EmeraldHeader else Color(0xFF5EE6B0)
+
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -241,12 +260,12 @@ fun ButcheryMeatTypesEditor(
             )
             Surface(
                 shape = RoundedCornerShape(999.dp),
-                color = if (singleSelected) ButcheryPalette.EmeraldHeader.copy(alpha = 0.12f) else Color(0xFFF1F5F9)
+                color = if (singleSelected) accentColor.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant
             ) {
                 Text(
                     text = if (singleSelected) "${selectedMeats.first()} only" else "${selectedMeats.size} active",
                     fontSize = 11.sp,
-                    color = if (singleSelected) ButcheryPalette.EmeraldHeader else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (singleSelected) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                 )
@@ -278,6 +297,11 @@ fun ButcheryMeatTypesEditor(
                             )
                         }
                     },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = accentColor.copy(alpha = if (isLightSurface) 0.15f else 0.22f),
+                        selectedLabelColor = if (isLightSurface) Color(0xFF07553F) else Color(0xFFBFFAE1),
+                        labelColor = MaterialTheme.colorScheme.onSurface
+                    ),
                     label = {
                         Text(
                             text = meat,
@@ -292,7 +316,7 @@ fun ButcheryMeatTypesEditor(
                 FilterChip(
                     selected = false,
                     onClick = { onMeatsChange(allMeats) },
-                    label = { Text("Select All", fontSize = 12.sp) },
+                    label = { Text("Select All", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface) },
                     modifier = Modifier.testTag("butchery_meat_type_all")
                 )
             }

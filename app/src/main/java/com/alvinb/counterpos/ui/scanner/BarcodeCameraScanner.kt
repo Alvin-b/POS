@@ -127,7 +127,9 @@ fun BarcodeScannerScreen(
     onProductScannedForTable: (ProductEntity) -> Unit,
     onAdminQrCodeScanned: (String) -> Unit,
     onBarcodeAssigned: (String) -> Unit,
-    onBarcodeNotRecognized: (String) -> Unit
+    onBarcodeNotRecognized: (String) -> Unit,
+    scannerTitle: String? = null,
+    scannerSubtitle: String? = null
 ) {
     val context = LocalContext.current
     var hasCameraPermission by remember {
@@ -158,7 +160,9 @@ fun BarcodeScannerScreen(
             onProductScannedForTable = onProductScannedForTable,
             onAdminQrCodeScanned = onAdminQrCodeScanned,
             onBarcodeAssigned = onBarcodeAssigned,
-            onBarcodeNotRecognized = onBarcodeNotRecognized
+            onBarcodeNotRecognized = onBarcodeNotRecognized,
+            scannerTitle = scannerTitle,
+            scannerSubtitle = scannerSubtitle
         )
     } else {
         PermissionRequiredScreen(
@@ -181,7 +185,9 @@ private fun CameraScannerView(
     onProductScannedForTable: (ProductEntity) -> Unit,
     onAdminQrCodeScanned: (String) -> Unit,
     onBarcodeAssigned: (String) -> Unit,
-    onBarcodeNotRecognized: (String) -> Unit
+    onBarcodeNotRecognized: (String) -> Unit,
+    scannerTitle: String? = null,
+    scannerSubtitle: String? = null
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -194,6 +200,7 @@ private fun CameraScannerView(
     var lastScannedProduct by remember { mutableStateOf<ProductEntity?>(null) }
     var lastScannedTime by remember { mutableLongStateOf(0L) }
     var scanSuccessFlash by remember { mutableStateOf(false) }
+    var singleScanLockedUntil by remember(mode) { mutableLongStateOf(0L) }
 
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
 
@@ -243,6 +250,9 @@ private fun CameraScannerView(
 
     fun onBarcodeDetected(rawBarcode: String) {
         val now = System.currentTimeMillis()
+        if ((mode == ScannerMode.ADMIN_QR || mode == ScannerMode.ASSIGN_BARCODE) && now < singleScanLockedUntil) {
+            return
+        }
         // Debounce if same barcode scanned in last 1.8 seconds
         if (rawBarcode == lastScannedBarcode && (now - lastScannedTime) < 1800) {
             return
@@ -250,6 +260,9 @@ private fun CameraScannerView(
 
         lastScannedBarcode = rawBarcode
         lastScannedTime = now
+        if (mode == ScannerMode.ADMIN_QR || mode == ScannerMode.ASSIGN_BARCODE) {
+            singleScanLockedUntil = now + 4_000L
+        }
         scanSuccessFlash = true
 
         triggerHapticAndTone(context, toneGenerator)
@@ -457,10 +470,10 @@ private fun CameraScannerView(
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
-                            text = when (mode) {
+                            text = scannerTitle?.takeIf(String::isNotBlank) ?: when (mode) {
                                 ScannerMode.SELL -> "FIND PRODUCT TO SELL"
                                 ScannerMode.TABLE_ADD -> "ADD TO TABLE BILL"
-                                ScannerMode.ADMIN_QR -> "ADMIN ENROLLMENT QR"
+                                ScannerMode.ADMIN_QR -> "ENROLLMENT QR"
                                 ScannerMode.ASSIGN_BARCODE -> "LINK PRODUCT BARCODE"
                                 else -> "FIND PRODUCT TO RESTOCK"
                             },
@@ -509,12 +522,13 @@ private fun CameraScannerView(
 
             if (mode == ScannerMode.SELL || mode == ScannerMode.TABLE_ADD || mode == ScannerMode.ADMIN_QR) {
                 Text(
-                    if (mode == ScannerMode.ADMIN_QR) {
-                        "Scan a CounterPOS business or user enrollment QR. The backend still verifies superadmin permission and registered accounts."
-                    } else if (mode == ScannerMode.TABLE_ADD) {
-                        "Scan an in-stock drink to add it to this table’s bill. Confirm the quantity and sale unit next."
-                    } else {
-                        "Scan a barcode to sell one unit immediately and deduct it from stock."
+                    scannerSubtitle?.takeIf(String::isNotBlank) ?: when (mode) {
+                        ScannerMode.ADMIN_QR ->
+                            "Scan a CounterPOS sign-in or enrollment QR code."
+                        ScannerMode.TABLE_ADD ->
+                            "Scan an in-stock drink to add it to this table’s bill. Confirm the quantity and sale unit next."
+                        else ->
+                            "Scan a barcode to sell one unit immediately and deduct it from stock."
                     },
                     color = Color(0xFFD1D5DB),
                     fontSize = 11.sp,
@@ -726,12 +740,14 @@ private fun handleBarcodeResult(
     val cpxIdx = clean.indexOf("CPX1.", ignoreCase = true)
     val cpbIdx = clean.indexOf("CPB1.", ignoreCase = true)
     val cptIdx = clean.indexOf("CPT1|", ignoreCase = true)
-    if (cprIdx >= 0 || cpxIdx >= 0 || cpbIdx >= 0 || cptIdx >= 0) {
+    val cpsaIdx = clean.indexOf("CPSA1|", ignoreCase = true)
+    if (cprIdx >= 0 || cpxIdx >= 0 || cpbIdx >= 0 || cptIdx >= 0 || cpsaIdx >= 0) {
         val token = when {
-            cprIdx >= 0 -> clean.substring(cprIdx)
-            cpxIdx >= 0 -> clean.substring(cpxIdx)
-            cpbIdx >= 0 -> clean.substring(cpbIdx)
-            else -> clean.substring(cptIdx)
+            cprIdx >= 0 -> clean.substring(cprIdx).trim()
+            cpxIdx >= 0 -> clean.substring(cpxIdx).trim()
+            cpbIdx >= 0 -> clean.substring(cpbIdx).trim()
+            cptIdx >= 0 -> clean.substring(cptIdx).trim()
+            else -> clean.substring(cpsaIdx).trim()
         }
         onAdminQrCodeScanned(token)
         return
