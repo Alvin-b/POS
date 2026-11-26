@@ -778,7 +778,19 @@ class CounterPosViewModel(
                     )
                 }
                 val friendly = if (qrReadFailure) {
-                    "This phone could not read its QR enrollment request from the backend. Tap Refresh QR to try again; if it continues, apply the QR enrollment database migration and redeploy the enrollment Edge Functions."
+                    val extraDetail = message
+                        .substringAfter("could_not_read_qr", "")
+                        .trim()
+                        .removePrefix(":")
+                        .trim()
+                        .takeIf { it.isNotBlank() }
+                    buildString {
+                        append("This phone could not read its QR enrollment request from the backend. Tap Refresh QR to try again; if it continues, apply the QR enrollment database migration and redeploy the enrollment Edge Functions.")
+                        if (extraDetail != null) {
+                            append("\nDetails: ")
+                            append(extraDetail)
+                        }
+                    }
                 } else if (message.contains("expired", ignoreCase = true) ||
                     message.contains("used", ignoreCase = true) ||
                     message.contains("consumed", ignoreCase = true)

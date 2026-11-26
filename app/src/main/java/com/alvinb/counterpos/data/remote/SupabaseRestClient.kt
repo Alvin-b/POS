@@ -357,7 +357,10 @@ class SupabaseRestClient(context: Context) {
         request(
             "/functions/v1/poll-access-challenge",
             "POST",
-            JSONObject().put("token", normalizeAccessChallengeToken(token)).toString(),
+            JSONObject()
+                .put("token", normalizeAccessChallengeToken(token))
+                .put("device_id", installationId)
+                .toString(),
             false
         )
     })
@@ -1961,7 +1964,9 @@ class SupabaseRestClient(context: Context) {
                 }
             }
         }
-        when (raw) {
+        val extraDetail = json.optString("details").takeIf(String::isNotBlank)
+            ?: json.optString("hint").takeIf(String::isNotBlank)
+        val mapped = when (raw) {
             "subscription_expired" -> "Subscription expired. Your saved POS changes remain on this phone and will sync after the business renews."
             "business_payment_locked" -> "This business is payment-locked by the platform administrator. Saved POS changes are retained until access is restored."
             "passkey_not_found" -> "Passkey not recognized or already redeemed. Ask the business owner for a new passkey."
@@ -1970,6 +1975,11 @@ class SupabaseRestClient(context: Context) {
                 "Email not confirmed. Check your inbox (including spam) for the confirmation message before signing in."
             "Invalid login credentials" -> "Invalid email or password. Check both and try again."
             else -> raw
+        }
+        if (extraDetail != null && !mapped.contains(extraDetail, ignoreCase = true) && mapped == raw) {
+            "$mapped: $extraDetail"
+        } else {
+            mapped
         }
     }.getOrDefault(body.ifBlank { "Request failed ($status)" })
 

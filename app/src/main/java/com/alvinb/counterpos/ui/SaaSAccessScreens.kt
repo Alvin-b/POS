@@ -3,6 +3,7 @@ package com.alvinb.counterpos.ui
 import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -57,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
@@ -865,17 +867,35 @@ internal fun AuthScreen(
                     FilterChip(
                         selected = !isButcheryQr,
                         onClick = { onSelectQrStation("waiter") },
-                        label = { Text("Waiter / POS", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
+                        label = {
+                            Text(
+                                "Waiter / POS",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
                         modifier = Modifier
                             .weight(1f)
+                            .heightIn(min = 48.dp)
                             .testTag("qr_station_waiter")
                     )
                     FilterChip(
                         selected = isButcheryQr,
                         onClick = { onSelectQrStation("butchery") },
-                        label = { Text("Butchery Station", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
+                        label = {
+                            Text(
+                                "Butchery Station",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
                         modifier = Modifier
                             .weight(1f)
+                            .heightIn(min = 48.dp)
                             .testTag("qr_station_butchery")
                     )
                 }
@@ -1019,32 +1039,61 @@ internal fun AuthScreen(
                         )
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             OutlinedButton(
                                 onClick = onOpenScanner,
-                                modifier = Modifier.weight(1f).testTag("scan_enrollment_qr_button")
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 48.dp)
+                                    .testTag("scan_enrollment_qr_button")
                             ) {
-                                Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Scan QR", maxLines = 1)
+                                Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "Scan QR",
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
                             OutlinedButton(
                                 onClick = { pasteFromClipboard() },
-                                modifier = Modifier.weight(1f).testTag("paste_passkey_button")
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 48.dp)
+                                    .testTag("paste_passkey_button")
                             ) {
-                                Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Paste", maxLines = 1)
+                                Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "Paste",
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
-                            Button(
-                                onClick = { onCredentialSignIn(credential.trim()) },
-                                enabled = credential.isNotBlank() && !isAuthenticating,
-                                modifier = Modifier.weight(1.1f).testTag("continue_signin_button")
-                            ) {
-                                if (isAuthenticating) {
-                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                                } else Text("Continue", maxLines = 1)
+                        }
+                        Button(
+                            onClick = { onCredentialSignIn(credential.trim()) },
+                            enabled = credential.isNotBlank() && !isAuthenticating,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("continue_signin_button")
+                        ) {
+                            if (isAuthenticating) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text("Signing in…", maxLines = 1)
+                            } else {
+                                Text("Continue", maxLines = 1)
                             }
                         }
                     }

@@ -456,6 +456,13 @@ class StaffEnrollmentTest {
         composeRule.onNodeWithTag("qr_fallback_card").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("QR code expired").assertIsDisplayed()
         composeRule.onNodeWithText("This QR code has expired or was already used. Tap Refresh QR to generate a new one.").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("scan_enrollment_qr_button").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Scan QR").assertIsDisplayed()
+        composeRule.onNodeWithTag("paste_passkey_button").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Paste").assertIsDisplayed()
+        composeRule.onNodeWithTag("continue_signin_button").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Continue").assertIsDisplayed()
     }
 
     @Test

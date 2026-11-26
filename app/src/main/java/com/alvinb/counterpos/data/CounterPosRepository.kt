@@ -403,25 +403,38 @@ class CounterPosRepository(
         if (isButcheryPass) {
             ensureLocalButcheryFallback(enrolledShopId)
         }
-        loadAccount(autoSelectSingleBusiness = true, preferredShopId = enrolledShopId)
+        val session = loadAccount(autoSelectSingleBusiness = true, preferredShopId = enrolledShopId)
+        if (isButcheryPass) {
+            ensureLocalButcheryFallback(enrolledShopId)
+        }
+        session
     }
 
     private suspend fun ensureLocalButcheryFallback(
         shopId: String,
         butcheryName: String = ""
     ) {
-        if (dao.getButcheryConfig(shopId) != null) return
+        val existingConfig = dao.getButcheryConfig(shopId)
+        val existingCuts = dao.getButcheryCuts(shopId)
+        if (existingConfig != null && existingConfig.enabled && existingCuts.isNotEmpty()) return
         runCatching {
+            val defaultRate = existingConfig?.defaultBeefPricePerKgKsh?.takeIf { it > 0 } ?: 680
             dao.enrollButchery(
-                config = ButcheryConfigEntity(
+                config = existingConfig?.copy(
+                    enabled = true,
+                    butcheryName = existingConfig.butcheryName.ifBlank {
+                        butcheryName.trim().ifBlank { "Butchery Counter" }
+                    },
+                    updatedAt = System.currentTimeMillis()
+                ) ?: ButcheryConfigEntity(
                     shopId = shopId,
                     enabled = true,
                     butcheryName = butcheryName.trim().ifBlank { "Butchery Counter" },
                     beefOnlyMode = false,
-                    defaultBeefPricePerKgKsh = 680,
+                    defaultBeefPricePerKgKsh = defaultRate,
                     updatedAt = System.currentTimeMillis()
                 ),
-                starterCuts = ButcheryPricing.defaultCuts(shopId, 680)
+                starterCuts = if (existingCuts.isEmpty()) ButcheryPricing.defaultCuts(shopId, defaultRate) else emptyList()
             )
         }
     }
@@ -450,6 +463,20 @@ class CounterPosRepository(
                 paymentMethods = existing?.paymentMethodsJson?.let { ButcheryPricing.parsePaymentMethods(it) },
                 enabledMeats = existing?.let { ButcheryPricing.resolveEnabledMeats(it) }
             )
+            // Also push immediately when online so a Butchery phone completing QR enrollment
+            // pulls the enabled config right away instead of waiting for background outbox flush.
+            runCatching {
+                val latest = dao.getButcheryConfig(shop.shopId) ?: return@runCatching
+                remote.upsertButcheryConfig(
+                    shopId = shop.shopId,
+                    enabled = true,
+                    butcheryName = latest.butcheryName,
+                    beefOnlyMode = latest.beefOnlyMode,
+                    defaultBeefPricePerKgKsh = latest.defaultBeefPricePerKgKsh,
+                    paymentMethods = JSONArray(latest.paymentMethodsJson),
+                    enabledCategories = JSONArray(latest.enabledCategoriesJson)
+                )
+            }
         }
     }
 
@@ -547,9 +574,14 @@ class CounterPosRepository(
         val resolvedButchery = isButcheryStation ||
             session.activeBusiness?.role.equals("butchery", ignoreCase = true) ||
             remote.isButcheryDeviceShop(shopId)
-        if (resolvedButchery && !remote.isButcheryDeviceShop(shopId)) {
-            remote.saveButcheryDeviceShopId(shopId)
-            ensureLocalButcheryFallback(shopId)
+        if (resolvedButchery) {
+            if (!remote.isButcheryDeviceShop(shopId)) {
+                remote.saveButcheryDeviceShopId(shopId)
+            }
+            ensureLocalButcheryFallback(
+                shopId = shopId,
+                butcheryName = result.optString("station_name").ifBlank { result.optString("butchery_name") }
+            )
         }
         ApprovedAccess(
             session = session,
