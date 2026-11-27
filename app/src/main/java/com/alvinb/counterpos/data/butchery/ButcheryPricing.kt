@@ -339,8 +339,8 @@ object ButcheryPricing {
         }.sortedWith(compareBy<ButcheryCutEntity> { it.sortOrder }.thenBy { it.name })
     }
 
-    fun defaultCuts(shopId: String, beefPricePerKgKsh: Int = 680): List<ButcheryCutEntity> {
-        val safeBeef = beefPricePerKgKsh.coerceIn(100, 10_000)
+    fun defaultCuts(shopId: String, beefPricePerKgKsh: Int = 0): List<ButcheryCutEntity> {
+        val safeBeef = beefPricePerKgKsh.coerceIn(0, 10_000)
         return listOf(
             ButcheryCutEntity(
                 id = "${shopId}_beef",
@@ -359,7 +359,7 @@ object ButcheryPricing {
                 shopId = shopId,
                 name = "Goat Meat",
                 category = "",
-                pricePerKgKsh = 750,
+                pricePerKgKsh = 0,
                 buyingPricePerKgKsh = 0,
                 stockGrams = 0,
                 iconKey = "goat",
@@ -371,7 +371,7 @@ object ButcheryPricing {
                 shopId = shopId,
                 name = "Whole Chicken",
                 category = "",
-                pricePerKgKsh = 480,
+                pricePerKgKsh = 0,
                 buyingPricePerKgKsh = 0,
                 stockGrams = 0,
                 iconKey = "chicken",
@@ -383,7 +383,7 @@ object ButcheryPricing {
                 shopId = shopId,
                 name = "Matumbo",
                 category = "",
-                pricePerKgKsh = 280,
+                pricePerKgKsh = 0,
                 buyingPricePerKgKsh = 0,
                 stockGrams = 0,
                 iconKey = "matumbo",
@@ -395,7 +395,7 @@ object ButcheryPricing {
                 shopId = shopId,
                 name = "Pork Chops",
                 category = "",
-                pricePerKgKsh = 700,
+                pricePerKgKsh = 0,
                 buyingPricePerKgKsh = 0,
                 stockGrams = 0,
                 iconKey = "pork",

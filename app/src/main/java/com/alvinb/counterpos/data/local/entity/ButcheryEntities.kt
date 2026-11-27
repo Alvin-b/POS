@@ -10,7 +10,7 @@ data class ButcheryConfigEntity(
     val enabled: Boolean = false,
     val butcheryName: String = "",
     val beefOnlyMode: Boolean = false,
-    val defaultBeefPricePerKgKsh: Int = 680,
+    val defaultBeefPricePerKgKsh: Int = 0,
     val paymentMethodsJson: String = "[\"M-Pesa\",\"Cash Payment\"]",
     val enabledCategoriesJson: String = "[\"Beef\",\"Goat Meat\",\"Whole Chicken\",\"Matumbo\",\"Pork Chops\"]",
     val updatedAt: Long = System.currentTimeMillis()

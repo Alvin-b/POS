@@ -383,6 +383,12 @@ class CounterPosRepository(
 
     fun isButcheryDeviceShop(shopId: String): Boolean = remote.isButcheryDeviceShop(shopId)
 
+    fun isButcheryOnlyStation(
+        shopId: String = activeBusiness?.shopId.orEmpty(),
+        role: String = activeBusiness?.role.orEmpty()
+    ): Boolean = (shopId.isNotBlank() && remote.isButcheryDeviceShop(shopId)) ||
+        role.equals("butchery", ignoreCase = true)
+
     suspend fun signInWithPasskey(passkey: String): SessionSnapshot = withContext(Dispatchers.IO) {
         val parsed = parseEnrollmentPasskey(passkey)
         val clean = parsed.rawPasskey
@@ -414,7 +420,7 @@ class CounterPosRepository(
         val existingCuts = dao.getButcheryCuts(shopId)
         if (existingConfig != null && existingConfig.enabled && existingCuts.isNotEmpty()) return
         runCatching {
-            val defaultRate = existingConfig?.defaultBeefPricePerKgKsh?.takeIf { it > 0 } ?: 680
+            val defaultRate = existingConfig?.defaultBeefPricePerKgKsh?.coerceIn(0, 10_000) ?: 0
             dao.enrollButchery(
                 config = existingConfig?.copy(
                     enabled = true,
@@ -455,7 +461,7 @@ class CounterPosRepository(
                 enabled = true,
                 butcheryName = resolvedName,
                 beefOnlyMode = existing?.beefOnlyMode ?: false,
-                defaultBeefPricePerKgKsh = existing?.defaultBeefPricePerKgKsh ?: 680,
+                defaultBeefPricePerKgKsh = existing?.defaultBeefPricePerKgKsh ?: 0,
                 paymentMethods = existing?.paymentMethodsJson?.let { ButcheryPricing.parsePaymentMethods(it) },
                 enabledMeats = existing?.let { ButcheryPricing.resolveEnabledMeats(it) }
             )
@@ -754,7 +760,7 @@ class CounterPosRepository(
         enrollButchery: Boolean = false,
         butcheryName: String = "",
         butcheryBeefOnly: Boolean = false,
-        butcheryBeefPricePerKgKsh: Int = 680,
+        butcheryBeefPricePerKgKsh: Int = 0,
         butcheryEnabledCategories: List<String>? = null
     ): SessionSnapshot = withContext(Dispatchers.IO) {
         require(name.trim().length in 1..120) { "Enter a business name (up to 120 characters)." }
@@ -803,7 +809,7 @@ class CounterPosRepository(
         remote.setOwnerBusinessPhone(shopId, normalizedOwnerPhone)
         if (enrollButchery) {
             val resolvedButcheryName = butcheryName.trim().ifBlank { "${name.trim()} Butchery" }
-            val safePrice = butcheryBeefPricePerKgKsh.coerceIn(100, 10_000)
+            val safePrice = butcheryBeefPricePerKgKsh.coerceIn(0, 10_000)
             val resolvedMeats = when {
                 !butcheryEnabledCategories.isNullOrEmpty() ->
                     butcheryEnabledCategories.map(ButcheryPricing::normalizeLegacyMeatSelection)
@@ -1794,7 +1800,7 @@ class CounterPosRepository(
         return (byCode.toMap() to byName.toMap()).also { cachedBundledMetadata = it }
     }
 
-    private suspend fun syncBusiness(
+    internal suspend fun syncBusiness(
         membership: BusinessMembership,
         includeCatalog: Boolean = (cachedCatalogRows == null)
     ) {
@@ -1802,6 +1808,16 @@ class CounterPosRepository(
             restoreCachedCounters(membership.shopId)
             runCatching { syncPendingOutbox(refreshSnapshot = false) }
             if (dao.outboxCount(membership.shopId) > 0) return
+        }
+        if (isButcheryOnlyStation(membership.shopId, membership.role)) {
+            cachedCatalogRows = null
+            dao.clearTenantCache()
+            dao.clearAllServiceCounters()
+            dao.clearAllCounterStock()
+            _serviceCounters.value = emptyList()
+            runCatching { syncButcherySnapshot(membership.shopId) }
+            lastSyncCompletedAt.set(System.currentTimeMillis())
+            return
         }
         seedCatalogIfEmpty()
         val existingProductsList = dao.getAllProducts()
@@ -2083,7 +2099,7 @@ class CounterPosRepository(
                 enabled = row.optBoolean("enabled"),
                 butcheryName = row.optString("butchery_name"),
                 beefOnlyMode = beefOnly,
-                defaultBeefPricePerKgKsh = row.optInt("default_beef_price_per_kg_ksh", 680),
+                defaultBeefPricePerKgKsh = row.optInt("default_beef_price_per_kg_ksh", 0),
                 paymentMethodsJson = remotePayments ?: localConfig?.paymentMethodsJson ?: ButcheryPricing.DEFAULT_PAYMENT_METHODS_JSON,
                 enabledCategoriesJson = resolvedCategoriesJson,
                 updatedAt = parseTimestamp(row.optString("updated_at"))
@@ -3016,7 +3032,7 @@ class CounterPosRepository(
                                 enabled = payload.optBoolean("enabled", true),
                                 butcheryName = payload.optString("butchery_name"),
                                 beefOnlyMode = payload.optBoolean("beef_only_mode", false),
-                                defaultBeefPricePerKgKsh = payload.optInt("default_beef_price_per_kg_ksh", 680),
+                                defaultBeefPricePerKgKsh = payload.optInt("default_beef_price_per_kg_ksh", 0),
                                 paymentMethods = payload.optJSONArray("payment_methods") ?: JSONArray(),
                                 enabledCategories = payload.optJSONArray("enabled_categories") ?: JSONArray()
                             )
@@ -3386,7 +3402,7 @@ class CounterPosRepository(
         paymentMethods: List<String>? = null,
         enabledMeats: List<String>? = null
     ) = withContext(Dispatchers.IO) {
-        val safePrice = defaultBeefPricePerKgKsh.coerceIn(100, 10_000)
+        val safePrice = defaultBeefPricePerKgKsh.coerceIn(0, 10_000)
         val existing = dao.getButcheryConfig(shopId)
         val resolvedName = butcheryName.trim().ifBlank {
             existing?.butcheryName?.takeIf(String::isNotBlank)

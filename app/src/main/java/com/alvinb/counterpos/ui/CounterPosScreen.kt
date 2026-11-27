@@ -233,6 +233,7 @@ fun CounterPosWorkspace(
 
     val summary = remember(sales) { salesTodaySummary(sales) }
     val role = session.activeBusiness?.role.orEmpty()
+    val isButcheryStation = state.isButcheryStationDevice || role.equals("butchery", ignoreCase = true)
     val enabledFeatures = session.activeBusiness?.featureFlags.orEmpty()
     val rawBusinessType = session.activeBusiness?.businessType.orEmpty().trim().lowercase()
     val isClub = rawBusinessType in setOf("big_club", "club", "") || session.activeBusiness == null
@@ -248,37 +249,39 @@ fun CounterPosWorkspace(
             .filter(String::isNotBlank)
             .toSet()
     }
-    LaunchedEffect(session.activeBusiness?.shopId, role) {
-        if (role in setOf("owner", "manager")) viewModel.loadEmployeeMembers()
+    LaunchedEffect(session.activeBusiness?.shopId, role, isButcheryStation) {
+        if (!isButcheryStation && role in setOf("owner", "manager")) viewModel.loadEmployeeMembers()
     }
-    LaunchedEffect(supportsTables, supportsSalesAnalytics, state.tab) {
-        if ((!supportsTables && state.tab == PosTab.TABLES) || (!supportsSalesAnalytics && state.tab == PosTab.REPORTS)) {
+    LaunchedEffect(supportsTables, supportsSalesAnalytics, state.tab, isButcheryStation) {
+        if (!isButcheryStation && ((!supportsTables && state.tab == PosTab.TABLES) || (!supportsSalesAnalytics && state.tab == PosTab.REPORTS))) {
             viewModel.selectTab(PosTab.SCAN)
         }
     }
     val canManageStock = role in setOf("owner", "manager", "inventory_clerk")
     val canReceiveStock = role in setOf("owner", "manager", "inventory_clerk")
     val canEditProducts = role in setOf("owner", "manager")
-    LaunchedEffect(canManageStock, state.tab) {
-        if (!canManageStock && state.tab == PosTab.STOCK) viewModel.selectTab(PosTab.SCAN)
+    LaunchedEffect(canManageStock, state.tab, isButcheryStation) {
+        if (!isButcheryStation && !canManageStock && state.tab == PosTab.STOCK) viewModel.selectTab(PosTab.SCAN)
     }
 
-    LaunchedEffect(session.activeBusiness?.shopId, serviceCounters, state.selectedCounterId) {
-        val selectedId = state.selectedServingCounterId ?: state.selectedCounterId
-        if (selectedId !in serviceCounters.map { it.id }) {
-            serviceCounters.firstOrNull()?.let { viewModel.selectServingCounter(it.id, it.name) }
+    LaunchedEffect(session.activeBusiness?.shopId, serviceCounters, state.selectedCounterId, isButcheryStation) {
+        if (!isButcheryStation) {
+            val selectedId = state.selectedServingCounterId ?: state.selectedCounterId
+            if (selectedId !in serviceCounters.map { it.id }) {
+                serviceCounters.firstOrNull()?.let { viewModel.selectServingCounter(it.id, it.name) }
+            }
         }
     }
-    LaunchedEffect(state.selectedCounterId, session.activeBusiness?.counterInventoryMode, session.activeBusiness?.shopId) {
-        if (state.counterStockByProduct.isEmpty()) {
+    LaunchedEffect(state.selectedCounterId, session.activeBusiness?.counterInventoryMode, session.activeBusiness?.shopId, isButcheryStation) {
+        if (!isButcheryStation && state.counterStockByProduct.isEmpty()) {
             viewModel.refreshCounterStock()
         }
     }
     LaunchedEffect(session.activeBusiness?.shopId) {
         viewModel.refreshBusinessData(force = false)
     }
-    LaunchedEffect(state.tab, supportsSalesAnalytics) {
-        if (supportsSalesAnalytics && state.tab == PosTab.REPORTS) viewModel.loadCounterReport(todayStartIso(), nowIso())
+    LaunchedEffect(state.tab, supportsSalesAnalytics, isButcheryStation) {
+        if (!isButcheryStation && supportsSalesAnalytics && state.tab == PosTab.REPORTS) viewModel.loadCounterReport(todayStartIso(), nowIso())
     }
 
     LaunchedEffect(state.notice) {
@@ -327,18 +330,24 @@ fun CounterPosWorkspace(
         return
     }
 
-    if (state.isButcheryWorkspaceOpen) {
+    if (isButcheryStation || state.isButcheryWorkspaceOpen) {
+        val isOwnerOrManager = role.equals("owner", ignoreCase = true) || role.equals("manager", ignoreCase = true)
         ButcheryWorkspaceScreen(
             activeTab = state.butcheryTab,
             config = butcheryConfig,
             cuts = butcheryCuts,
             sales = butcherySales,
             businessName = session.activeBusiness?.shopName.orEmpty(),
-            ownerCanEdit = role.equals("owner", ignoreCase = true) || role.equals("manager", ignoreCase = true),
+            ownerCanEdit = isOwnerOrManager || isButcheryStation,
+            canToggleModuleEnabled = isOwnerOrManager,
+            isStandaloneStation = isButcheryStation,
+            onSignOut = if (isButcheryStation) ({ viewModel.signOut() }) else null,
             notice = state.notice,
             onClearNotice = viewModel::clearNotice,
+            actionError = state.actionError,
+            onClearActionError = viewModel::clearActionError,
             onSelectTab = viewModel::selectButcheryTab,
-            onBackToMainPos = viewModel::closeButcheryWorkspace,
+            onBackToMainPos = if (isButcheryStation) ({}) else viewModel::closeButcheryWorkspace,
             onSaveConfig = { enabled, name, beefOnly, price, methods, categories ->
                 viewModel.enrollOrUpdateButchery(enabled, name, beefOnly, price, methods, categories)
             },
@@ -348,7 +357,7 @@ fun CounterPosWorkspace(
             onAddCut = viewModel::addButcheryCut,
             onRecordSale = viewModel::recordButcherySale,
             onUndoLastSale = viewModel::undoLatestButcherySale,
-            onOpenButcheryEnrollment = if (role.equals("owner", ignoreCase = true)) {
+            onOpenButcheryEnrollment = if (!isButcheryStation && role.equals("owner", ignoreCase = true)) {
                 {
                     viewModel.closeButcheryWorkspace()
                     viewModel.openStaffManagement(openButchery = true)

@@ -230,7 +230,8 @@ data class CounterPosUiState(
 
     // Butchery Add-On Workspace
     val isButcheryWorkspaceOpen: Boolean = false,
-    val butcheryTab: ButcheryTab = ButcheryTab.SELL
+    val butcheryTab: ButcheryTab = ButcheryTab.SELL,
+    val isButcheryStationDevice: Boolean = false
 )
 
 internal fun CounterPosUiState.activeTableIdForSale(): String? =
@@ -388,20 +389,36 @@ class CounterPosViewModel(
                             transactionLogs = emptyList(),
                             pendingTableSettlementIds = emptySet(),
                             blockedTableSettlementIds = emptySet(),
-                            counterStockByProduct = emptyMap()
+                            counterStockByProduct = emptyMap(),
+                            isButcheryStationDevice = false
                         )
                     }
                 } else {
                     val shopId = sess.activeBusiness.shopId
+                    val isButcheryStation = repository.isButcheryDeviceShop(shopId) ||
+                        sess.activeBusiness.role.equals("butchery", ignoreCase = true)
+                    _uiState.update { state ->
+                        if (state.isButcheryStationDevice != isButcheryStation) {
+                            state.copy(isButcheryStationDevice = isButcheryStation)
+                        } else {
+                            state
+                        }
+                    }
                     if (lastCheckedButcheryDeviceShopId != shopId) {
                         lastCheckedButcheryDeviceShopId = shopId
-                        if (repository.isButcheryDeviceShop(shopId)) {
+                        if (isButcheryStation) {
                             _uiState.update {
-                                it.copy(isButcheryWorkspaceOpen = true, butcheryTab = ButcheryTab.SELL)
+                                it.copy(
+                                    isButcheryWorkspaceOpen = true,
+                                    butcheryTab = ButcheryTab.SELL,
+                                    isButcheryStationDevice = true
+                                )
                             }
                         }
                     }
-                    observeSelectedCounterStock(shopId, _uiState.value.selectedCounterId)
+                    if (!isButcheryStation) {
+                        observeSelectedCounterStock(shopId, _uiState.value.selectedCounterId)
+                    }
                     blockedOutboxJob = viewModelScope.launch {
                         repository.observeBlockedOutbox(shopId).collect { items ->
                             _uiState.update { it.copy(blockedOutbox = items) }
@@ -618,9 +635,14 @@ class CounterPosViewModel(
         action = {
             val snapshot = repository.signInWithPasskey(passkey)
             val shopId = snapshot.activeBusiness?.shopId
-            if (shopId != null && repository.isButcheryDeviceShop(shopId)) {
+            if (shopId != null && (repository.isButcheryDeviceShop(shopId) ||
+                    snapshot.activeBusiness?.role.equals("butchery", ignoreCase = true))) {
                 _uiState.update {
-                    it.copy(isButcheryWorkspaceOpen = true, butcheryTab = ButcheryTab.SELL)
+                    it.copy(
+                        isButcheryWorkspaceOpen = true,
+                        butcheryTab = ButcheryTab.SELL,
+                        isButcheryStationDevice = true
+                    )
                 }
             }
             snapshot
@@ -671,7 +693,7 @@ class CounterPosViewModel(
         enrollButchery: Boolean = false,
         butcheryName: String = "",
         butcheryBeefOnly: Boolean = false,
-        butcheryBeefPricePerKgKsh: Int = 680,
+        butcheryBeefPricePerKgKsh: Int = 0,
         butcheryEnabledCategories: List<String>? = null
     ) = viewModelScope.launch {
         if (_uiState.value.isAuthenticating || _uiState.value.isCreatingBusiness) return@launch
@@ -2481,6 +2503,8 @@ class CounterPosViewModel(
 
     fun clearNotice() = _uiState.update { it.copy(notice = null) }
 
+    fun clearActionError() = _uiState.update { it.copy(actionError = null) }
+
     fun openSyncRecovery() {
         _uiState.update { it.copy(isSyncRecoveryOpen = true, syncRecoveryError = null) }
         viewModelScope.launch {
@@ -3079,6 +3103,12 @@ class CounterPosViewModel(
     }
 
     fun closeButcheryWorkspace() {
+        val isStandaloneStation = _uiState.value.isButcheryStationDevice ||
+            session.value.activeBusiness?.role.equals("butchery", ignoreCase = true)
+        if (isStandaloneStation) {
+            _uiState.update { it.copy(isButcheryWorkspaceOpen = true) }
+            return
+        }
         _uiState.update { it.copy(isButcheryWorkspaceOpen = false) }
     }
 
@@ -3230,6 +3260,12 @@ class CounterPosViewModel(
         entryMode: String
     ) {
         val shopId = session.value.activeBusiness?.shopId ?: return
+        if (cut.pricePerKgKsh <= 0) {
+            _uiState.update {
+                it.copy(actionError = "Set a selling price per kg for ${cut.name} in Butchery Settings first.")
+            }
+            return
+        }
         if (weightGrams <= 0 || totalKsh <= 0) {
             _uiState.update { it.copy(actionError = "Enter a valid weight or KES amount first.") }
             return

@@ -35,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -87,12 +88,19 @@ fun ButcheryWorkspaceScreen(
     onAddCut: (name: String, pricePerKgKsh: Int, buyingPricePerKgKsh: Int, stockKg: Double) -> Unit,
     onRecordSale: (cut: ButcheryCutEntity, weightGrams: Int, totalKsh: Int, paymentMethod: String, entryMode: String) -> Unit,
     onUndoLastSale: () -> Unit,
-    onOpenButcheryEnrollment: (() -> Unit)? = null
+    onOpenButcheryEnrollment: (() -> Unit)? = null,
+    canToggleModuleEnabled: Boolean = ownerCanEdit,
+    isStandaloneStation: Boolean = false,
+    onSignOut: (() -> Unit)? = null,
+    actionError: String? = null,
+    onClearActionError: () -> Unit = {}
 ) {
+    var requestedSettingsTab by rememberSaveable { mutableStateOf(ButcherySettingsTab.STATION.name) }
+
     BackHandler {
         if (activeTab != ButcheryTab.SELL) {
             onSelectTab(ButcheryTab.SELL)
-        } else {
+        } else if (!isStandaloneStation) {
             onBackToMainPos()
         }
     }
@@ -133,6 +141,13 @@ fun ButcheryWorkspaceScreen(
         notice?.let {
             snackbarHostState.showSnackbar(it)
             onClearNotice()
+        }
+    }
+
+    LaunchedEffect(actionError) {
+        actionError?.let {
+            snackbarHostState.showSnackbar(it)
+            onClearActionError()
         }
     }
 
@@ -204,8 +219,17 @@ fun ButcheryWorkspaceScreen(
                     config = config,
                     cuts = cuts,
                     canUndoLastSale = canUndo,
+                    isStandaloneStation = isStandaloneStation,
+                    onSignOut = onSignOut,
                     onBack = onBackToMainPos,
-                    onOpenSettings = { onSelectTab(ButcheryTab.SETTINGS) },
+                    onOpenSettings = {
+                        requestedSettingsTab = ButcherySettingsTab.STATION.name
+                        onSelectTab(ButcheryTab.SETTINGS)
+                    },
+                    onOpenMeatsPricing = {
+                        requestedSettingsTab = ButcherySettingsTab.MEATS.name
+                        onSelectTab(ButcheryTab.SETTINGS)
+                    },
                     onUndoLastSale = onUndoLastSale,
                     onRecordSale = onRecordSale
                 )
@@ -268,6 +292,11 @@ fun ButcheryWorkspaceScreen(
                     cuts = cuts,
                     businessName = businessName,
                     ownerCanEdit = ownerCanEdit,
+                    canToggleModuleEnabled = canToggleModuleEnabled,
+                    isStandaloneStation = isStandaloneStation,
+                    onSignOut = onSignOut,
+                    selectedTabOverride = ButcherySettingsTab.entries.firstOrNull { it.name == requestedSettingsTab },
+                    onSelectedTabChange = { requestedSettingsTab = it.name },
                     onBack = { onSelectTab(ButcheryTab.SELL) },
                     onSaveConfig = onSaveConfig,
                     onApplyMeatPrice = onApplyMeatPrice,

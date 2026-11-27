@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Backspace
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Check
@@ -40,6 +41,7 @@ import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Smartphone
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -47,10 +49,12 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -145,6 +149,9 @@ fun ButcheryPosScreen(
         paymentMethod: String,
         entryMode: String
     ) -> Unit,
+    isStandaloneStation: Boolean = false,
+    onSignOut: (() -> Unit)? = null,
+    onOpenMeatsPricing: () -> Unit = onOpenSettings,
     modifier: Modifier = Modifier
 ) {
     val enabledMeats = remember(config?.enabledCategoriesJson, config?.beefOnlyMode) {
@@ -161,6 +168,7 @@ fun ButcheryPosScreen(
     var selectedCutId by rememberSaveable { mutableStateOf<String?>(null) }
     var entryMode by rememberSaveable { mutableStateOf(ButcheryEntryMode.AMOUNT_KES) }
     var keypadInput by rememberSaveable { mutableStateOf("") }
+    var showSignOutConfirm by remember { mutableStateOf(false) }
 
     val filteredCuts = remember(cuts, enabledMeats, searchQuery) {
         ButcheryPricing.filterCuts(
@@ -243,18 +251,20 @@ fun ButcheryPosScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .statusBarsPadding()
-                    .padding(horizontal = 8.dp, vertical = 10.dp),
+                    .padding(horizontal = if (isStandaloneStation) 16.dp else 8.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(
-                    onClick = onBack,
-                    modifier = Modifier.testTag("butchery_back_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back to main POS",
-                        tint = Color.White
-                    )
+                if (!isStandaloneStation) {
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier.testTag("butchery_back_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back to main POS",
+                            tint = Color.White
+                        )
+                    }
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -294,6 +304,18 @@ fun ButcheryPosScreen(
                         contentDescription = "Butchery Settings",
                         tint = Color.White
                     )
+                }
+                if (isStandaloneStation && onSignOut != null) {
+                    IconButton(
+                        onClick = { showSignOutConfirm = true },
+                        modifier = Modifier.testTag("butchery_sign_out_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Logout,
+                            contentDescription = "Sign out",
+                            tint = Color.White
+                        )
+                    }
                 }
             }
         }
@@ -547,31 +569,72 @@ fun ButcheryPosScreen(
                 }
 
                 // Live Calculation Banner
-                val conversionText = if (selectedCut != null && calculation.isValid) {
-                    val kgText = ButcheryPricing.formatWeightKg(calculation.weightGrams)
-                    val kesText = ButcheryPricing.formatKsh(calculation.totalKsh)
-                    if (entryMode == ButcheryEntryMode.WEIGHT_KG) {
-                        "$kgText = $kesText"
-                    } else {
-                        "$kesText = $kgText (${calculation.weightGrams} g) @ KES ${selectedCut.pricePerKgKsh}/kg"
+                if (selectedCut != null && selectedCut.pricePerKgKsh <= 0) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFFFEF3C7),
+                        border = BorderStroke(1.dp, Color(0xFFF59E0B).copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Set ${selectedCut.name} price/kg in Settings first",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF92400E),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("butchery_calculation_banner")
+                            )
+                            OutlinedButton(
+                                onClick = onOpenMeatsPricing,
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(1.dp, Color(0xFFB45309)),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                modifier = Modifier.testTag("butchery_set_price_button")
+                            ) {
+                                Text(
+                                    text = "Set Price",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF92400E)
+                                )
+                            }
+                        }
                     }
                 } else {
-                    "Enter weight (kg) or amount (KES)"
+                    val conversionText = if (selectedCut != null && calculation.isValid) {
+                        val kgText = ButcheryPricing.formatWeightKg(calculation.weightGrams)
+                        val kesText = ButcheryPricing.formatKsh(calculation.totalKsh)
+                        if (entryMode == ButcheryEntryMode.WEIGHT_KG) {
+                            "$kgText = $kesText"
+                        } else {
+                            "$kesText = $kgText (${calculation.weightGrams} g) @ KES ${selectedCut.pricePerKgKsh}/kg"
+                        }
+                    } else {
+                        "Enter weight (kg) or amount (KES)"
+                    }
+                    Text(
+                        text = conversionText,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color(0xFF0F172A),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp)
+                            .testTag("butchery_calculation_banner")
+                    )
                 }
-                Text(
-                    text = conversionText,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = Color(0xFF0F172A),
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 2.dp)
-                        .testTag("butchery_calculation_banner")
-                )
 
                 // Direct Payment Mode Buttons (NO STK PUSH — cashier picks from configured methods)
-                val canRecord = selectedCut != null && calculation.isValid
+                val canRecord = selectedCut != null && selectedCut.pricePerKgKsh > 0 && calculation.isValid
                 val methodRows = remember(configuredPaymentMethods) { configuredPaymentMethods.chunked(2) }
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -673,11 +736,12 @@ fun ButcheryPosScreen(
                     }
                     if (filteredCuts.isEmpty()) {
                         item(span = { GridItemSpan(maxLineSpan) }) {
-                            Box(
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 24.dp),
-                                contentAlignment = Alignment.Center
+                                    .padding(vertical = 20.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Text(
                                     text = "No matching meat cuts. Check Butchery Settings to add or enable cuts.",
@@ -685,6 +749,14 @@ fun ButcheryPosScreen(
                                     fontSize = 13.sp,
                                     textAlign = TextAlign.Center
                                 )
+                                if (searchQuery.isBlank()) {
+                                    androidx.compose.material3.OutlinedButton(
+                                        onClick = onOpenSettings,
+                                        modifier = Modifier.testTag("butchery_empty_open_settings_button")
+                                    ) {
+                                        Text("Open Butchery Settings")
+                                    }
+                                }
                             }
                         }
                     } else {
@@ -714,14 +786,28 @@ fun ButcheryPosScreen(
                     ) {
                         searchAndChips()
                         if (filteredCuts.isEmpty()) {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
                                 Text(
                                     text = "No matching meat cuts. Check Butchery Settings to add or enable cuts.",
                                     color = Color(0xFF64748B),
                                     fontSize = 13.sp,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.padding(16.dp)
+                                    textAlign = TextAlign.Center
                                 )
+                                if (searchQuery.isBlank()) {
+                                    Spacer(Modifier.height(10.dp))
+                                    androidx.compose.material3.OutlinedButton(
+                                        onClick = onOpenSettings,
+                                        modifier = Modifier.testTag("butchery_empty_open_settings_button")
+                                    ) {
+                                        Text("Open Butchery Settings")
+                                    }
+                                }
                             }
                         } else {
                             LazyVerticalGrid(
@@ -746,6 +832,34 @@ fun ButcheryPosScreen(
                 }
             }
         }
+    }
+
+    if (showSignOutConfirm && onSignOut != null) {
+        AlertDialog(
+            onDismissRequest = { showSignOutConfirm = false },
+            title = { Text("Sign out of Butchery POS?", fontWeight = FontWeight.Bold) },
+            text = { Text("This will return this device to the CounterPOS sign-in screen.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showSignOutConfirm = false
+                        onSignOut()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFB42318),
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier.testTag("butchery_confirm_sign_out_button")
+                ) {
+                    Text("Sign Out", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSignOutConfirm = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 
@@ -826,10 +940,15 @@ private fun ButcheryCutTile(
                     textAlign = TextAlign.Center
                 )
                 Text(
-                    text = "KES ${cut.pricePerKgKsh}/kg",
+                    text = if (cut.pricePerKgKsh > 0) "KES ${cut.pricePerKgKsh}/kg" else "Set price",
                     fontSize = 10.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (isSelected) Color.White.copy(alpha = 0.92f) else Color(0xFF475569),
+                    color = when {
+                        cut.pricePerKgKsh <= 0 && isSelected -> Color(0xFFFEF3C7)
+                        cut.pricePerKgKsh <= 0 -> Color(0xFFB45309)
+                        isSelected -> Color.White.copy(alpha = 0.92f)
+                        else -> Color(0xFF475569)
+                    },
                     maxLines = 1
                 )
                 if (cut.stockGrams > 0) {

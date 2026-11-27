@@ -32,6 +32,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Payments
@@ -39,6 +40,7 @@ import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.filled.Storefront
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -59,6 +61,7 @@ import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -83,7 +86,7 @@ import com.alvinb.counterpos.data.local.entity.ButcheryConfigEntity
 import com.alvinb.counterpos.data.local.entity.ButcheryCutEntity
 import java.util.Locale
 
-private enum class ButcherySettingsTab(val label: String, val tag: String) {
+enum class ButcherySettingsTab(val label: String, val tag: String) {
     STATION("Station", "butchery_settings_tab_station"),
     MEATS("Meats & Stock", "butchery_settings_tab_meats"),
     PAYMENTS("Payments", "butchery_settings_tab_payments")
@@ -148,10 +151,22 @@ fun ButcherySettingsScreen(
     onToggleCutActive: (cutId: String, active: Boolean) -> Unit,
     onAddCut: (name: String, pricePerKgKsh: Int, buyingPricePerKgKsh: Int, stockKg: Double) -> Unit,
     onOpenButcheryEnrollment: (() -> Unit)? = null,
+    canToggleModuleEnabled: Boolean = ownerCanEdit,
+    isStandaloneStation: Boolean = false,
+    onSignOut: (() -> Unit)? = null,
+    selectedTabOverride: ButcherySettingsTab? = null,
+    onSelectedTabChange: ((ButcherySettingsTab) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     ButcheryLightTheme {
-        var selectedTabName by rememberSaveable { mutableStateOf(ButcherySettingsTab.STATION.name) }
+        var selectedTabName by rememberSaveable {
+            mutableStateOf((selectedTabOverride ?: ButcherySettingsTab.STATION).name)
+        }
+        LaunchedEffect(selectedTabOverride) {
+            if (selectedTabOverride != null && selectedTabOverride.name != selectedTabName) {
+                selectedTabName = selectedTabOverride.name
+            }
+        }
         val selectedTab = ButcherySettingsTab.entries.firstOrNull { it.name == selectedTabName }
             ?: ButcherySettingsTab.STATION
 
@@ -166,7 +181,9 @@ fun ButcherySettingsScreen(
             mutableStateOf(ButcheryPricing.resolveEnabledMeats(config))
         }
         var defaultRateDraft by remember(config?.defaultBeefPricePerKgKsh) {
-            mutableStateOf((config?.defaultBeefPricePerKgKsh ?: 680).toString())
+            mutableStateOf(
+                config?.defaultBeefPricePerKgKsh?.takeIf { it > 0 }?.toString().orEmpty()
+            )
         }
         var paymentMethodsDraft by remember(config?.paymentMethodsJson) {
             mutableStateOf(ButcheryPricing.parsePaymentMethods(config?.paymentMethodsJson))
@@ -195,10 +212,11 @@ fun ButcherySettingsScreen(
         }
 
         fun persistDraft(nextEnabled: Boolean = enabledDraft, nextMeats: List<String> = enabledMeatsDraft) {
-            val price = defaultRateDraft.toIntOrNull() ?: 680
+            val price = defaultRateDraft.toIntOrNull()?.coerceIn(0, 10_000) ?: 0
             val nextBeefOnly = nextMeats.size == 1 && nextMeats.first().equals("Beef", ignoreCase = true)
+            val effectiveEnabled = if (canToggleModuleEnabled) nextEnabled else (config?.enabled ?: true)
             onSaveConfig(
-                nextEnabled,
+                effectiveEnabled,
                 nameDraft.trim(),
                 nextBeefOnly,
                 price,
@@ -302,7 +320,10 @@ fun ButcherySettingsScreen(
                                 val selected = tab == selectedTab
                                 Tab(
                                     selected = selected,
-                                    onClick = { selectedTabName = tab.name },
+                                    onClick = {
+                                        selectedTabName = tab.name
+                                        onSelectedTabChange?.invoke(tab)
+                                    },
                                     selectedContentColor = ButcheryPalette.EmeraldHeader,
                                     unselectedContentColor = ButcheryTextSecondary,
                                     modifier = Modifier
@@ -350,19 +371,12 @@ fun ButcherySettingsScreen(
                                 primaryRateMeat = primaryRateMeat,
                                 isBeefOnlyDraft = isBeefOnlyDraft,
                                 ownerCanEdit = ownerCanEdit,
+                                canToggleModuleEnabled = canToggleModuleEnabled,
                                 onApplyMeatPrice = onApplyMeatPrice,
-                                onSave = {
-                                    val price = defaultRateDraft.toIntOrNull() ?: 680
-                                    onSaveConfig(
-                                        enabledDraft,
-                                        nameDraft.trim(),
-                                        isBeefOnlyDraft,
-                                        price,
-                                        paymentMethodsDraft,
-                                        enabledMeatsDraft
-                                    )
-                                },
-                                onOpenButcheryEnrollment = onOpenButcheryEnrollment
+                                onSave = { persistDraft() },
+                                onOpenButcheryEnrollment = onOpenButcheryEnrollment,
+                                isStandaloneStation = isStandaloneStation,
+                                onSignOut = onSignOut
                             )
                         }
 
@@ -464,7 +478,7 @@ fun ButcherySettingsScreen(
                                         onEditClick = {
                                             editingCut = cut
                                             editNameInput = cut.name
-                                            editPriceInput = cut.pricePerKgKsh.toString()
+                                            editPriceInput = if (cut.pricePerKgKsh > 0) cut.pricePerKgKsh.toString() else ""
                                             editBuyingPriceInput = if (cut.buyingPricePerKgKsh > 0) {
                                                 cut.buyingPricePerKgKsh.toString()
                                             } else {
@@ -496,17 +510,7 @@ fun ButcherySettingsScreen(
                                 onMethodsChange = { paymentMethodsDraft = it },
                                 ownerCanEdit = ownerCanEdit,
                                 canSave = ownerCanEdit && nameDraft.trim().isNotEmpty(),
-                                onSave = {
-                                    val price = defaultRateDraft.toIntOrNull() ?: 680
-                                    onSaveConfig(
-                                        enabledDraft,
-                                        nameDraft.trim(),
-                                        isBeefOnlyDraft,
-                                        price,
-                                        paymentMethodsDraft,
-                                        enabledMeatsDraft
-                                    )
-                                }
+                                onSave = { persistDraft() }
                             )
                         }
                     }
@@ -567,6 +571,7 @@ fun ButcherySettingsScreen(
                                 value = editPriceInput,
                                 onValueChange = { editPriceInput = it.filter(Char::isDigit).take(5) },
                                 label = { Text("Selling Price per kg (KES)") },
+                                placeholder = { Text("Enter selling price / kg") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 singleLine = true,
                                 colors = butcheryOutlinedFieldColors(),
@@ -649,7 +654,6 @@ fun ButcherySettingsScreen(
 
             if (showAddCutDialog) {
                 AddButcheryCutModal(
-                    defaultPrice = defaultRateDraft.toIntOrNull() ?: 680,
                     onDismiss = { showAddCutDialog = false },
                     onConfirm = { name, price, buyingPrice, stockKg ->
                         onAddCut(name, price, buyingPrice, stockKg)
@@ -678,10 +682,14 @@ private fun ButcheryStationTabContent(
     primaryRateMeat: String,
     isBeefOnlyDraft: Boolean,
     ownerCanEdit: Boolean,
+    canToggleModuleEnabled: Boolean,
     onApplyMeatPrice: (meatName: String, pricePerKgKsh: Int) -> Unit,
     onSave: () -> Unit,
-    onOpenButcheryEnrollment: (() -> Unit)?
+    onOpenButcheryEnrollment: (() -> Unit)?,
+    isStandaloneStation: Boolean = false,
+    onSignOut: (() -> Unit)? = null
 ) {
+    var showSignOutConfirm by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -724,7 +732,11 @@ private fun ButcheryStationTabContent(
                                 color = ButcheryTextPrimary
                             )
                             Text(
-                                text = if (enabledDraft) "Active counter" else "Paused",
+                                text = when {
+                                    !canToggleModuleEnabled -> "Active station (owner controls ON/OFF)"
+                                    enabledDraft -> "Active counter"
+                                    else -> "Paused"
+                                },
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = if (enabledDraft) ButcheryPalette.EmeraldHeader else ButcheryTextSecondary
@@ -733,7 +745,7 @@ private fun ButcheryStationTabContent(
                         Switch(
                             checked = enabledDraft,
                             onCheckedChange = onEnabledChange,
-                            enabled = ownerCanEdit,
+                            enabled = canToggleModuleEnabled,
                             colors = butcherySwitchColors(),
                             modifier = Modifier.testTag("butchery_settings_enabled_switch")
                         )
@@ -774,7 +786,7 @@ private fun ButcheryStationTabContent(
                 ) {
                     ButcherySectionBadge(icon = Icons.Default.Scale)
                     Text(
-                        text = "Meats & Default Rate",
+                        text = "Meats & Pricing",
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
                         color = ButcheryTextPrimary,
@@ -818,6 +830,7 @@ private fun ButcheryStationTabContent(
                         value = defaultRateDraft,
                         onValueChange = { onDefaultRateChange(it.filter(Char::isDigit).take(5)) },
                         label = { Text("$primaryRateMeat price / kg (KES)") },
+                        placeholder = { Text("Enter price / kg") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
                         enabled = ownerCanEdit,
@@ -829,8 +842,8 @@ private fun ButcheryStationTabContent(
                     )
                     OutlinedButton(
                         onClick = {
-                            val price = defaultRateDraft.toIntOrNull() ?: 680
-                            onApplyMeatPrice(primaryRateMeat, price)
+                            val price = defaultRateDraft.toIntOrNull()?.coerceIn(0, 10_000) ?: 0
+                            if (price > 0) onApplyMeatPrice(primaryRateMeat, price)
                         },
                         enabled = ownerCanEdit && (defaultRateDraft.toIntOrNull() ?: 0) > 0,
                         colors = ButtonDefaults.outlinedButtonColors(
@@ -906,6 +919,59 @@ private fun ButcheryStationTabContent(
                 }
             }
         }
+
+        if (isStandaloneStation && onSignOut != null) {
+            OutlinedButton(
+                onClick = { showSignOutConfirm = true },
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFB42318)),
+                border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("butchery_settings_sign_out_button")
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Logout,
+                    contentDescription = null,
+                    tint = Color(0xFFB42318),
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("Sign Out", fontWeight = FontWeight.SemiBold, color = Color(0xFFB42318))
+            }
+        }
+    }
+
+    if (showSignOutConfirm && onSignOut != null) {
+        AlertDialog(
+            onDismissRequest = { showSignOutConfirm = false },
+            containerColor = Color.White,
+            titleContentColor = ButcheryTextPrimary,
+            textContentColor = ButcheryTextSecondary,
+            title = { Text("Sign Out of Butchery?", fontWeight = FontWeight.Bold) },
+            text = { Text("Sign out of this butchery station on this device?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showSignOutConfirm = false
+                        onSignOut()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFB42318),
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier.testTag("butchery_settings_confirm_sign_out_button")
+                ) {
+                    Text("Sign Out", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSignOutConfirm = false }) {
+                    Text("Cancel", color = ButcheryTextSecondary)
+                }
+            }
+        )
     }
 }
 
@@ -1060,11 +1126,19 @@ private fun ButcheryCutSettingsRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    MeatMetricChip(
-                        text = "Sell KES ${cut.pricePerKgKsh}/kg",
-                        containerColor = ButcheryPalette.EmeraldHeader.copy(alpha = 0.12f),
-                        textColor = Color(0xFF07553F)
-                    )
+                    if (cut.pricePerKgKsh > 0) {
+                        MeatMetricChip(
+                            text = "Sell KES ${cut.pricePerKgKsh}/kg",
+                            containerColor = ButcheryPalette.EmeraldHeader.copy(alpha = 0.12f),
+                            textColor = Color(0xFF07553F)
+                        )
+                    } else {
+                        MeatMetricChip(
+                            text = "Price not set · Tap edit",
+                            containerColor = Color(0xFFFEF3C7),
+                            textColor = Color(0xFF92400E)
+                        )
+                    }
                     if (cut.buyingPricePerKgKsh > 0) {
                         MeatMetricChip(
                             text = "Buy KES ${cut.buyingPricePerKgKsh}/kg",
@@ -1176,12 +1250,11 @@ private fun MarginPreviewPill(marginPerKg: Int) {
 
 @Composable
 private fun AddButcheryCutModal(
-    defaultPrice: Int,
     onDismiss: () -> Unit,
     onConfirm: (name: String, pricePerKgKsh: Int, buyingPricePerKgKsh: Int, stockKg: Double) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
-    var priceText by remember { mutableStateOf(defaultPrice.toString()) }
+    var priceText by remember { mutableStateOf("") }
     var buyingPriceText by remember { mutableStateOf("") }
     var stockKgText by remember { mutableStateOf("") }
 
@@ -1239,6 +1312,7 @@ private fun AddButcheryCutModal(
                     value = priceText,
                     onValueChange = { priceText = it.filter(Char::isDigit).take(5) },
                     label = { Text("Selling Price per kg (KES)") },
+                    placeholder = { Text("Enter selling price / kg") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
                     colors = butcheryOutlinedFieldColors(),

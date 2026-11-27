@@ -947,7 +947,7 @@ interface CounterPosDao {
     ): Long? {
         if (weightGrams <= 0 || totalKsh <= 0) return null
         val cut = getButcheryCutById(cutId) ?: return null
-        if (cut.shopId != shopId) return null
+        if (cut.shopId != shopId || cut.pricePerKgKsh <= 0) return null
         val deducted = minOf(cut.stockGrams.coerceAtLeast(0), weightGrams)
         if (deducted > 0) {
             setButcheryCutStockGrams(cut.id, cut.stockGrams - deducted)

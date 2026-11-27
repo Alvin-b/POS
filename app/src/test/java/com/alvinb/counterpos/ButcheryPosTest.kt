@@ -3,7 +3,10 @@ package com.alvinb.counterpos
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.net.ConnectivityManager
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -19,11 +22,13 @@ import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
 import com.alvinb.counterpos.data.CounterPosRepository
+import com.alvinb.counterpos.data.SubscriptionManager
 import com.alvinb.counterpos.data.butchery.ButcheryPricing
 import com.alvinb.counterpos.data.butchery.ButcheryTrendRange
 import com.alvinb.counterpos.data.local.AppDatabase
 import com.alvinb.counterpos.data.local.entity.ButcheryConfigEntity
 import com.alvinb.counterpos.data.local.entity.ButcherySaleEntity
+import com.alvinb.counterpos.data.remote.BusinessMembership
 import com.alvinb.counterpos.data.remote.ServiceCounter
 import com.alvinb.counterpos.data.remote.SupabaseRestClient
 import com.alvinb.counterpos.ui.ButcheryDailySalesScreen
@@ -32,6 +37,7 @@ import com.alvinb.counterpos.ui.ButcheryReportScreen
 import com.alvinb.counterpos.ui.ButcherySettingsScreen
 import com.alvinb.counterpos.ui.CounterPosTheme
 import com.alvinb.counterpos.ui.CounterPosUiState
+import com.alvinb.counterpos.ui.CounterPosViewModel
 import com.alvinb.counterpos.ui.OwnerSettingsScreen
 import com.alvinb.counterpos.ui.PdfDocumentSession
 import com.alvinb.counterpos.ui.buildButcheryReportPdf
@@ -962,9 +968,12 @@ class ButcheryPosTest {
                 enabled = true,
                 butcheryName = config.butcheryName,
                 beefOnlyMode = false,
-                defaultBeefPricePerKgKsh = 700,
+                defaultBeefPricePerKgKsh = 0,
                 enabledMeats = listOf("Goat Meat", "Pork Chops")
             )
+            val seededCuts = repository.observeButcheryCuts(shopId).first()
+            repository.updateButcheryCutPrice(seededCuts.first { it.name == "Goat Meat" }.id, 750)
+            repository.updateButcheryCutPrice(seededCuts.first { it.name == "Pork Chops" }.id, 700)
         }
         val cuts = runBlocking { repository.observeButcheryCuts(shopId).first() }
 
@@ -1210,12 +1219,14 @@ class ButcheryPosTest {
         composeRule.waitForIdle()
 
         composeRule.onNodeWithTag("butchery_new_cut_name_input").performTextInput("Mutton")
+        composeRule.onNodeWithTag("butchery_confirm_add_cut_button").assertIsNotEnabled()
+        composeRule.onNodeWithTag("butchery_new_cut_price_input").performTextInput("720")
         composeRule.onNodeWithTag("butchery_new_cut_buying_price_input").performTextInput("520")
         composeRule.onNodeWithTag("butchery_new_cut_stock_input").performTextInput("20.5")
-        composeRule.onNodeWithTag("butchery_confirm_add_cut_button").performClick()
+        composeRule.onNodeWithTag("butchery_confirm_add_cut_button").assertIsEnabled().performClick()
         composeRule.waitForIdle()
 
-        assertEquals(Triple("Mutton", 680, 520 to 20.5), addedArgs)
+        assertEquals(Triple("Mutton", 720, 520 to 20.5), addedArgs)
     }
 
     @Test
@@ -1388,5 +1399,242 @@ class ButcheryPosTest {
         composeRule.onNodeWithText("Buy KES 520/kg").assertIsDisplayed()
         composeRule.onNodeWithText("+180/kg").assertIsDisplayed()
         composeRule.onNodeWithText("18.5 kg").assertIsDisplayed()
+    }
+
+    @Test
+    fun enrolledButcheryStationCanConfigureSellingItemsPricesAndPaymentsWhileModuleToggleStaysLocked() {
+        val shopId = "shop-enrolled-butchery-settings"
+        val config = ButcheryConfigEntity(
+            shopId = shopId,
+            enabled = true,
+            butcheryName = "Kenyatta Butchery",
+            beefOnlyMode = false,
+            defaultBeefPricePerKgKsh = 0,
+            enabledCategoriesJson = ButcheryPricing.ALL_MEAT_NAMES_JSON,
+            paymentMethodsJson = ButcheryPricing.DEFAULT_PAYMENT_METHODS_JSON
+        )
+        val cuts = ButcheryPricing.defaultCuts(shopId, 0)
+        var lastSavedEnabled: Boolean? = null
+        var lastSavedMeats: List<String> = emptyList()
+        var lastSavedMethods: List<String> = emptyList()
+        var addedMeatName: String? = null
+        var addedMeatPrice: Int? = null
+        var appliedPrice: Pair<String, Int>? = null
+
+        composeRule.setContent {
+            ButcherySettingsScreen(
+                config = config,
+                cuts = cuts,
+                businessName = "Kenyatta Club",
+                ownerCanEdit = true,
+                canToggleModuleEnabled = false,
+                isStandaloneStation = true,
+                onSignOut = {},
+                onBack = {},
+                onSaveConfig = { enabled, _, _, _, methods, meats ->
+                    lastSavedEnabled = enabled
+                    lastSavedMethods = methods
+                    lastSavedMeats = meats
+                },
+                onApplyMeatPrice = { meatName, price ->
+                    appliedPrice = meatName to price
+                },
+                onUpdateCutDetails = { _, _, _, _, _ -> },
+                onToggleCutActive = { _, _ -> },
+                onAddCut = { name, price, _, _ ->
+                    addedMeatName = name
+                    addedMeatPrice = price
+                },
+                onOpenButcheryEnrollment = null
+            )
+        }
+        composeRule.waitForIdle()
+
+        // Module ON/OFF switch is locked to owner/manager and Enroll Phone is hidden
+        composeRule.onNodeWithText("Active station (owner controls ON/OFF)").assertIsDisplayed()
+        composeRule.onNodeWithTag("butchery_settings_enroll_device_button").assertDoesNotExist()
+        composeRule.onNodeWithTag("butchery_settings_sign_out_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("butchery_settings_enabled_switch").performClick()
+        composeRule.waitForIdle()
+
+        // Enrolled station CAN change what meats they sell & set/apply meat price
+        composeRule.onNodeWithTag("butchery_meat_type_pork_chops").performClick()
+        composeRule.waitForIdle()
+        assertEquals(true, lastSavedEnabled)
+        assertFalse(lastSavedMeats.contains("Pork Chops"))
+
+        composeRule.onNodeWithTag("butchery_apply_beef_price_button").assertIsNotEnabled()
+        composeRule.onNodeWithTag("butchery_default_beef_price_input").performTextInput("720")
+        composeRule.onNodeWithTag("butchery_apply_beef_price_button").assertIsEnabled().performClick()
+        composeRule.waitForIdle()
+        assertEquals("Beef" to 720, appliedPrice)
+
+        // Enrolled station CAN add a custom meat on the Meats & Stock tab with its own price
+        composeRule.onNodeWithTag("butchery_settings_tab_meats").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("butchery_add_cut_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("butchery_new_cut_name_input").performTextInput("Mutton")
+        composeRule.onNodeWithTag("butchery_new_cut_price_input").performTextInput("740")
+        composeRule.onNodeWithTag("butchery_confirm_add_cut_button").performClick()
+        composeRule.waitForIdle()
+        assertEquals("Mutton", addedMeatName)
+        assertEquals(740, addedMeatPrice)
+
+        // Enrolled station CAN configure checkout payment methods & save (enabled stays true)
+        composeRule.onNodeWithTag("butchery_settings_tab_payments").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("butchery_custom_payment_input").performTextInput("Till 4455")
+        composeRule.onNodeWithTag("butchery_add_payment_method_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("butchery_save_settings_button").performClick()
+        composeRule.waitForIdle()
+        assertEquals(true, lastSavedEnabled)
+        assertTrue(lastSavedMethods.contains("Till 4455"))
+    }
+
+    @Test
+    fun noDefaultPricesSeedsUnpricedStarterMeatsAndRequiresPriceBeforeSale() {
+        runBlocking {
+            val shopId = "shop-zero-default-prices"
+            repository.enrollOrUpdateButchery(
+                shopId = shopId,
+                enabled = true,
+                butcheryName = "Zero Default Butchery",
+                beefOnlyMode = false,
+                defaultBeefPricePerKgKsh = 0
+            )
+
+            val cuts = repository.observeButcheryCuts(shopId).first()
+            assertEquals(5, cuts.size)
+            assertTrue(cuts.all { it.pricePerKgKsh == 0 })
+
+            val beef = cuts.first { it.name == "Beef" }
+            val rejectedSaleId = repository.recordButcherySale(
+                shopId = shopId,
+                cutId = beef.id,
+                weightGrams = 1_000,
+                totalKsh = 0,
+                paymentMethod = "cash",
+                entryMode = "weight"
+            )
+            assertNull(rejectedSaleId)
+
+            val config = repository.observeButcheryConfig(shopId).first()
+            var openedPricingSettings = false
+            composeRule.setContent {
+                ButcheryPosScreen(
+                    config = config,
+                    cuts = cuts,
+                    canUndoLastSale = false,
+                    onBack = {},
+                    onOpenSettings = {},
+                    onOpenMeatsPricing = { openedPricingSettings = true },
+                    onUndoLastSale = {},
+                    onRecordSale = { _, _, _, _, _ -> }
+                )
+            }
+            composeRule.waitForIdle()
+
+            composeRule.onNodeWithText("Set Beef price/kg in Settings first").assertIsDisplayed()
+            composeRule.onNodeWithTag("butchery_set_price_button").performClick()
+            assertTrue(openedPricingSettings)
+
+            // Even with amount keyed in, checkout buttons stay disabled until price per kg is configured
+            composeRule.onNodeWithTag("butchery_key_5").performClick()
+            composeRule.onNodeWithTag("butchery_key_0").performClick()
+            composeRule.onNodeWithTag("butchery_key_0").performClick()
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag("butchery_pay_mpesa_button").assertIsNotEnabled()
+            composeRule.onNodeWithTag("butchery_pay_cash_button").assertIsNotEnabled()
+        }
+    }
+
+    @Test
+    fun standaloneButcheryPosHidesClubBackButtonAndProvidesSignOutDialog() {
+        val shopId = "shop-standalone-butchery"
+        val config = ButcheryConfigEntity(
+            shopId = shopId,
+            enabled = true,
+            butcheryName = "Standalone Butchery",
+            beefOnlyMode = true,
+            defaultBeefPricePerKgKsh = 0
+        )
+        val cuts = ButcheryPricing.defaultCuts(shopId, 0)
+        var signedOut = false
+
+        composeRule.setContent {
+            ButcheryPosScreen(
+                config = config,
+                cuts = cuts,
+                canUndoLastSale = false,
+                isStandaloneStation = true,
+                onSignOut = { signedOut = true },
+                onBack = {},
+                onOpenSettings = {},
+                onUndoLastSale = {},
+                onRecordSale = { _, _, _, _, _ -> }
+            )
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("butchery_back_button").assertDoesNotExist()
+        composeRule.onNodeWithTag("butchery_sign_out_button").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("butchery_confirm_sign_out_button").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        assertTrue(signedOut)
+    }
+
+    @Test
+    fun enrolledButcheryStationRepositoryAndViewModelStayLockedInButcheryMode() {
+        runBlocking {
+        val remote = SupabaseRestClient(context)
+        remote.clearSession()
+        remote.saveButcheryDeviceShopId("shop-butchery-only")
+
+        assertTrue(repository.isButcheryOnlyStation("shop-butchery-only", "cashier"))
+        assertTrue(repository.isButcheryOnlyStation("shop-other", "butchery"))
+        assertFalse(repository.isButcheryOnlyStation("shop-other", "owner"))
+        assertFalse(repository.isButcheryOnlyStation("shop-other", "cashier"))
+
+        val connectivity = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val subscriptionManager = SubscriptionManager(context)
+        val viewModel = CounterPosViewModel(repository, connectivity, subscriptionManager)
+
+        // Standalone butchery device keeps workspace open when closeButcheryWorkspace() is invoked
+        val field = CounterPosViewModel::class.java.getDeclaredField("_uiState")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<CounterPosUiState>
+        stateFlow.value = stateFlow.value.copy(
+            isButcheryStationDevice = true,
+            isButcheryWorkspaceOpen = true
+        )
+        viewModel.closeButcheryWorkspace()
+        assertTrue(viewModel.uiState.value.isButcheryWorkspaceOpen)
+
+        // Non-standalone device can close back to main POS
+        stateFlow.value = stateFlow.value.copy(
+            isButcheryStationDevice = false,
+            isButcheryWorkspaceOpen = true
+        )
+        viewModel.closeButcheryWorkspace()
+        assertFalse(viewModel.uiState.value.isButcheryWorkspaceOpen)
+
+        // syncBusiness on a butchery-only device skips club catalog/counter seeding
+        val butcheryMembership = BusinessMembership(
+            shopId = "shop-butchery-only",
+            shopName = "Prime Butchery",
+            role = "butchery",
+            status = "active",
+            currency = "KES",
+            lowStockThreshold = 3
+        )
+        repository.syncBusiness(butcheryMembership)
+        assertTrue(database.counterPosDao().getAllProducts().isEmpty())
+        assertTrue(database.counterPosDao().getServiceCounters("shop-butchery-only").isEmpty())
+        remote.clearSession()
+        }
     }
 }

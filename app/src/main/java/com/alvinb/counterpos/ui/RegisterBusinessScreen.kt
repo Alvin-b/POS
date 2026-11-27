@@ -155,7 +155,7 @@ fun RegisterBusinessScreen(
     var butcheryCategories by remember {
         mutableStateOf(com.alvinb.counterpos.data.butchery.ButcheryPricing.DEFAULT_MEAT_NAMES)
     }
-    var butcheryBeefPrice by remember { mutableStateOf("680") }
+    var butcheryBeefPrice by remember { mutableStateOf("") }
 
     val isClub = businessType == "big_club" || businessType == "club"
     val isLiquorStore = businessType == "counter_seller" || businessType == "liquor_store"
@@ -166,7 +166,8 @@ fun RegisterBusinessScreen(
     val businessNameValid = businessName.trim().length in 2..120
     val ownerPhoneValid = com.alvinb.counterpos.data.SubscriptionManager.normalizeKenyanPhone(ownerPhone) != null
     val counterCountValid = !isClub || (counterCount.toIntOrNull()?.let { it in 1..50 } == true)
-    val butcheryPriceValid = !enrollButchery || (butcheryBeefPrice.toIntOrNull()?.let { it in 50..10_000 } == true)
+    val butcheryPriceValid = !enrollButchery || butcheryBeefPrice.isBlank() ||
+        (butcheryBeefPrice.toIntOrNull()?.let { it in 50..10_000 } == true)
 
     val canSubmit = emailValid && passwordValid && passwordsMatch &&
         businessNameValid && ownerPhoneValid && counterCountValid && butcheryPriceValid && !isCreating
@@ -677,7 +678,8 @@ fun RegisterBusinessScreen(
                             OutlinedTextField(
                                 value = butcheryBeefPrice,
                                 onValueChange = { butcheryBeefPrice = it.filter(Char::isDigit).take(5) },
-                                label = { Text("$rateLabel Selling Price per kg (KES)") },
+                                label = { Text("$rateLabel Selling Price per kg (optional, KES)") },
+                                placeholder = { Text("Optional — set later in Butchery") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 singleLine = true,
                                 enabled = !isCreating,
@@ -815,7 +817,7 @@ fun RegisterBusinessScreen(
                     Button(
                         onClick = {
                             val parsedCount = if (isClub) counterCount.toIntOrNull() ?: 1 else 1
-                            val parsedBeefPrice = butcheryBeefPrice.toIntOrNull() ?: 680
+                            val parsedBeefPrice = butcheryBeefPrice.toIntOrNull()?.coerceIn(0, 10_000) ?: 0
                             val beefOnly = butcheryCategories.size == 1 &&
                                 butcheryCategories.first().equals("Beef", ignoreCase = true)
                             onRegister(

@@ -143,7 +143,7 @@ fun OwnerSettingsScreen(
         mutableStateOf(ButcheryPricing.resolveEnabledMeats(butcheryConfig))
     }
     var butcheryBeefPriceDraft by remember(butcheryConfig?.defaultBeefPricePerKgKsh) {
-        mutableStateOf((butcheryConfig?.defaultBeefPricePerKgKsh ?: 680).toString())
+        mutableStateOf(butcheryConfig?.defaultBeefPricePerKgKsh?.takeIf { it > 0 }?.toString().orEmpty())
     }
     var butcheryPaymentMethodsDraft by remember(butcheryConfig?.paymentMethodsJson) {
         mutableStateOf(ButcheryPricing.parsePaymentMethods(butcheryConfig?.paymentMethodsJson))
@@ -369,7 +369,7 @@ fun OwnerSettingsScreen(
                             onToggleEnabled = { enabled ->
                                 butcheryEnabledDraft = enabled
                                 if (ownerCanEdit) {
-                                    val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                    val price = butcheryBeefPriceDraft.toIntOrNull()?.coerceIn(0, 10_000) ?: 0
                                     onSaveButcheryConfig(
                                         enabled,
                                         butcheryNameDraft.trim(),
@@ -390,7 +390,7 @@ fun OwnerSettingsScreen(
                             onMeatsChange = { nextMeats ->
                                 butcheryCategoriesDraft = nextMeats
                                 if (ownerCanEdit && butcheryNameDraft.trim().isNotEmpty()) {
-                                    val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                    val price = butcheryBeefPriceDraft.toIntOrNull()?.coerceIn(0, 10_000) ?: 0
                                     val nextBeefOnly = nextMeats.size == 1 &&
                                         nextMeats.first().equals("Beef", ignoreCase = true)
                                     onSaveButcheryConfig(
@@ -408,7 +408,7 @@ fun OwnerSettingsScreen(
                             showButcheryPaymentsEditor = showButcheryPaymentsEditor,
                             onTogglePaymentsEditor = { showButcheryPaymentsEditor = !showButcheryPaymentsEditor },
                             onSaveConfig = {
-                                val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                val price = butcheryBeefPriceDraft.toIntOrNull()?.coerceIn(0, 10_000) ?: 0
                                 onSaveButcheryConfig(
                                     true,
                                     butcheryNameDraft.trim(),
@@ -419,7 +419,7 @@ fun OwnerSettingsScreen(
                                 )
                             },
                             onOpenWorkspace = { tab ->
-                                val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                val price = butcheryBeefPriceDraft.toIntOrNull()?.coerceIn(0, 10_000) ?: 0
                                 if (ownerCanEdit) {
                                     onSaveButcheryConfig(
                                         true,
@@ -433,7 +433,7 @@ fun OwnerSettingsScreen(
                                 onOpenButcheryWorkspace(tab)
                             },
                             onOpenButcheryEnrollment = {
-                                val price = butcheryBeefPriceDraft.toIntOrNull() ?: 680
+                                val price = butcheryBeefPriceDraft.toIntOrNull()?.coerceIn(0, 10_000) ?: 0
                                 onSaveButcheryConfig(
                                     true,
                                     butcheryNameDraft.trim(),
@@ -933,7 +933,8 @@ private fun OwnerButcheryTab(
                     OutlinedTextField(
                         value = butcheryBeefPriceDraft,
                         onValueChange = onBeefPriceChange,
-                        label = { Text("$primaryMeatLabel price / kg (KES)") },
+                        label = { Text("$primaryMeatLabel price / kg (optional, KES)") },
+                        placeholder = { Text("Set here or inside Butchery") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
                         enabled = ownerCanEdit,
