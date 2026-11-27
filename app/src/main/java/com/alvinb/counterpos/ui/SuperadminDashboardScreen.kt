@@ -3,6 +3,7 @@ package com.alvinb.counterpos.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -86,6 +87,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -287,7 +289,6 @@ fun SuperadminDashboardScreen(
                         val next = if (state.adminSelectedBusinessId == shopId) "" else shopId
                         viewModel.selectAdminBusiness(next)
                     },
-                    onScanOwnerQr = { shopId -> viewModel.openAdminEnrollmentScanner(shopId, "owner") },
                     onCreateOwnerPasskey = { shopId -> viewModel.createAdminEnrollmentPass(shopId, "owner") },
                     onOpenSubscription = { viewModel.adminOpenSubscriptionDialog(it) },
                     onStatusChange = { shopId, status, fallback ->
@@ -674,7 +675,6 @@ private fun SuperadminPortfolioContent(
     onSearchChange: (String) -> Unit,
     onStatusFilterChange: (String) -> Unit,
     onSelectBusiness: (String) -> Unit,
-    onScanOwnerQr: (String) -> Unit,
     onCreateOwnerPasskey: (String) -> Unit,
     onOpenSubscription: (AdminBusiness) -> Unit,
     onStatusChange: (String, String, String?) -> Unit,
@@ -892,6 +892,29 @@ private fun SuperadminPortfolioContent(
                             letterSpacing = 1.5.sp,
                             color = MaterialTheme.colorScheme.onSurface
                         )
+                        val qrPayload = remember(credential.passkey) {
+                            if (credential.passkey.startsWith("CPX1.", ignoreCase = true)) {
+                                credential.passkey
+                            } else {
+                                "CPX1.${credential.passkey}"
+                            }
+                        }
+                        val passkeyBitmap = remember(qrPayload) { createLoginQr(qrPayload) }
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color.White,
+                            modifier = Modifier
+                                .size(156.dp)
+                                .align(Alignment.CenterHorizontally)
+                        ) {
+                            Image(
+                                bitmap = passkeyBitmap.asImageBitmap(),
+                                contentDescription = "Owner enrollment passkey QR code",
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(8.dp)
+                            )
+                        }
                         Text(
                             "One-time credential • expires in ${credential.expiresInHours} hours",
                             fontSize = 11.sp,
@@ -913,7 +936,7 @@ private fun SuperadminPortfolioContent(
                 )
             }
             items(needsAttention.take(4), key = { "need_${it.shopId}" }) { business ->
-                DarkAttentionCard(business, onOpenSubscription, onScanOwnerQr)
+                DarkAttentionCard(business, onOpenSubscription, onCreateOwnerPasskey)
             }
         }
 
@@ -988,7 +1011,6 @@ private fun SuperadminPortfolioContent(
                     isExpanded = selectedBusinessId == business.shopId,
                     isDeleting = isDeletingBusiness,
                     onToggleExpand = { onSelectBusiness(business.shopId) },
-                    onScanOwnerQr = { onScanOwnerQr(business.shopId) },
                     onCreateOwnerPasskey = { onCreateOwnerPasskey(business.shopId) },
                     onOpenSubscription = { onOpenSubscription(business) },
                     onStatusChange = { nextStatus ->
@@ -1065,7 +1087,7 @@ private fun DarkBanner(message: String, isError: Boolean, onDismiss: () -> Unit)
 private fun DarkAttentionCard(
     business: AdminBusiness,
     onOpenSubscription: (AdminBusiness) -> Unit,
-    onScanOwnerQr: (String) -> Unit
+    onCreateOwnerPasskey: (String) -> Unit
 ) {
     val billingState = business.billingState()
     val isBillingIssue = billingState in setOf(AdminBillingState.LOCKED, AdminBillingState.EXPIRED)
@@ -1090,7 +1112,7 @@ private fun DarkAttentionCard(
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Icon(
-                imageVector = if (isBillingIssue) Icons.Default.Lock else Icons.Default.QrCodeScanner,
+                imageVector = if (isBillingIssue) Icons.Default.Lock else Icons.Default.Key,
                 contentDescription = null,
                 tint = accent,
                 modifier = Modifier.size(20.dp)
@@ -1112,7 +1134,7 @@ private fun DarkAttentionCard(
                     if (isBillingIssue || business.status.equals("suspended", ignoreCase = true)) {
                         onOpenSubscription(business)
                     } else {
-                        onScanOwnerQr(business.shopId)
+                        onCreateOwnerPasskey(business.shopId)
                     }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color(0xFF0C1210)),
@@ -1136,7 +1158,6 @@ private fun DarkBusinessCard(
     isExpanded: Boolean,
     isDeleting: Boolean,
     onToggleExpand: () -> Unit,
-    onScanOwnerQr: () -> Unit,
     onCreateOwnerPasskey: () -> Unit,
     onOpenSubscription: () -> Unit,
     onStatusChange: (String) -> Unit,
@@ -1323,32 +1344,16 @@ private fun DarkBusinessCard(
                         }
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    OutlinedButton(
+                        onClick = onCreateOwnerPasskey,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                        shape = RoundedCornerShape(12.dp)
                     ) {
-                        OutlinedButton(
-                            onClick = onScanOwnerQr,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(48.dp),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Scan Owner QR", fontSize = 11.sp)
-                        }
-                        OutlinedButton(
-                            onClick = onCreateOwnerPasskey,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(48.dp),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Passkey", fontSize = 11.sp)
-                        }
+                        Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Generate Owner Passkey & QR", fontSize = 12.sp)
                     }
 
                     Row(

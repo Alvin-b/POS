@@ -6,7 +6,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -19,8 +18,12 @@ import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import com.alvinb.counterpos.data.CounterPosRepository
 import com.alvinb.counterpos.data.SessionSnapshot
+import com.alvinb.counterpos.data.accessChallengeQrPayload
 import com.alvinb.counterpos.data.butchery.ButcheryPricing
+import com.alvinb.counterpos.data.extractEnrollmentCredentialPayload
 import com.alvinb.counterpos.data.local.entity.ButcheryConfigEntity
+import com.alvinb.counterpos.data.normalizeAccessChallengeToken
+import com.alvinb.counterpos.data.parseEnrollmentPasskey
 import com.alvinb.counterpos.data.remote.SupabaseRestClient
 import com.alvinb.counterpos.ui.AuthScreen
 import com.alvinb.counterpos.ui.ButcherySettingsScreen
@@ -341,7 +344,10 @@ class StaffEnrollmentTest {
         composeRule.onNodeWithTag("butchery_passkey_value").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("butchery_passkey_value").assertTextEquals("CPB1.BCH-9944")
         composeRule.onNodeWithTag("butchery_passkey_qr").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("Scan Phone").assertDoesNotExist()
+
+        // Login-screen phone challenge scanner was removed from Staff Management
+        composeRule.onNodeWithTag("scan_butchery_challenge_button").assertDoesNotExist()
+        composeRule.onNodeWithTag("scan_waiter_challenge_button").assertDoesNotExist()
     }
 
     @Test
@@ -350,7 +356,7 @@ class StaffEnrollmentTest {
             StaffManagementScreen(
                 state = CounterPosUiState(
                     staffEnrollmentStation = "butchery",
-                    actionError = "Could not approve Butchery QR: connection timed out."
+                    actionError = "Could not issue Butchery passkey: connection timed out."
                 ),
                 businessName = "Kenyatta Club",
                 role = "owner",
@@ -372,14 +378,15 @@ class StaffEnrollmentTest {
         composeRule.waitForIdle()
 
         composeRule.onNodeWithTag("staff_enroll_error_banner").performScrollTo().assertIsDisplayed()
-        composeRule.onAllNodesWithText("Could not approve Butchery QR: connection timed out.")
+        composeRule.onAllNodesWithText("Could not issue Butchery passkey: connection timed out.")
             .onFirst()
             .assertIsDisplayed()
     }
 
     @Test
-    fun authScreenUsesOwnerGeneratedPasskeyInsteadOfLoginGeneratedQr() {
-        var scannerOpened = false
+    fun authScreenOmitsLoginScreenQrCardAndShowsPasskeyAndScannerControls() {
+        var openedScanner = false
+        var submittedCredential = ""
         composeRule.setContent {
             AuthScreen(
                 error = null,
@@ -388,29 +395,35 @@ class StaffEnrollmentTest {
                 onEmailSignIn = { _, _ -> },
                 onCreateAccount = { _, _ -> },
                 onRegisterBusiness = { _, _, _, _, _, _, _, _ -> },
-                onCredentialSignIn = {},
-                onOpenScanner = { scannerOpened = true },
+                onCredentialSignIn = { submittedCredential = it },
+                onOpenScanner = { openedScanner = true },
                 onClearError = {}
             )
         }
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithTag("login_with_staff_passkey_button").performScrollTo().performClick()
+        composeRule.onNodeWithTag("login_with_qr_or_passkey_button").performScrollTo().performClick()
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithText("SIGN IN WITH STAFF PASSKEY").assertIsDisplayed()
-        composeRule.onNodeWithText("Ask the business owner to generate a Waiter or Butchery passkey in User Management, then scan its QR or enter the code here.")
-            .performScrollTo()
-            .assertIsDisplayed()
+        // Login-screen QR challenge UI must not exist anymore
         composeRule.onNodeWithTag("login_qr_card").assertDoesNotExist()
+        composeRule.onNodeWithTag("qr_fallback_card").assertDoesNotExist()
+        composeRule.onNodeWithTag("qr_station_waiter").assertDoesNotExist()
+        composeRule.onNodeWithTag("qr_station_butchery").assertDoesNotExist()
+
+        // Passkey entry + scanner for redeeming in-app enrollment passkey QRs remain available
+        composeRule.onNodeWithTag("passkey_input_field").performScrollTo().performTextInput("CPB1.BCH-7788")
         composeRule.onNodeWithTag("scan_enrollment_qr_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Scan QR").assertIsDisplayed()
         composeRule.onNodeWithTag("paste_passkey_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Paste").assertIsDisplayed()
         composeRule.onNodeWithTag("continue_signin_button").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("Continue").assertIsDisplayed()
+
         composeRule.onNodeWithTag("scan_enrollment_qr_button").performClick()
-        assertTrue(scannerOpened)
+        assertTrue(openedScanner)
+
+        composeRule.onNodeWithTag("continue_signin_button").performClick()
+        assertEquals("CPB1.BCH-7788", submittedCredential)
     }
 
     @Test
@@ -483,5 +496,52 @@ class StaffEnrollmentTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("butchery_custom_payment_input").assertIsDisplayed()
         composeRule.onNodeWithTag("butchery_save_settings_button").assertIsDisplayed()
+    }
+
+    @Test
+    fun parseEnrollmentPasskeyStripsSingleNestedAndLowercasePrefixes() {
+        val waiter = parseEnrollmentPasskey("CPX1.ak99-wtr-4421")
+        assertEquals("AK99-WTR-4421", waiter.rawPasskey)
+        assertFalse(waiter.isButchery)
+
+        val butchery = parseEnrollmentPasskey("cpb1.bch-7788-mza")
+        assertEquals("BCH-7788-MZA", butchery.rawPasskey)
+        assertTrue(butchery.isButchery)
+
+        val doublePrefixed = parseEnrollmentPasskey("CPB1.CPX1.BCH-7788-MZA")
+        assertEquals("BCH-7788-MZA", doublePrefixed.rawPasskey)
+        assertTrue(doublePrefixed.isButchery)
+
+        val reverseDoublePrefixed = parseEnrollmentPasskey("cpx1.cpb1.BCH-7788-MZA\nextra-line")
+        assertEquals("BCH-7788-MZA", reverseDoublePrefixed.rawPasskey)
+        assertTrue(reverseDoublePrefixed.isButchery)
+    }
+
+    @Test
+    fun extractEnrollmentCredentialPayloadHandlesWrappedQrAndPasskeys() {
+        assertEquals(
+            "CPR1|KYTX-AB63-6WJV-BXMM",
+            extractEnrollmentCredentialPayload("""{"qr":"CPR1|KYTX-AB63-6WJV-BXMM"}""")
+        )
+        assertEquals(
+            "CPB1.BCH-7788",
+            extractEnrollmentCredentialPayload("  \"CPB1.BCH-7788\"\n")
+        )
+        assertEquals(
+            "CPB1.BCH-7788",
+            extractEnrollmentCredentialPayload("CPB1.CPX1.bch-7788")
+        )
+        assertEquals(
+            "CPX1.WTR-1122",
+            extractEnrollmentCredentialPayload("cpx1.wtr-1122")
+        )
+    }
+
+    @Test
+    fun normalizeAccessChallengeTokenStripsRepeatedPrefixAndQuotes() {
+        val cleaned = normalizeAccessChallengeToken("  \"CPR1|CPR1|KYTX-AB63-6WJV\" \nsecond line")
+        assertEquals("KYTX-AB63-6WJV", cleaned)
+        assertEquals("CPR1|KYTX-AB63-6WJV", accessChallengeQrPayload("\"CPR1|KYTX-AB63-6WJV\"", ""))
+        assertEquals("CPR1|FALLBACK-TOK", accessChallengeQrPayload("", "CPR1|FALLBACK-TOK"))
     }
 }

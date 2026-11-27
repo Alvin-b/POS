@@ -21,11 +21,11 @@ function jsonResponse(body: Record<string, unknown>, status = 200): Response {
 
 function normalizeToken(raw: unknown): string {
   if (typeof raw !== "string") return "";
-  const trimmed = raw.trim();
-  const stripped = trimmed.toLowerCase().startsWith("cpr1|")
-    ? trimmed.slice(5).trim()
-    : trimmed;
-  return stripped.toUpperCase();
+  let current = raw.trim().replace(/^["']|["']$/g, "");
+  while (current.toLowerCase().startsWith("cpr1|")) {
+    current = current.slice(5).trim();
+  }
+  return (current.split(/\s+/)[0] ?? "").trim();
 }
 
 async function sha256Hex(input: string): Promise<string> {
@@ -34,6 +34,22 @@ async function sha256Hex(input: string): Promise<string> {
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
+}
+
+async function candidateTokenHashes(rawToken: string): Promise<string[]> {
+  const upper = rawToken.toUpperCase();
+  const lower = rawToken.toLowerCase();
+  const variants = Array.from(
+    new Set([
+      upper,
+      rawToken,
+      lower,
+      `CPR1|${upper}`,
+      `CPR1|${rawToken}`,
+      `cpr1|${lower}`,
+    ].filter((v) => v.length > 0))
+  );
+  return await Promise.all(variants.map((v) => sha256Hex(v)));
 }
 
 serve(async (req: Request) => {
@@ -67,11 +83,13 @@ serve(async (req: Request) => {
       return jsonResponse({ error: "qr_not_found" }, 400);
     }
 
-    const tokenHash = await sha256Hex(token);
+    const candidateHashes = await candidateTokenHashes(token);
     const { data: challenge, error: readError } = await supabaseAdmin
       .from("access_challenges")
       .select("*")
-      .eq("token_hash", tokenHash)
+      .in("token_hash", candidateHashes)
+      .order("created_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (readError) {
@@ -172,7 +190,8 @@ serve(async (req: Request) => {
     });
 
     const hashedToken = linkData?.properties?.hashed_token;
-    if (linkError || !hashedToken) {
+    const emailOtp = linkData?.properties?.email_otp;
+    if (linkError || (!hashedToken && !emailOtp)) {
       await supabaseAdmin
         .from("access_challenges")
         .update({ processing_at: null, updated_at: new Date().toISOString() })
@@ -186,10 +205,23 @@ serve(async (req: Request) => {
     const authClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
-    const { data: otpData, error: otpError } = await authClient.auth.verifyOtp({
-      token_hash: hashedToken,
-      type: "magiclink",
-    });
+    let sessionResult = hashedToken
+      ? await authClient.auth.verifyOtp({
+          token_hash: hashedToken,
+          type: "magiclink",
+        })
+      : { data: null, error: { message: "missing_hashed_token" } };
+
+    if ((!sessionResult.data?.session?.access_token || !sessionResult.data?.session?.refresh_token) && emailOtp) {
+      sessionResult = await authClient.auth.verifyOtp({
+        email: userData.user.email,
+        token: emailOtp,
+        type: "email",
+      });
+    }
+
+    const otpData = sessionResult.data;
+    const otpError = sessionResult.error;
 
     if (otpError || !otpData?.session?.access_token || !otpData?.session?.refresh_token) {
       await supabaseAdmin

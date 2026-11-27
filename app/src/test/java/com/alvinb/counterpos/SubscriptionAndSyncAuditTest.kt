@@ -166,8 +166,8 @@ class SubscriptionAndSyncAuditTest {
 
         viewModel.signInWithCredential("CPR1|KYTX-AB63-6WJV-BXMM")
         val state = viewModel.uiState.value
-        assertNotNull(state.qrError)
-        assertTrue(state.qrError!!.contains("another phone", ignoreCase = true))
+        assertNotNull(state.startupError)
+        assertTrue(state.startupError!!.contains("Staff Management", ignoreCase = true))
         assertFalse(state.isAuthenticating)
     }
 

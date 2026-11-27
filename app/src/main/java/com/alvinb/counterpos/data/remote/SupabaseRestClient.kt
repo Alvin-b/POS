@@ -182,7 +182,9 @@ data class CounterReportRow(
 
 data class AccessPassRedemption(
     val session: AuthSession,
-    val businessId: String?
+    val businessId: String?,
+    val station: String? = null,
+    val stationName: String? = null
 )
 
 private enum class RefreshOutcome { REFRESHED, INVALID_REFRESH_TOKEN, RETRYABLE_FAILURE }
@@ -275,16 +277,31 @@ class SupabaseRestClient(context: Context) {
         val rawResponse = try {
             request("/functions/v1/redeem-access-pass", "POST", JSONObject().put("passkey", passkey.trim()).toString(), false)
         } catch (e: SupabaseApiException) {
-            val friendly = when (e.message) {
-                "passkey_not_found" -> "Passkey not recognized or already redeemed. Ask the business owner for a new passkey."
-                "passkey_expired", "passkey_expired_or_used" -> "This passkey has expired or was already used. Ask the business owner to generate a new passkey."
-                "employee_inactive" -> "This employee enrollment is inactive. Ask the business owner to enable it and generate a new passkey."
-                "employee_recovery_in_progress" -> "This employee is already recovering access on another device. Wait a few minutes or ask the owner to create a fresh code."
-                "business_not_active" -> "This business is not active. Ask the administrator to reopen it before enrolling employees."
-                "employee_identity_not_found" -> "The employee account could not be found. Ask the owner to issue a fresh recovery code."
-                "could_not_rotate_employee_credential", "could_not_create_employee_session", "could_not_finalize_employee_recovery" -> "Employee recovery did not finish. Ask the owner to issue a fresh recovery code."
-                "could_not_redeem_passkey" -> "The passkey service could not attach this employee to the business. Deploy the current enrollment functions and try a new passkey."
-                else -> e.message ?: "Invalid passkey"
+            val rawMessage = e.message.orEmpty()
+            val friendly = when {
+                rawMessage.equals("passkey_not_found", ignoreCase = true) ||
+                    rawMessage.equals("invalid_passkey", ignoreCase = true) ||
+                    rawMessage.equals("passkey_invalid", ignoreCase = true) ->
+                    "Passkey not recognized or already redeemed. Ask the business owner for a new passkey."
+                rawMessage.equals("passkey_expired", ignoreCase = true) ||
+                    rawMessage.equals("passkey_expired_or_used", ignoreCase = true) ||
+                    rawMessage.equals("invalid_or_expired_passkey", ignoreCase = true) ->
+                    "This passkey has expired or was already used. Ask the business owner to generate a new passkey."
+                rawMessage.equals("employee_inactive", ignoreCase = true) ->
+                    "This employee enrollment is inactive. Ask the business owner to enable it and generate a new passkey."
+                rawMessage.equals("employee_recovery_in_progress", ignoreCase = true) ->
+                    "This employee is already recovering access on another device. Wait a few minutes or ask the owner to create a fresh code."
+                rawMessage.equals("business_not_active", ignoreCase = true) ->
+                    "This business is not active. Ask the administrator to reopen it before enrolling employees."
+                rawMessage.equals("employee_identity_not_found", ignoreCase = true) ->
+                    "The employee account could not be found. Ask the owner to issue a fresh recovery code."
+                rawMessage.equals("could_not_rotate_employee_credential", ignoreCase = true) ||
+                    rawMessage.equals("could_not_create_employee_session", ignoreCase = true) ||
+                    rawMessage.equals("could_not_finalize_employee_recovery", ignoreCase = true) ->
+                    "Employee recovery did not finish. Ask the owner to issue a fresh recovery code."
+                rawMessage.equals("could_not_redeem_passkey", ignoreCase = true) ->
+                    "The passkey service could not attach this employee to the business. Deploy the current enrollment functions and try a new passkey."
+                else -> rawMessage.ifBlank { "Invalid passkey" }
             }
             throw IOException(friendly, e)
         }
@@ -292,8 +309,8 @@ class SupabaseRestClient(context: Context) {
         val email = json.optString("email").takeIf(String::isNotBlank)
             ?: throw IOException(
                 when (val err = json.optString("error")) {
-                    "passkey_not_found" -> "Passkey not recognized or already redeemed. Ask the business owner to generate a new one."
-                    "passkey_expired", "passkey_expired_or_used" -> "This passkey has expired or was already used. Ask the business owner to generate a new one."
+                    "passkey_not_found", "invalid_passkey", "passkey_invalid" -> "Passkey not recognized or already redeemed. Ask the business owner to generate a new one."
+                    "passkey_expired", "passkey_expired_or_used", "invalid_or_expired_passkey" -> "This passkey has expired or was already used. Ask the business owner to generate a new one."
                     "employee_inactive" -> "This employee enrollment is inactive. Ask the business owner to enable it and generate a new passkey."
                     "employee_recovery_in_progress" -> "This employee is already recovering access on another device. Wait a few minutes or ask the owner to create a fresh code."
                     "business_not_active" -> "This business is not active. Ask the administrator to reopen it before enrolling employees."
@@ -302,6 +319,11 @@ class SupabaseRestClient(context: Context) {
                 }
             )
         val shopId = json.optString("business_id").ifBlank { json.optString("shop_id") }.takeIf(String::isNotBlank)
+        val station = json.optNullableString("station")
+            ?: json.optNullableString("station_type")
+            ?: json.optNullableString("device_station")
+        val stationName = json.optNullableString("station_name")
+            ?: json.optNullableString("butchery_name")
         val accessToken = json.optString("access_token").takeIf(String::isNotBlank)
         val refreshToken = json.optString("refresh_token").takeIf(String::isNotBlank)
         if (accessToken != null && refreshToken != null) {
@@ -313,11 +335,13 @@ class SupabaseRestClient(context: Context) {
             )
             if (recoveredSession.userId.isBlank()) throw IOException("Recovery response did not include the existing employee ID.")
             saveSession(recoveredSession)
-            return@withContext AccessPassRedemption(recoveredSession, shopId)
+            return@withContext AccessPassRedemption(recoveredSession, shopId, station, stationName)
         }
         AccessPassRedemption(
             session = authenticate("password", email, json.optString("password")),
-            businessId = shopId
+            businessId = shopId,
+            station = station,
+            stationName = stationName
         )
     }
 
@@ -335,14 +359,8 @@ class SupabaseRestClient(context: Context) {
             )
         )
 
-    private fun normalizeAccessChallengeToken(raw: String): String {
-        val trimmed = raw.trim()
-        return if (trimmed.startsWith("CPR1|", ignoreCase = true)) {
-            trimmed.substring(5).trim()
-        } else {
-            trimmed
-        }
-    }
+    private fun normalizeChallengeToken(raw: String): String =
+        com.alvinb.counterpos.data.normalizeAccessChallengeToken(raw)
 
     suspend fun createAccessChallenge(): JSONObject = parseObject(withNetworkRetry {
         request(
@@ -358,7 +376,7 @@ class SupabaseRestClient(context: Context) {
             "/functions/v1/poll-access-challenge",
             "POST",
             JSONObject()
-                .put("token", normalizeAccessChallengeToken(token))
+                .put("token", normalizeChallengeToken(token))
                 .put("device_id", installationId)
                 .toString(),
             false
@@ -372,7 +390,7 @@ class SupabaseRestClient(context: Context) {
         station: String? = null,
         stationName: String? = null
     ): JSONObject {
-        val cleanToken = normalizeAccessChallengeToken(token)
+        val cleanToken = normalizeChallengeToken(token)
         val cleanStation = station?.trim()?.takeIf { it.isNotEmpty() }
         val cleanStationName = stationName?.trim()?.takeIf { it.isNotEmpty() }
         val fullPayload = JSONObject()
@@ -394,7 +412,8 @@ class SupabaseRestClient(context: Context) {
                 !msg.contains("not_found") &&
                 !msg.contains("not found") &&
                 !msg.contains("forbidden") &&
-                !msg.contains("unauthorized")
+                !msg.contains("unauthorized") &&
+                !msg.contains("invalid_qr_approval_request")
             if (!shouldFallbackLegacy) throw error
             val minimalPayload = JSONObject()
                 .put("token", cleanToken)
@@ -1969,8 +1988,8 @@ class SupabaseRestClient(context: Context) {
         val mapped = when (raw) {
             "subscription_expired" -> "Subscription expired. Your saved POS changes remain on this phone and will sync after the business renews."
             "business_payment_locked" -> "This business is payment-locked by the platform administrator. Saved POS changes are retained until access is restored."
-            "passkey_not_found" -> "Passkey not recognized or already redeemed. Ask the business owner for a new passkey."
-            "passkey_expired" -> "This passkey has expired. Ask the business owner to generate a new passkey."
+            "passkey_not_found", "invalid_passkey", "passkey_invalid" -> "Passkey not recognized or already redeemed. Ask the business owner for a new passkey."
+            "passkey_expired", "passkey_expired_or_used", "invalid_or_expired_passkey" -> "This passkey has expired or was already used. Ask the business owner to generate a new passkey."
             "Email not confirmed", "email_not_confirmed" ->
                 "Email not confirmed. Check your inbox (including spam) for the confirmation message before signing in."
             "Invalid login credentials" -> "Invalid email or password. Check both and try again."

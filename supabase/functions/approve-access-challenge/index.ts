@@ -24,11 +24,11 @@ function jsonResponse(body: Record<string, unknown>, status = 200): Response {
 
 function normalizeToken(raw: unknown): string {
   if (typeof raw !== "string") return "";
-  const trimmed = raw.trim();
-  const stripped = trimmed.toLowerCase().startsWith("cpr1|")
-    ? trimmed.slice(5).trim()
-    : trimmed;
-  return stripped.toUpperCase();
+  let current = raw.trim().replace(/^["']|["']$/g, "");
+  while (current.toLowerCase().startsWith("cpr1|")) {
+    current = current.slice(5).trim();
+  }
+  return (current.split(/\s+/)[0] ?? "").trim();
 }
 
 async function sha256Hex(input: string): Promise<string> {
@@ -37,6 +37,22 @@ async function sha256Hex(input: string): Promise<string> {
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
+}
+
+async function candidateTokenHashes(rawToken: string): Promise<string[]> {
+  const upper = rawToken.toUpperCase();
+  const lower = rawToken.toLowerCase();
+  const variants = Array.from(
+    new Set([
+      upper,
+      rawToken,
+      lower,
+      `CPR1|${upper}`,
+      `CPR1|${rawToken}`,
+      `cpr1|${lower}`,
+    ].filter((v) => v.length > 0))
+  );
+  return await Promise.all(variants.map((v) => sha256Hex(v)));
 }
 
 function generateStrongPassword(): string {
@@ -125,11 +141,13 @@ serve(async (req: Request) => {
       return jsonResponse({ error: "business_not_active" }, 400);
     }
 
-    const tokenHash = await sha256Hex(token);
+    const candidateHashes = await candidateTokenHashes(token);
     const { data: challenge, error: challengeReadError } = await supabaseAdmin
       .from("access_challenges")
       .select("*")
-      .eq("token_hash", tokenHash)
+      .in("token_hash", candidateHashes)
+      .order("created_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (challengeReadError) {
@@ -138,6 +156,27 @@ serve(async (req: Request) => {
     if (!challenge) {
       return jsonResponse({ error: "qr_not_found" }, 404);
     }
+
+    // Idempotent retry: if the exact same approver scans an already-approved unconsumed QR
+    // for the same shop, confirm approval cleanly instead of reporting qr_already_used.
+    if (
+      challenge.status === "approved" &&
+      !challenge.consumed_at &&
+      challenge.shop_id === shopId &&
+      challenge.approved_by === actorId &&
+      challenge.user_id
+    ) {
+      return jsonResponse({
+        approved: true,
+        already_approved: true,
+        shop_id: shopId,
+        role: challenge.role ?? requestedRole,
+        station: challenge.station ?? station,
+        station_name: challenge.station_name ?? stationName,
+        user_id: challenge.user_id,
+      });
+    }
+
     if (challenge.status !== "pending" || challenge.consumed_at || challenge.approved_at) {
       return jsonResponse({ error: "qr_already_used" }, 409);
     }
@@ -217,7 +256,7 @@ serve(async (req: Request) => {
     }
 
     const nowIso = new Date().toISOString();
-    await supabaseAdmin
+    const { error: identityUpsertError } = await supabaseAdmin
       .from("access_device_identities")
       .upsert(
         {
@@ -231,6 +270,29 @@ serve(async (req: Request) => {
         },
         { onConflict: "device_key_hash" }
       );
+
+    if (identityUpsertError) {
+      await supabaseAdmin
+        .from("access_device_identities")
+        .delete()
+        .eq("shop_id", shopId)
+        .eq("user_id", enrolledUserId)
+        .eq("role", requestedRole);
+      await supabaseAdmin
+        .from("access_device_identities")
+        .upsert(
+          {
+            device_key_hash: deviceKeyHash,
+            shop_id: shopId,
+            user_id: enrolledUserId,
+            role: requestedRole,
+            station,
+            station_name: stationName,
+            updated_at: nowIso,
+          },
+          { onConflict: "device_key_hash" }
+        );
+    }
 
     if (station === "butchery") {
       const { data: existingButchery } = await supabaseAdmin

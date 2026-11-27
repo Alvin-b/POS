@@ -384,14 +384,8 @@ class CounterPosRepository(
     fun isButcheryDeviceShop(shopId: String): Boolean = remote.isButcheryDeviceShop(shopId)
 
     suspend fun signInWithPasskey(passkey: String): SessionSnapshot = withContext(Dispatchers.IO) {
-        val supplied = passkey.trim()
-        val isButcheryPass = supplied.startsWith("CPB1.", ignoreCase = true)
-        val withoutQrPrefix = when {
-            supplied.startsWith("CPX1.", ignoreCase = true) -> supplied.substringAfter('.')
-            isButcheryPass -> supplied.substringAfter('.')
-            else -> supplied
-        }
-        val clean = withoutQrPrefix.trim().uppercase(Locale.ROOT)
+        val parsed = parseEnrollmentPasskey(passkey)
+        val clean = parsed.rawPasskey
         require(clean.isNotBlank()) { "Enter the passkey sent by the business owner." }
         val redemption = remote.redeemAccessPass(clean)
         val enrolledShopId = redemption.businessId?.takeIf(String::isNotBlank)
@@ -399,13 +393,15 @@ class CounterPosRepository(
             remote.clearSession()
             throw IllegalStateException("The enrollment response did not identify a business. Update the backend enrollment function and ask the owner for a new passkey.")
         }
+        val isButcheryPass = parsed.isButchery || redemption.station.equals("butchery", ignoreCase = true)
+        val stationName = redemption.stationName.orEmpty()
         remote.saveButcheryDeviceShopId(if (isButcheryPass) enrolledShopId else null)
         if (isButcheryPass) {
-            ensureLocalButcheryFallback(enrolledShopId)
+            ensureLocalButcheryFallback(enrolledShopId, butcheryName = stationName)
         }
         val session = loadAccount(autoSelectSingleBusiness = true, preferredShopId = enrolledShopId)
         if (isButcheryPass) {
-            ensureLocalButcheryFallback(enrolledShopId)
+            ensureLocalButcheryFallback(enrolledShopId, butcheryName = stationName)
         }
         session
     }
@@ -496,15 +492,20 @@ class CounterPosRepository(
             role = "cashier",
             station = if (isButchery) "butchery" else "waiter"
         )
+        val rawCode = response.optString("passkey").trim()
+        val cleanCode = parseEnrollmentPasskey(rawCode).rawPasskey.ifBlank { rawCode }
         if (isButchery) {
-            val rawCode = response.optString("passkey").trim()
-            if (rawCode.isNotBlank()) {
-                val prefixed = if (rawCode.startsWith("CPB1.", ignoreCase = true)) rawCode else "CPB1.$rawCode"
-                response.put("raw_passkey", rawCode)
+            if (cleanCode.isNotBlank()) {
+                val prefixed = "CPB1.$cleanCode"
+                response.put("raw_passkey", cleanCode)
                 response.put("passkey", prefixed)
                 response.put("qr_payload", prefixed)
             }
             response.put("station", "butchery")
+        } else if (cleanCode.isNotBlank()) {
+            response.put("raw_passkey", cleanCode)
+            response.put("passkey", cleanCode)
+            response.put("qr_payload", "CPX1.$cleanCode")
         }
         response
     }

@@ -235,7 +235,7 @@ internal fun AuthScreen(
     onClearError: () -> Unit
 ) {
     var authTab by remember { mutableStateOf(0) } // 0 = Sign In, 1 = Register Business & Account
-    var showPasskeySignIn by rememberSaveable { mutableStateOf(false) }
+    var showQrOrPasskey by rememberSaveable { mutableStateOf(false) }
     var credential by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -268,8 +268,8 @@ internal fun AuthScreen(
     val visibleAuthError = error?.takeIf(String::isNotBlank)
     val scrollState = rememberScrollState()
 
-    LaunchedEffect(showPasskeySignIn) {
-        if (showPasskeySignIn) {
+    LaunchedEffect(showQrOrPasskey) {
+        if (showQrOrPasskey) {
             scrollState.animateScrollTo(scrollState.maxValue)
         }
     }
@@ -431,7 +431,7 @@ internal fun AuthScreen(
                 }
                 Spacer(Modifier.height(10.dp))
             }
-            if (!notice.isNullOrBlank() && !notice.contains("QR", ignoreCase = true)) {
+            if (!notice.isNullOrBlank()) {
                 Text(
                     notice,
                     modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
@@ -779,7 +779,7 @@ internal fun AuthScreen(
                 }
             }
 
-            if (!showPasskeySignIn) {
+            if (!showQrOrPasskey) {
                 Spacer(Modifier.height(18.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -804,13 +804,13 @@ internal fun AuthScreen(
                 Spacer(Modifier.height(14.dp))
                 OutlinedButton(
                     onClick = {
-                        showPasskeySignIn = true
+                        showQrOrPasskey = true
                         onClearError()
                     },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(50.dp)
-                        .testTag("login_with_staff_passkey_button"),
+                        .testTag("login_with_qr_or_passkey_button"),
                     shape = RoundedCornerShape(14.dp)
                 ) {
                     Icon(
@@ -821,7 +821,7 @@ internal fun AuthScreen(
                     )
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        "Use owner-generated passkey",
+                        "Sign in with passkey or scan QR",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -834,19 +834,19 @@ internal fun AuthScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "SIGN IN WITH STAFF PASSKEY",
+                        "PASSKEY / ENROLLMENT QR",
                         color = MaterialTheme.colorScheme.primary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     )
                     TextButton(
-                        onClick = { showPasskeySignIn = false },
-                        modifier = Modifier.testTag("hide_passkey_signin_button")
+                        onClick = { showQrOrPasskey = false },
+                        modifier = Modifier.testTag("hide_qr_passkey_button")
                     ) {
-                        Text("Hide passkey sign-in", fontSize = 12.sp)
+                        Text("Hide Passkey", fontSize = 12.sp)
                     }
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(6.dp))
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -854,9 +854,9 @@ internal fun AuthScreen(
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                 ) {
                     Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Sign in with a staff passkey", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        Text("Welcome back", fontSize = 20.sp, fontWeight = FontWeight.Bold)
                         Text(
-                            "Ask the business owner to generate a Waiter or Butchery passkey in User Management, then scan its QR or enter the code here.",
+                            "Enter your access passkey or scan an enrollment QR code to continue.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 13.sp,
                             lineHeight = 19.sp

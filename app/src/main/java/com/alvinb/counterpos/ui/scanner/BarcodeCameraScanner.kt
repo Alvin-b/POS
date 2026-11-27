@@ -102,6 +102,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.alvinb.counterpos.data.extractEnrollmentCredentialPayload
 import com.alvinb.counterpos.data.local.entity.ProductEntity
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
@@ -736,20 +737,9 @@ private fun handleBarcodeResult(
     val clean = barcode.trim()
 
     // Detect QR enrollment challenges or passkeys immediately in ANY scanner mode
-    val cprIdx = clean.indexOf("CPR1|", ignoreCase = true)
-    val cpxIdx = clean.indexOf("CPX1.", ignoreCase = true)
-    val cpbIdx = clean.indexOf("CPB1.", ignoreCase = true)
-    val cptIdx = clean.indexOf("CPT1|", ignoreCase = true)
-    val cpsaIdx = clean.indexOf("CPSA1|", ignoreCase = true)
-    if (cprIdx >= 0 || cpxIdx >= 0 || cpbIdx >= 0 || cptIdx >= 0 || cpsaIdx >= 0) {
-        val token = when {
-            cprIdx >= 0 -> clean.substring(cprIdx).trim()
-            cpxIdx >= 0 -> clean.substring(cpxIdx).trim()
-            cpbIdx >= 0 -> clean.substring(cpbIdx).trim()
-            cptIdx >= 0 -> clean.substring(cptIdx).trim()
-            else -> clean.substring(cpsaIdx).trim()
-        }
-        onAdminQrCodeScanned(token)
+    val extractedCredential = extractEnrollmentCredentialPayload(clean)
+    if (extractedCredential != null) {
+        onAdminQrCodeScanned(extractedCredential)
         return
     }
 

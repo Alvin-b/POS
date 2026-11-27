@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.QrCode
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Share
@@ -361,7 +362,7 @@ fun StaffManagementScreen(
                             context.startActivity(
                                 Intent.createChooser(intent, if (isButchery) "Share Butchery Passkey" else "Share Waiter Passkey")
                             )
-                        },
+                        }
                     )
                 }
 
@@ -556,9 +557,9 @@ private fun EnrollWaitersTabContent(
                     )
                     Text(
                         text = if (isButchery) {
-                            "Issue a one-time Butchery passkey or scan a butchery phone"
+                            "Issue a one-time Butchery passkey and QR code"
                         } else {
-                            "Issue a one-time passkey or scan an employee phone"
+                            "Issue a one-time passkey and QR code"
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
