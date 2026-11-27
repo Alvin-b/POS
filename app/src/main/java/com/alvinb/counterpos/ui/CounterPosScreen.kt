@@ -1176,15 +1176,9 @@ fun CounterPosWorkspace(
                 onClearEmployeeRecoveryPass = { viewModel.clearEmployeeRecoveryCredential() },
                 onSaveEmployeeSchedule = { uid, dow, st, en, act -> viewModel.setEmployeeHours(uid, dow, st, en, act) },
                 onSaveBusinessHours = { bh -> viewModel.saveBusinessHours(bh) },
-                onScanWaiterCode = { selectedRole ->
-                    viewModel.openStaffEnrollmentScanner(selectedRole)
-                },
                 onSelectEnrollStation = { station -> viewModel.selectStaffEnrollmentStation(station) },
                 onIssueButcheryPass = { stationName ->
                     viewModel.issueEmployeePass("butchery", stationName)
-                },
-                onScanButcheryCode = { stationName ->
-                    viewModel.openStaffEnrollmentScanner("butchery", stationName)
                 }
             )
         }

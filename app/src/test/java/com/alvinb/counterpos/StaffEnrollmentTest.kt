@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -292,7 +293,6 @@ class StaffEnrollmentTest {
     fun staffManagementScreenSupportsEnrollingButcheryJustLikeWaiters() {
         var selectedStationCaptured = ""
         var issuedButcheryName = ""
-        var scannedButcheryName = ""
 
         composeRule.setContent {
             var uiState by remember { mutableStateOf(CounterPosUiState()) }
@@ -312,7 +312,6 @@ class StaffEnrollmentTest {
                 onClearEmployeeRecoveryPass = {},
                 onSaveEmployeeSchedule = { _, _, _, _, _ -> },
                 onSaveBusinessHours = {},
-                onScanWaiterCode = {},
                 onSelectEnrollStation = { station ->
                     selectedStationCaptured = station
                     uiState = uiState.copy(staffEnrollmentStation = station)
@@ -320,9 +319,6 @@ class StaffEnrollmentTest {
                 onIssueButcheryPass = { name ->
                     issuedButcheryName = name
                     uiState = uiState.copy(butcheryPasskey = "CPB1.BCH-9944")
-                },
-                onScanButcheryCode = { name ->
-                    scannedButcheryName = name
                 }
             )
         }
@@ -345,10 +341,7 @@ class StaffEnrollmentTest {
         composeRule.onNodeWithTag("butchery_passkey_value").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("butchery_passkey_value").assertTextEquals("CPB1.BCH-9944")
         composeRule.onNodeWithTag("butchery_passkey_qr").performScrollTo().assertIsDisplayed()
-
-        composeRule.onNodeWithTag("scan_butchery_challenge_button").performScrollTo().performClick()
-        composeRule.waitForIdle()
-        assertEquals("Prime Nyama Grill", scannedButcheryName)
+        composeRule.onNodeWithText("Scan Phone").assertDoesNotExist()
     }
 
     @Test
@@ -373,8 +366,7 @@ class StaffEnrollmentTest {
                 onIssueEmployeeRecoveryPass = { _, _ -> },
                 onClearEmployeeRecoveryPass = {},
                 onSaveEmployeeSchedule = { _, _, _, _, _ -> },
-                onSaveBusinessHours = {},
-                onScanWaiterCode = {}
+                onSaveBusinessHours = {}
             )
         }
         composeRule.waitForIdle()
@@ -386,83 +378,39 @@ class StaffEnrollmentTest {
     }
 
     @Test
-    fun authScreenKeepsQrVisibleWhenNoticeOrConnectionRefusedAndSupportsButcheryStationSelection() {
-        var selectedStation = "waiter"
-        composeRule.setContent {
-            var qrPayload by remember { mutableStateOf<String?>("CPR1|VALID-CHALLENGE-TOKEN") }
-            var station by remember { mutableStateOf("waiter") }
-            AuthScreen(
-                error = "Connection refused while refreshing feed",
-                qrError = null,
-                notice = "Waiting for approval… (checking connection)",
-                isAuthenticating = false,
-                isLoadingQr = false,
-                selectedQrStation = station,
-                onSelectQrStation = {
-                    station = it
-                    selectedStation = it
-                },
-                onEmailSignIn = { _, _ -> },
-                onCreateAccount = { _, _ -> },
-                onRegisterBusiness = { _, _, _, _, _, _, _, _ -> },
-                onCredentialSignIn = {},
-                onOpenScanner = {},
-                onRefreshQr = { qrPayload = "CPR1|VALID-CHALLENGE-TOKEN" },
-                qrPayload = qrPayload,
-                onClearError = {}
-            )
-        }
-        composeRule.waitForIdle()
-
-        composeRule.onNodeWithTag("login_with_qr_or_passkey_button").performScrollTo().performClick()
-        composeRule.waitForIdle()
-
-        // Word "refused" in unrelated error must not expire/hide LoginQrCard
-        composeRule.onNodeWithTag("login_qr_card").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag("qr_station_waiter").assertIsDisplayed()
-        composeRule.onNodeWithTag("qr_station_butchery").performClick()
-        composeRule.waitForIdle()
-
-        assertEquals("butchery", selectedStation)
-        composeRule.onNodeWithText("Scan to Sign In · Butchery Station").assertIsDisplayed()
-    }
-
-    @Test
-    fun authScreenShowsQrErrorVisiblyWhenChallengeExpiresOrFails() {
+    fun authScreenUsesOwnerGeneratedPasskeyInsteadOfLoginGeneratedQr() {
+        var scannerOpened = false
         composeRule.setContent {
             AuthScreen(
                 error = null,
-                qrError = "This QR code has expired or was already used. Tap Refresh QR to generate a new one.",
                 notice = null,
                 isAuthenticating = false,
-                isLoadingQr = false,
-                selectedQrStation = "butchery",
-                onSelectQrStation = {},
                 onEmailSignIn = { _, _ -> },
                 onCreateAccount = { _, _ -> },
                 onRegisterBusiness = { _, _, _, _, _, _, _, _ -> },
                 onCredentialSignIn = {},
-                onOpenScanner = {},
-                onRefreshQr = {},
-                qrPayload = null,
+                onOpenScanner = { scannerOpened = true },
                 onClearError = {}
             )
         }
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithTag("login_with_qr_or_passkey_button").performScrollTo().performClick()
+        composeRule.onNodeWithTag("login_with_staff_passkey_button").performScrollTo().performClick()
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithTag("qr_fallback_card").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("QR code expired").assertIsDisplayed()
-        composeRule.onNodeWithText("This QR code has expired or was already used. Tap Refresh QR to generate a new one.").assertIsDisplayed()
-
+        composeRule.onNodeWithText("SIGN IN WITH STAFF PASSKEY").assertIsDisplayed()
+        composeRule.onNodeWithText("Ask the business owner to generate a Waiter or Butchery passkey in User Management, then scan its QR or enter the code here.")
+            .performScrollTo()
+            .assertIsDisplayed()
+        composeRule.onNodeWithTag("login_qr_card").assertDoesNotExist()
         composeRule.onNodeWithTag("scan_enrollment_qr_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Scan QR").assertIsDisplayed()
         composeRule.onNodeWithTag("paste_passkey_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Paste").assertIsDisplayed()
         composeRule.onNodeWithTag("continue_signin_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Continue").assertIsDisplayed()
+        composeRule.onNodeWithTag("scan_enrollment_qr_button").performClick()
+        assertTrue(scannerOpened)
     }
 
     @Test

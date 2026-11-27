@@ -140,12 +140,8 @@ fun CounterPosApp(
             )
             !session.isAuthenticated -> AuthScreen(
                 error = state.startupError,
-                qrError = state.qrError,
                 notice = state.notice,
                 isAuthenticating = state.isAuthenticating || state.isCreatingBusiness,
-                isLoadingQr = state.loginQrPayload == null && state.isQrPolling,
-                selectedQrStation = state.pendingQrStation,
-                onSelectQrStation = viewModel::selectPendingQrStation,
                 onEmailSignIn = viewModel::signIn,
                 onCreateAccount = viewModel::signUp,
                 onRegisterBusiness = { email, password, name, type, size, mode, count, phone ->
@@ -154,8 +150,6 @@ fun CounterPosApp(
                 onNavigateToRegister = { showRegisterScreen = true },
                 onCredentialSignIn = viewModel::signInWithCredential,
                 onOpenScanner = { viewModel.openScanner(ScannerMode.ADMIN_QR) },
-                onRefreshQr = viewModel::prepareQrChallenge,
-                qrPayload = state.loginQrPayload,
                 onClearError = viewModel::clearStartupError
             )
             // Subscription gate: If subscription is expired and user is not superadmin, lock to payment screen
@@ -230,24 +224,18 @@ private fun LoadingScreen() {
 @Composable
 internal fun AuthScreen(
     error: String?,
-    qrError: String? = null,
     notice: String?,
     isAuthenticating: Boolean,
-    isLoadingQr: Boolean = false,
-    selectedQrStation: String = "waiter",
-    onSelectQrStation: (String) -> Unit = {},
     onEmailSignIn: (String, String) -> Unit,
     onCreateAccount: (String, String) -> Unit,
     onRegisterBusiness: (String, String, String, String, String, String, Int, String) -> Unit,
     onNavigateToRegister: () -> Unit = {},
     onCredentialSignIn: (String) -> Unit,
     onOpenScanner: () -> Unit,
-    onRefreshQr: () -> Unit,
-    qrPayload: String?,
     onClearError: () -> Unit
 ) {
     var authTab by remember { mutableStateOf(0) } // 0 = Sign In, 1 = Register Business & Account
-    var showQrOrPasskey by rememberSaveable { mutableStateOf(false) }
+    var showPasskeySignIn by rememberSaveable { mutableStateOf(false) }
     var credential by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -280,8 +268,8 @@ internal fun AuthScreen(
     val visibleAuthError = error?.takeIf(String::isNotBlank)
     val scrollState = rememberScrollState()
 
-    LaunchedEffect(showQrOrPasskey) {
-        if (showQrOrPasskey) {
+    LaunchedEffect(showPasskeySignIn) {
+        if (showPasskeySignIn) {
             scrollState.animateScrollTo(scrollState.maxValue)
         }
     }
@@ -791,7 +779,7 @@ internal fun AuthScreen(
                 }
             }
 
-            if (!showQrOrPasskey) {
+            if (!showPasskeySignIn) {
                 Spacer(Modifier.height(18.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -816,14 +804,13 @@ internal fun AuthScreen(
                 Spacer(Modifier.height(14.dp))
                 OutlinedButton(
                     onClick = {
-                        showQrOrPasskey = true
+                        showPasskeySignIn = true
                         onClearError()
-                        onRefreshQr()
                     },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(50.dp)
-                        .testTag("login_with_qr_or_passkey_button"),
+                        .testTag("login_with_staff_passkey_button"),
                     shape = RoundedCornerShape(14.dp)
                 ) {
                     Icon(
@@ -834,7 +821,7 @@ internal fun AuthScreen(
                     )
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        "Login with QR code or passkey",
+                        "Use owner-generated passkey",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -847,151 +834,16 @@ internal fun AuthScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "SIGN IN WITH QR / PASSKEY",
+                        "SIGN IN WITH STAFF PASSKEY",
                         color = MaterialTheme.colorScheme.primary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     )
                     TextButton(
-                        onClick = { showQrOrPasskey = false },
-                        modifier = Modifier.testTag("hide_qr_passkey_button")
+                        onClick = { showPasskeySignIn = false },
+                        modifier = Modifier.testTag("hide_passkey_signin_button")
                     ) {
-                        Text("Hide QR / Passkey", fontSize = 12.sp)
-                    }
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    val isButcheryQr = selectedQrStation.equals("butchery", ignoreCase = true)
-                    FilterChip(
-                        selected = !isButcheryQr,
-                        onClick = { onSelectQrStation("waiter") },
-                        label = {
-                            Text(
-                                "Waiter / POS",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 48.dp)
-                            .testTag("qr_station_waiter")
-                    )
-                    FilterChip(
-                        selected = isButcheryQr,
-                        onClick = { onSelectQrStation("butchery") },
-                        label = {
-                            Text(
-                                "Butchery Station",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 48.dp)
-                            .testTag("qr_station_butchery")
-                    )
-                }
-                Spacer(Modifier.height(10.dp))
-                val effectiveQrMessage = qrError?.takeIf(String::isNotBlank)
-                    ?: error?.takeIf { it.contains("QR", ignoreCase = true) }
-                val qrExpired = effectiveQrMessage?.let { message ->
-                    message.contains("expired", ignoreCase = true) ||
-                        message.contains("already used", ignoreCase = true) ||
-                        message.contains("already_used", ignoreCase = true) ||
-                        message.contains("qr_used", ignoreCase = true) ||
-                        message.contains("consumed", ignoreCase = true) ||
-                        message.contains("no longer active", ignoreCase = true)
-                } == true
-                val stationDisplayLabel = if (selectedQrStation.equals("butchery", ignoreCase = true)) {
-                    "Butchery Station"
-                } else {
-                    "Waiter / Main POS"
-                }
-                if (qrPayload != null) {
-                    LoginQrCard(
-                        payload = qrPayload,
-                        onRefresh = { onClearError(); onRefreshQr() },
-                        stationLabel = stationDisplayLabel,
-                        statusMessage = notice?.takeIf { it.contains("Waiting", ignoreCase = true) }
-                    )
-                } else if (isLoadingQr) {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(20.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                    ) {
-                        Column(
-                            Modifier.fillMaxWidth().padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
-                            Text(
-                                "Generating sign-in QR code…",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
-                    }
-                } else {
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("qr_fallback_card"),
-                        shape = RoundedCornerShape(20.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (!effectiveQrMessage.isNullOrBlank()) {
-                                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
-                            } else {
-                                MaterialTheme.colorScheme.surfaceVariant
-                            }
-                        ),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                    ) {
-                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(
-                                text = when {
-                                    qrExpired -> "QR code expired"
-                                    !effectiveQrMessage.isNullOrBlank() -> "QR sign-in paused"
-                                    else -> "QR sign-in code"
-                                },
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (!effectiveQrMessage.isNullOrBlank()) {
-                                    MaterialTheme.colorScheme.onErrorContainer
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface
-                                }
-                            )
-                            Text(
-                                text = effectiveQrMessage?.takeIf(String::isNotBlank)
-                                    ?: "Tap to load your device sign-in QR code.",
-                                fontSize = 12.sp,
-                                color = if (!effectiveQrMessage.isNullOrBlank()) {
-                                    MaterialTheme.colorScheme.onErrorContainer
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                }
-                            )
-                            OutlinedButton(
-                                onClick = { onClearError(); onRefreshQr() },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(48.dp)
-                                    .testTag("load_qr_code_button")
-                            ) {
-                                Text(if (qrExpired || !effectiveQrMessage.isNullOrBlank()) "Refresh QR" else "Load QR code")
-                            }
-                        }
+                        Text("Hide passkey sign-in", fontSize = 12.sp)
                     }
                 }
                 Spacer(Modifier.height(12.dp))
@@ -1002,9 +854,9 @@ internal fun AuthScreen(
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                 ) {
                     Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Welcome back", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        Text("Sign in with a staff passkey", fontSize = 20.sp, fontWeight = FontWeight.Bold)
                         Text(
-                            "Enter your access passkey or scan an enrollment QR code to continue.",
+                            "Ask the business owner to generate a Waiter or Butchery passkey in User Management, then scan its QR or enter the code here.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 13.sp,
                             lineHeight = 19.sp
